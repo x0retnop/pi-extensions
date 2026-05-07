@@ -1,0 +1,111 @@
+# Pi Extensions
+
+A small collection of Pi extensions. Each folder is a standalone Pi package that can be published or installed separately.
+
+Tested and known to work with Pi v0.72.1 or newer.
+
+## Extensions
+
+### A Rewind
+
+Auto-guards against assistant messages that announce tool use but do not emit real tool calls. Also adds manual rewind for the latest assistant message.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-a-rewind
+```
+
+### BTW
+
+Ask quick side questions with `/btw` using the current conversation as context, without adding the question or answer to session history.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-btw
+```
+
+### Context
+
+Shows loaded context files, extensions, skills, active tools, and approximate token usage.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-context
+```
+
+### Context Manager
+
+Manual context helper with `/ctx`, status toggles, manual compaction, and handoff helpers.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-ctx-manager
+```
+
+### Handoff
+
+Generates a focused handoff prompt from the current session and starts a new session with it pre-filled.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-handoff
+```
+
+### Ollama Cloud Web
+
+Adds `web_search` and `web_fetch` tools powered by Ollama Cloud.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-ollama-cloud-web
+```
+
+### Permission Gate
+
+Interactive safety gate for `bash` tool calls, tuned for normal safe agent work. It allows common inspection commands, blocks dangerous ones, and asks before risky commands.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-permission-gate
+```
+
+### Protected Paths
+
+Protects files outside the active project and sensitive system/user locations, keeping agent file access scoped to normal project work.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-protected-paths
+```
+
+### Sessions
+
+Adds `/sessions`, an interactive picker for switching between recent Pi sessions.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-sessions
+```
+
+### Todo
+
+Adds a model-callable todo checklist tool for larger tasks, plus `/todos` and `/todo-mode` commands.
+
+```bash
+pi install git:github.com/x0retnop/pi-extension-todo
+```
+
+## AGENTS.md
+
+This repository also includes an `AGENTS.md` example for shaping how the coding agent works. It favors practical, low-noise, project-local changes: do useful work first, keep explanations brief, avoid broad cleanup, verify small edits, and ask before risky or non-local actions.
+
+The most useful sections to customize are:
+
+- `Priority and defaults` — language, response style, and reporting style.
+- `Autonomy and judgment` — when the agent may act without asking.
+- `Scope and edits` — what files and changes are in scope.
+- `Verification and safety` — what checks are allowed and what actions require permission.
+- `Environment` — shell, OS, and scripting preferences.
+
+`permission-gate` and `protected-paths` pair well with this style: `AGENTS.md` tells the model how to behave, while the extensions add runtime guardrails for commands and filesystem access.
+
+## Local install after cloning this repository
+
+```bash
+git clone https://github.com/x0retnop/pi-extensions.git
+cd pi-extensions
+pi install ./btw
+```
+
+Replace `./btw` with any extension folder name, for example `./todo`, `./sessions`, or `./permission-gate`.
