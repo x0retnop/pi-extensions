@@ -1,5 +1,5 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
-import { DynamicBorder, SessionManager, keyHint } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder, SessionManager, keyHint } from "@earendil-works/pi-coding-agent";
 import {
   CancellableLoader,
   Container,
@@ -9,7 +9,7 @@ import {
   Spacer,
   Text,
   matchesKey,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import {
   buildSessionDescription,
   buildSessionLabel,

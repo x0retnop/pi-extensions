@@ -23,16 +23,16 @@ import {
   type Model,
   type ProviderStreamOptions,
   type UserMessage,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   BorderedLoader,
   convertToLlm,
   serializeConversation,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   Key,
@@ -40,7 +40,7 @@ import {
   wrapTextWithAnsi,
   visibleWidth,
   type TUI,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 
 import {
   BTW_SYSTEM_PROMPT,

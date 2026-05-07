@@ -18,16 +18,16 @@ import {
   type Message,
   type Model,
   type ProviderStreamOptions,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   BorderedLoader,
   convertToLlm,
   serializeConversation,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 import { loadConfig, validateGoal } from "./config.js";
 import { ProgressLoader, EXTRACTION_PHASES } from "./progress.js";
