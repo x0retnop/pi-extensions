@@ -40,6 +40,16 @@ const MIN_REPLACE_TODOS = 3;
 const MAX_TODO_TEXT = 180;
 const TOOL_NAME = "todo";
 
+function notify(ctx: { hasUI?: boolean; ui?: { notify?: (message: string, level: string) => void } }, message: string, level = "info"): void {
+	const text = `[todo] ${message}`;
+	if (ctx.hasUI && ctx.ui?.notify) {
+		ctx.ui.notify(text, level);
+		return;
+	}
+	const log = level === "error" ? console.error : console.log;
+	log(text);
+}
+
 const TodoParams = Type.Object({
 	action: StringEnum(["list", "replace", "add", "update", "toggle", "clear"] as const),
 	items: Type.Optional(
@@ -211,7 +221,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_tree", async (_event, ctx) => reconstructState(ctx));
 	pi.on("before_agent_start", async (event) => {
-		syncTodoAvailability(event.prompt);
+		syncTodoAvailability(typeof event?.prompt === "string" ? event.prompt : "");
 	});
 	pi.on("agent_end", async () => {
 		if (mode === "auto") setTodoActive(false);
@@ -441,13 +451,17 @@ export default function (pi: ExtensionAPI) {
 		description: "Show todos on the current branch",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) {
-				ctx.ui.notify("/todos requires interactive mode", "error");
+				console.log(formatTodos(todos));
 				return;
 			}
 
-			await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
-				return new TodoListComponent(todos, theme, () => done());
-			});
+			try {
+				await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
+					return new TodoListComponent(todos, theme, () => done());
+				});
+			} catch (err) {
+				notify(ctx, err instanceof Error ? err.message : String(err), "error");
+			}
 		},
 	});
 
@@ -458,17 +472,17 @@ export default function (pi: ExtensionAPI) {
 			if (value === "auto" || value === "on" || value === "off") {
 				mode = value;
 				syncTodoAvailability();
-				ctx.ui.notify(`todo mode: ${mode}`, "info");
+				notify(ctx, `mode: ${mode}`, "info");
 				return;
 			}
 
-			ctx.ui.notify(`todo mode: ${mode}. Usage: /todo-mode auto|on|off|status`, "info");
+			notify(ctx, `mode: ${mode}. Usage: /todo-mode auto|on|off|status`, "info");
 		},
 	});
 }
 
-function shouldEnableTodoForPrompt(prompt: string): boolean {
-	const text = prompt.toLowerCase();
+function shouldEnableTodoForPrompt(prompt: string | undefined): boolean {
+	const text = String(prompt ?? "").toLowerCase();
 	if (!text.trim()) return false;
 
 	const explicitTodo = /\b(todo|checklist)\b|туду|чеклист/i.test(text);

@@ -259,6 +259,20 @@ function joinCommaStyled(items: string[], renderItem: (item: string) => string, 
 	return items.map(renderItem).join(sep);
 }
 
+function formatError(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+function notify(ctx: { hasUI?: boolean; ui?: { notify?: (message: string, level: string) => void } }, message: string, level = "info"): void {
+	const text = `[context] ${message}`;
+	if (ctx.hasUI && ctx.ui?.notify) {
+		ctx.ui.notify(text, level);
+		return;
+	}
+	const log = level === "error" ? console.error : console.log;
+	log(text);
+}
+
 type ContextViewData = {
 	usage:
 		| {
@@ -583,13 +597,21 @@ export default function contextExtension(pi: ExtensionAPI) {
 			});
 	};
 
+	const safeContextHandler = async (args: string, ctx: ExtensionCommandContext) => {
+		try {
+			await contextHandler(args, ctx);
+		} catch (err) {
+			notify(ctx, formatError(err), "error");
+		}
+	};
+
 	pi.registerCommand("context", {
 		description: "Show loaded context overview",
-		handler: contextHandler,
+		handler: safeContextHandler,
 	});
 
 	pi.registerCommand("context-simple", {
 		description: "Alias for /context",
-		handler: contextHandler,
+		handler: safeContextHandler,
 	});
 }

@@ -20,6 +20,24 @@ const state: State = {
 	lastUserText: "",
 };
 
+function formatError(err: unknown): string {
+	return err instanceof Error ? err.message : String(err);
+}
+
+function notify(ctx: any, message: string, level = "info"): void {
+	const text = message.startsWith("[a-rewind]") ? message : `[a-rewind] ${message.replace(/^a-rewind:?\s*/, "")}`;
+	if (ctx?.hasUI && ctx.ui?.notify) {
+		ctx.ui.notify(text, level);
+		return;
+	}
+	const log = level === "error" ? console.error : console.log;
+	log(text);
+}
+
+function safeSetStatus(ctx: any, id: string, value: string): void {
+	if (ctx?.hasUI && ctx.ui?.setStatus) ctx.ui.setStatus(id, value);
+}
+
 export default function aRewind(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event: any, ctx: any) => {
 		restoreState(ctx);
@@ -49,7 +67,7 @@ export default function aRewind(pi: ExtensionAPI) {
 			}
 
 			if (!state.auto) {
-				ctx.ui.notify(
+				notify(ctx, 
 					"a-rewind: detected suspicious assistant preamble. Use /a-rewind-last to rewind manually.",
 					"warning",
 				);
@@ -60,7 +78,7 @@ export default function aRewind(pi: ExtensionAPI) {
 
 			if (state.retryPending) {
 				state.retryPending = false;
-				ctx.ui.notify(
+				notify(ctx, 
 					"a-rewind: model repeated invalid preamble after auto-retry. Filtered it from future context; use /a-rewind-last if needed.",
 					"error",
 				);
@@ -69,7 +87,7 @@ export default function aRewind(pi: ExtensionAPI) {
 
 			state.retryPending = true;
 
-			ctx.ui.notify(
+			notify(ctx, 
 				"a-rewind: filtered invalid assistant preamble and queued one repair retry.",
 				"warning",
 			);
@@ -101,7 +119,8 @@ Rules:
 			);
 
 			return { message: replacement };
-		} catch {
+		} catch (err) {
+			notify(ctx, formatError(err), "error");
 			return undefined;
 		}
 	});
@@ -131,10 +150,11 @@ Rules:
 	pi.registerCommand("a-rewind-auto", {
 		description: "Enable, disable, or show a-rewind auto guard: /a-rewind-auto on|off|status",
 		handler: async (args: string, ctx: any) => {
+			try {
 			const mode = normalizeAutoArg(args);
 
 			if (!mode) {
-				ctx.ui.notify(
+				notify(ctx, 
 					`a-rewind auto is ${state.auto ? "on" : "off"}. Usage: /a-rewind-auto on|off|status`,
 					"info",
 				);
@@ -143,7 +163,7 @@ Rules:
 			}
 
 			if (mode === "status") {
-				ctx.ui.notify(`a-rewind auto is ${state.auto ? "on" : "off"}.`, "info");
+				notify(ctx, `a-rewind auto is ${state.auto ? "on" : "off"}.`, "info");
 				renderStatus(ctx);
 				return;
 			}
@@ -157,26 +177,30 @@ Rules:
 			});
 
 			renderStatus(ctx);
-			ctx.ui.notify(`a-rewind auto ${state.auto ? "enabled" : "disabled"}.`, "info");
+			notify(ctx, `a-rewind auto ${state.auto ? "enabled" : "disabled"}.`, "info");
+			} catch (err) {
+				notify(ctx, formatError(err), "error");
+			}
 		},
 	});
 
 	pi.registerCommand("a-rewind-last", {
 		description: "Rewind session to before the latest assistant message",
 		handler: async (_args: string, ctx: any) => {
+			try {
 			await ctx.waitForIdle();
 
 			const branch = ctx.sessionManager.getBranch();
 			const lastAssistantEntry = findLastAssistantMessageEntry(branch);
 
 			if (!lastAssistantEntry) {
-				ctx.ui.notify("a-rewind: no assistant message found in current branch.", "warning");
+				notify(ctx, "a-rewind: no assistant message found in current branch.", "warning");
 				return;
 			}
 
 			const targetId = lastAssistantEntry.parentId;
 			if (!targetId) {
-				ctx.ui.notify("a-rewind: cannot rewind before the first session entry.", "error");
+				notify(ctx, "a-rewind: cannot rewind before the first session entry.", "error");
 				return;
 			}
 
@@ -186,12 +210,15 @@ Rules:
 			});
 
 			if (result?.cancelled) {
-				ctx.ui.notify("a-rewind: rewind cancelled.", "warning");
+				notify(ctx, "a-rewind: rewind cancelled.", "warning");
 				return;
 			}
 
 			state.retryPending = false;
-			ctx.ui.notify("a-rewind: rewound to before the latest assistant message.", "info");
+			notify(ctx, "a-rewind: rewound to before the latest assistant message.", "info");
+			} catch (err) {
+				notify(ctx, formatError(err), "error");
+			}
 		},
 	});
 }
@@ -214,7 +241,7 @@ function restoreState(ctx: any) {
 }
 
 function renderStatus(ctx: any) {
-	ctx.ui.setStatus(EXT, `a-rewind: auto ${state.auto ? "on" : "off"}`);
+	safeSetStatus(ctx, EXT, `a-rewind: auto ${state.auto ? "on" : "off"}`);
 }
 
 function normalizeAutoArg(args: string): AutoMode | "status" | undefined {

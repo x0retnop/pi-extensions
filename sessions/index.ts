@@ -23,6 +23,20 @@ import {
 const DEFAULT_VISIBLE = 5;
 const SNIPPET_MAX = 60;
 
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function notify(ctx: { hasUI?: boolean; ui?: { notify?: (message: string, level: string) => void } }, message: string, level = "info"): void {
+  const text = `[sessions] ${message}`;
+  if (ctx.hasUI && ctx.ui?.notify) {
+    ctx.ui.notify(text, level);
+    return;
+  }
+  const log = level === "error" ? console.error : console.log;
+  log(text);
+}
+
 const isPrintable = (data: string): boolean => {
   if (data.length !== 1) return false;
   const code = data.charCodeAt(0);
@@ -105,7 +119,7 @@ async function listSessions(ctx: ExtensionCommandContext, includeAll: boolean): 
   });
 
   if (loadError) {
-    ctx.ui.notify(`Failed to load sessions: ${loadError}`, "error");
+    notify(ctx, `failed to load sessions: ${loadError}`, "error");
   }
 
   return sessions;
@@ -202,11 +216,7 @@ async function runSessionsCommand(args: string | undefined, ctx: ExtensionComman
   const sessions = await listSessions(ctx, includeAll);
 
   if (!sessions || sessions.length === 0) {
-    if (ctx.hasUI) {
-      ctx.ui.notify("No sessions found for this project.", "info");
-    } else {
-      console.log("No sessions found for this project.");
-    }
+    notify(ctx, "No sessions found for this project.", "info");
     return;
   }
 
@@ -222,7 +232,7 @@ async function runSessionsCommand(args: string | undefined, ctx: ExtensionComman
 
   const result = await ctx.switchSession(selection.path);
   if (result.cancelled) {
-    ctx.ui.notify("Session switch cancelled.", "info");
+    notify(ctx, "Session switch cancelled.", "info");
   }
 }
 
@@ -230,7 +240,11 @@ export default function sessionsExtension(pi: ExtensionAPI) {
   pi.registerCommand("sessions", {
     description: "Pick a session from the current project; use /sessions all for every project",
     handler: async (args, ctx) => {
-      await runSessionsCommand(args, ctx);
+      try {
+        await runSessionsCommand(args, ctx);
+      } catch (err) {
+        notify(ctx, formatError(err), "error");
+      }
     },
   });
 }

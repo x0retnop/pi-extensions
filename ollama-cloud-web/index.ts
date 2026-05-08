@@ -5,6 +5,35 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 
 const OLLAMA_API_BASE = "https://ollama.com/api";
+const REQUEST_TIMEOUT_MS = 60_000;
+
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function extensionError(err: unknown): Error {
+  const message = formatError(err);
+  return new Error(message.startsWith("[ollama-cloud-web]") ? message : `[ollama-cloud-web] ${message}`);
+}
+
+function withTimeoutSignal(signal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error(`request timed out after ${timeoutMs / 1000}s`)), timeoutMs);
+
+  const abortFromParent = () => controller.abort(signal?.reason);
+  if (signal) {
+    if (signal.aborted) abortFromParent();
+    else signal.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abortFromParent);
+    },
+  };
+}
 
 async function getApiKey(ctx?: ExtensionContext): Promise<string> {
   try {
@@ -140,17 +169,23 @@ function formatFetchResult(data: any): string {
 async function postOllama(path: string, body: unknown, signal: AbortSignal | undefined, ctx: ExtensionContext): Promise<unknown> {
   const apiKey = await getApiKey(ctx);
 
-  const response = await fetch(`${OLLAMA_API_BASE}${path}`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  const text = await response.text();
+  const timeout = withTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetch(`${OLLAMA_API_BASE}${path}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: timeout.signal,
+    });
+    text = await response.text();
+  } finally {
+    timeout.cleanup();
+  }
 
   if (!response.ok) {
     throw new Error(`Ollama API error ${response.status}: ${text}`);
@@ -185,16 +220,22 @@ export default function (pi: ExtensionAPI) {
     parameters: WebSearchParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const query = String(params.query ?? "").trim();
-      const maxResults = Number(params.max_results ?? 5);
+      const rawMaxResults = Number(params.max_results ?? 5);
+      const maxResults = Number.isFinite(rawMaxResults) ? rawMaxResults : 5;
 
       if (!query) {
-        throw new Error("query is required");
+        throw extensionError("query is required");
       }
 
-      const data = await postOllama("/web_search", {
-        query,
-        max_results: Math.max(1, Math.min(maxResults, 10))
-      }, signal, ctx);
+      let data: unknown;
+      try {
+        data = await postOllama("/web_search", {
+          query,
+          max_results: Math.max(1, Math.min(maxResults, 10))
+        }, signal, ctx);
+      } catch (err) {
+        throw extensionError(err);
+      }
 
       const output = formatSearchResults(data);
 
@@ -219,10 +260,15 @@ export default function (pi: ExtensionAPI) {
       const url = String(params.url ?? "").trim();
 
       if (!url) {
-        throw new Error("url is required");
+        throw extensionError("url is required");
       }
 
-      const data = await postOllama("/web_fetch", { url }, signal, ctx);
+      let data: unknown;
+      try {
+        data = await postOllama("/web_fetch", { url }, signal, ctx);
+      } catch (err) {
+        throw extensionError(err);
+      }
       const output = formatFetchResult(data);
 
       return {

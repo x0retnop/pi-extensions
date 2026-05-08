@@ -130,11 +130,8 @@ function looksLikeReadOnlyInlinePython(command: string): boolean {
     "write_text",
     "write_bytes",
     ".write(",
-    "open(",
-    "'w'",
-    '"w"',
-    "'a'",
-    '"a"',
+    ".touch(",
+    ".mkdir(",
     "unlink(",
     "remove(",
     "rmdir(",
@@ -154,7 +151,74 @@ function looksLikeReadOnlyInlinePython(command: string): boolean {
     "socket.",
   ];
 
-  return !riskyTokens.some((token) => lower.includes(token));
+  const riskyOpenModes = [
+    /\bopen\s*\([^)]*[, ]\s*["'][^"']*[wax+][^"']*["']/i,
+    /\.open\s*\([^)]*["'][^"']*[wax+][^"']*["']/i,
+  ];
+
+  return (
+    !riskyTokens.some((token) => lower.includes(token)) &&
+    !riskyOpenModes.some((pattern) => pattern.test(command))
+  );
+}
+
+function splitOnSafePipe(command: string): string[] | null {
+  const parts: string[] = [];
+  let quote: "'" | '"' | null = null;
+  let start = 0;
+
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      continue;
+    }
+
+    if (quote === '"') {
+      if (ch === '"') quote = null;
+      continue;
+    }
+
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+
+    if (ch === "|") {
+      const part = command.slice(start, i).trim();
+      if (!part) return null;
+      parts.push(part);
+      start = i + 1;
+      continue;
+    }
+
+    if (ch === "&" || ch === ";" || ch === "<" || ch === ">" || ch === "`" || ch === "\n" || ch === "\r") {
+      return null;
+    }
+  }
+
+  if (quote) return null;
+
+  const last = command.slice(start).trim();
+  if (!last) return null;
+  parts.push(last);
+
+  return parts.length > 1 ? parts : null;
+}
+
+const safePipeTailPatterns: RegExp[] = [
+  /^\s*head(?:\s+-n)?\s+\d+\s*$/i,
+  /^\s*Select-Object\s+-(?:First|Last)\s+\d+\s*$/i,
+  /^\s*more\s*$/i,
+];
+
+function isAutoAllowedSafePipeline(command: string): boolean {
+  const parts = splitOnSafePipe(command);
+  if (!parts || parts.length < 2) return false;
+
+  const [first, ...rest] = parts;
+  return isAutoAllowedSimpleCommand(first) && rest.every((part) => matchesAny(part, safePipeTailPatterns));
 }
 
 function hasShellControlOperators(command: string): boolean {
@@ -363,7 +427,7 @@ function isAutoAllowedSimpleCommand(command: string): boolean {
 
 function isAutoAllowedCompoundCommand(command: string): boolean {
   const parts = splitOnShellAndAnd(command);
-  return parts !== null && parts.every(isAutoAllowedSimpleCommand);
+  return parts !== null && parts.every((part) => isAutoAllowedSimpleCommand(part) || isAutoAllowedSafePipeline(part));
 }
 
 function getAskKind(command: string): AskKind {
@@ -484,7 +548,12 @@ export default function (pi: any) {
       return undefined;
     }
 
-    if (isSafeTempPyDelete(command) || isAutoAllowedSimpleCommand(command) || isAutoAllowedCompoundCommand(command)) {
+    if (
+      isSafeTempPyDelete(command) ||
+      isAutoAllowedSimpleCommand(command) ||
+      isAutoAllowedSafePipeline(command) ||
+      isAutoAllowedCompoundCommand(command)
+    ) {
       return undefined;
     }
 

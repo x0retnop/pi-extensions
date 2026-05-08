@@ -95,7 +95,7 @@ export function validateFilesAgainstConversation(
     }
 
     // Check if just the filename appears (handles cases where path is mentioned without full path)
-    const filename = path.split("/").pop();
+    const filename = path.split(/[\\/]/).pop();
     if (filename && lowerConversation.includes(filename)) {
       return true;
     }

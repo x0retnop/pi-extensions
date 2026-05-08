@@ -51,13 +51,44 @@ type ModelRegistry = ExtensionCommandContext["modelRegistry"];
 type RequestAuth = Pick<ProviderStreamOptions, "apiKey" | "headers">;
 
 const EXTRACTION_TIMEOUT_MS = 10 * 60 * 1000;
+const CONTEXT_WARN_PERCENT = 60;
+const MESSAGE_WARN_COUNT = 80;
 
-async function getRequestAuthOrThrow(
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function notify(ctx: { hasUI?: boolean; ui?: { notify?: (message: string, level: string) => void } }, message: string, level = "info"): void {
+  const text = `[handoff] ${message}`;
+  if (ctx.hasUI && ctx.ui?.notify) {
+    ctx.ui.notify(text, level);
+    return;
+  }
+  const log = level === "error" ? console.error : console.log;
+  log(text);
+}
+
+function maybeWarnLargeContext(ctx: ExtensionCommandContext, messageCount: number): void {
+  let percent = ctx.getContextUsage()?.percent;
+  if (percent === null || percent === undefined) {
+    const usage = ctx.getContextUsage();
+    percent = usage?.tokens && usage.contextWindow > 0 ? (usage.tokens / usage.contextWindow) * 100 : undefined;
+  }
+
+  const reasons: string[] = [];
+  if (typeof percent === "number" && percent >= CONTEXT_WARN_PERCENT) reasons.push(`${percent.toFixed(0)}% context`);
+  if (messageCount >= MESSAGE_WARN_COUNT) reasons.push(`${messageCount} messages`);
+  if (reasons.length > 0) {
+    notify(ctx, `large session (${reasons.join(", ")}); handoff extraction may be slower/costlier`, "warning");
+  }
+}
+
+async function getRequestAuth(
   modelRegistry: ModelRegistry,
   model: Model<Api>,
 ): Promise<RequestAuth> {
   const auth = await modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok) throw new Error((auth as { error?: string }).error ?? "Failed to resolve model auth");
+  if (!auth.ok) return {};
 
   return {
     ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
@@ -112,7 +143,7 @@ function resolveExtractionModel(
   const overrideModel = getModel(provider as any, modelId);
   if (!overrideModel) {
     // Model not found, fall back to current
-    console.warn(`Handoff: Model ${config.model} not found, using current model`);
+    console.warn(`[handoff] Model ${config.model} not found, using current model`);
     return ctx.model;
   }
 
@@ -137,22 +168,13 @@ async function runHandoffCommand(
   const goalValidation = validateGoal(goal, config.minGoalLength);
 
   if (!goalValidation.valid) {
-    if (ctx.hasUI) {
-      ctx.ui.notify(goalValidation.error!, "error");
-    } else {
-      console.error(goalValidation.error);
-    }
+    notify(ctx, goalValidation.error!, "error");
     return;
   }
 
   // Check for model
   if (!ctx.model) {
-    const errorMsg = "No model selected. Use /model to select a model first.";
-    if (ctx.hasUI) {
-      ctx.ui.notify(errorMsg, "error");
-    } else {
-      console.error(errorMsg);
-    }
+    notify(ctx, "No model selected. Use /model to select a model first.", "error");
     return;
   }
 
@@ -162,14 +184,10 @@ async function runHandoffCommand(
     ctx.sessionManager.getLeafId(),
   );
   const messages = sessionContext.messages;
+  maybeWarnLargeContext(ctx, messages.length);
 
   if (messages.length === 0) {
-    const errorMsg = "No conversation to hand off.";
-    if (ctx.hasUI) {
-      ctx.ui.notify(errorMsg, "error");
-    } else {
-      console.error(errorMsg);
-    }
+    notify(ctx, "No conversation to hand off.", "error");
     return;
   }
 
@@ -195,12 +213,7 @@ async function runHandoffCommand(
   // Resolve which model to use for extraction
   const extractionModel = resolveExtractionModel(ctx, config);
   if (!extractionModel) {
-    const errorMsg = "No model available for extraction.";
-    if (ctx.hasUI) {
-      ctx.ui.notify(errorMsg, "error");
-    } else {
-      console.error(errorMsg);
-    }
+    notify(ctx, "No model available for extraction.", "error");
     return;
   }
 
@@ -214,14 +227,7 @@ async function runHandoffCommand(
   );
 
   if (!extractionResult.success || !extractionResult.extraction) {
-    if (ctx.hasUI) {
-      ctx.ui.notify(
-        extractionResult.error ?? "Failed to generate handoff context",
-        "error",
-      );
-    } else {
-      console.error(extractionResult.error ?? "Failed to generate handoff context");
-    }
+    notify(ctx, extractionResult.error ?? "Failed to generate handoff context", "error");
     return;
   }
 
@@ -243,7 +249,7 @@ async function runHandoffCommand(
   const editedPrompt = await ctx.ui.editor("Edit handoff prompt", handoffPrompt);
 
   if (editedPrompt === undefined) {
-    ctx.ui.notify("Handoff cancelled", "info");
+    notify(ctx, "cancelled", "info");
     return;
   }
 
@@ -259,7 +265,7 @@ async function runHandoffCommand(
   });
 
   if (newSessionResult.cancelled) {
-    ctx.ui.notify("New session cancelled", "info");
+    notify(ctx, "new session cancelled", "info");
     return;
   }
 }
@@ -286,7 +292,11 @@ async function generateExtraction(
 ): Promise<ExtractionResult> {
   if (!ctx.hasUI) {
     // Non-UI mode: direct call without loader
-    return await doExtraction(conversationText, goal, config, ctx, model);
+    try {
+      return await doExtraction(conversationText, goal, config, ctx, model);
+    } catch (err) {
+      return { success: false, error: formatError(err) };
+    }
   }
 
   // Interactive mode: show loader during extraction
@@ -319,8 +329,8 @@ async function generateExtraction(
           finish({ ...result, completionMessage });
         })
         .catch((err) => {
-          console.error("Handoff extraction failed:", err);
-          finish({ success: false, error: err.message ?? "Unknown error" });
+          console.error("[handoff] extraction failed:", err);
+          finish({ success: false, error: formatError(err) });
         });
 
       return loader;
@@ -347,8 +357,8 @@ async function generateExtraction(
       doExtraction(conversationText, goal, config, ctx, model, loader.signal)
         .then(finish)
         .catch((err) => {
-          console.error("Handoff extraction failed:", err);
-          finish({ success: false, error: err.message ?? "Unknown error" });
+          console.error("[handoff] extraction failed:", err);
+          finish({ success: false, error: formatError(err) });
         });
 
       return loader;
@@ -367,7 +377,7 @@ async function doExtraction(
   model: Model<any>,
   signal?: AbortSignal,
 ): Promise<ExtractionResult> {
-  const requestAuth = await getRequestAuthOrThrow(ctx.modelRegistry, model);
+  const requestAuth = await getRequestAuth(ctx.modelRegistry, model);
 
   // Build user message
   const userMessage: Message = {
@@ -460,7 +470,7 @@ async function doExtractionWithPhases(
   signal: AbortSignal,
   onPhase: (phase: string) => void,
 ): Promise<ExtractionResult> {
-  const requestAuth = await getRequestAuthOrThrow(ctx.modelRegistry, model);
+  const requestAuth = await getRequestAuth(ctx.modelRegistry, model);
 
   // Phase 1: Analyzing conversation
   onPhase(EXTRACTION_PHASES[0]);
@@ -600,7 +610,11 @@ export default function handoffExtension(pi: ExtensionAPI) {
   pi.registerCommand("handoff", {
     description: "Transfer context to a new focused session",
     handler: async (args, ctx) => {
-      await runHandoffCommand(args, ctx, pi, lastSkill);
+      try {
+        await runHandoffCommand(args, ctx, pi, lastSkill);
+      } catch (err) {
+        notify(ctx, formatError(err), "error");
+      }
     },
   });
 }

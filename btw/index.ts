@@ -53,6 +53,38 @@ import {
 type ModelRegistry = ExtensionCommandContext["modelRegistry"];
 type RequestAuth = Pick<ProviderStreamOptions, "apiKey" | "headers">;
 
+const CONTEXT_WARN_PERCENT = 60;
+const MESSAGE_WARN_COUNT = 80;
+
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function notify(ctx: { hasUI?: boolean; ui?: { notify?: (message: string, level: string) => void } }, message: string, level = "info"): void {
+  const text = `[btw] ${message}`;
+  if (ctx.hasUI && ctx.ui?.notify) {
+    ctx.ui.notify(text, level);
+    return;
+  }
+  const log = level === "error" ? console.error : console.log;
+  log(text);
+}
+
+function maybeWarnLargeContext(ctx: ExtensionCommandContext, messageCount: number): void {
+  let percent = ctx.getContextUsage()?.percent;
+  if (percent === null || percent === undefined) {
+    const usage = ctx.getContextUsage();
+    percent = usage?.tokens && usage.contextWindow > 0 ? (usage.tokens / usage.contextWindow) * 100 : undefined;
+  }
+
+  const reasons: string[] = [];
+  if (typeof percent === "number" && percent >= CONTEXT_WARN_PERCENT) reasons.push(`${percent.toFixed(0)}% context`);
+  if (messageCount >= MESSAGE_WARN_COUNT) reasons.push(`${messageCount} messages`);
+  if (reasons.length > 0) {
+    notify(ctx, `large session (${reasons.join(", ")}); answer may be slower/costlier`, "warning");
+  }
+}
+
 async function getRequestAuth(
   modelRegistry: ModelRegistry,
   model: Model<Api>,
@@ -263,23 +295,14 @@ async function runBtwCommand(
   // Validate args
   const validation = validateBtwArgs(args);
   if (!validation.valid) {
-    if (ctx.hasUI) {
-      ctx.ui.notify(validation.error!, "error");
-    } else {
-      console.error(validation.error);
-    }
+    notify(ctx, validation.error!, "error");
     return;
   }
   const question = validation.question!;
 
   // Check for model
   if (!ctx.model) {
-    const errorMsg = "No model selected. Use /model to select a model first.";
-    if (ctx.hasUI) {
-      ctx.ui.notify(errorMsg, "error");
-    } else {
-      console.error(errorMsg);
-    }
+    notify(ctx, "No model selected. Use /model to select a model first.", "error");
     return;
   }
 
@@ -289,6 +312,7 @@ async function runBtwCommand(
     ctx.sessionManager.getLeafId(),
   );
   const messages = sessionContext.messages;
+  maybeWarnLargeContext(ctx, messages.length);
 
   let conversationText = "";
   if (messages.length > 0) {
@@ -316,7 +340,7 @@ async function runBtwCommand(
     );
 
     if (response.stopReason === "error") {
-      console.error(response.errorMessage ?? "LLM error");
+      notify(ctx, response.errorMessage ?? "LLM error", "error");
       return;
     }
 
@@ -329,6 +353,7 @@ async function runBtwCommand(
   // Interactive mode: show loader, then overlay
 
   // Step 1: Get the answer with a loading spinner
+  let queryError: string | undefined;
   const answerResult = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
     const loader = new BorderedLoader(
       tui,
@@ -350,6 +375,7 @@ async function runBtwCommand(
       }
 
       if (response.stopReason === "error") {
+        queryError = response.errorMessage ?? "LLM error";
         return null;
       }
 
@@ -359,7 +385,8 @@ async function runBtwCommand(
     doQuery()
       .then(done)
       .catch((err) => {
-        console.error("BTW query failed:", err);
+        queryError = formatError(err);
+        console.error("[btw] query failed:", err);
         done(null);
       });
 
@@ -367,12 +394,12 @@ async function runBtwCommand(
   });
 
   if (answerResult === null) {
-    ctx.ui.notify("Cancelled", "info");
+    notify(ctx, queryError ?? "cancelled", queryError ? "error" : "info");
     return;
   }
 
   if (answerResult.trim() === "") {
-    ctx.ui.notify("No answer received", "warning");
+    notify(ctx, "No answer received", "warning");
     return;
   }
 
@@ -399,7 +426,11 @@ export default function btwExtension(pi: ExtensionAPI) {
   pi.registerCommand("btw", {
     description: "Ask a quick side question without polluting conversation history",
     handler: async (args, ctx) => {
-      await runBtwCommand(args, ctx);
+      try {
+        await runBtwCommand(args, ctx);
+      } catch (err) {
+        notify(ctx, formatError(err), "error");
+      }
     },
   });
 }

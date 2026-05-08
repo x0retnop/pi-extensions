@@ -115,6 +115,28 @@ let statusEnabled = CONFIG.statusEnabledByDefault;
 let activeTaskStartedAtMs: number | undefined;
 let lastTaskDurationMs: number | undefined;
 
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function notify(ctx: { hasUI?: boolean; ui?: { notify?: (message: string, level: string) => void } }, message: string, level = "info"): void {
+  const text = `[ctx-manager] ${message}`;
+  if (ctx.hasUI && ctx.ui?.notify) {
+    ctx.ui.notify(text, level);
+    return;
+  }
+  const log = level === "error" ? console.error : console.log;
+  log(text);
+}
+
+function safeSetStatus(ctx: ExtensionContext, id: string, value: string | undefined): void {
+  if (ctx.hasUI && ctx.ui?.setStatus) ctx.ui.setStatus(id, value);
+}
+
+function safeSetWidget(ctx: ExtensionCommandContext, id: string, lines: string[] | undefined, options?: { placement: typeof CONFIG.widgetPlacement }): void {
+  if (ctx.hasUI && ctx.ui?.setWidget) ctx.ui.setWidget(id, lines, options);
+}
+
 export default function ctxManager(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     resetSessionState();
@@ -151,53 +173,61 @@ export default function ctxManager(pi: ExtensionAPI) {
   pi.registerCommand("ctx", {
     description: "Show current context usage and session stats",
     handler: async (args, ctx) => {
-      const arg = args.trim().toLowerCase();
+      try {
+        const arg = args.trim().toLowerCase();
 
-      if (arg === "clear" || arg === "hide") {
-        clearWidget(ctx);
-        ctx.ui.notify("ctx widget cleared", "info");
-        updateStatus(ctx);
-        return;
+        if (arg === "clear" || arg === "hide") {
+          clearWidget(ctx);
+          notify(ctx, "widget cleared", "info");
+          updateStatus(ctx);
+          return;
+        }
+
+        const lines = buildCtxWidgetLines(ctx);
+        if (ctx.hasUI) {
+          safeSetWidget(ctx, WIDGET_ID, lines, { placement: CONFIG.widgetPlacement });
+        } else {
+          console.log(lines.join("\n"));
+        }
+
+        updateStatus(ctx, true);
+      } catch (err) {
+        notify(ctx, formatError(err), "error");
       }
-
-      const lines = buildCtxWidgetLines(ctx);
-      if (ctx.hasUI) {
-        ctx.ui.setWidget(WIDGET_ID, lines, { placement: CONFIG.widgetPlacement });
-      } else {
-        console.log(lines.join("\n"));
-      }
-
-      updateStatus(ctx, true);
     },
   });
 
   pi.registerCommand("ctx-status", {
     description: "Toggle persistent context status in the footer status area",
     handler: async (args, ctx) => {
-      const arg = args.trim().toLowerCase();
+      try {
+        const arg = args.trim().toLowerCase();
 
-      if (arg === "off" || arg === "disable" || arg === "0") {
-        statusEnabled = false;
-        ctx.ui.setStatus(STATUS_ID, undefined);
-        ctx.ui.notify("ctx status disabled", "info");
-        return;
-      }
+        if (arg === "off" || arg === "disable" || arg === "0") {
+          statusEnabled = false;
+          safeSetStatus(ctx, STATUS_ID, undefined);
+          notify(ctx, "status disabled", "info");
+          return;
+        }
 
-      if (arg === "on" || arg === "enable" || arg === "1") {
-        statusEnabled = true;
-        updateStatus(ctx, true);
-        ctx.ui.notify("ctx status enabled", "info");
-        return;
-      }
+        if (arg === "on" || arg === "enable" || arg === "1") {
+          statusEnabled = true;
+          updateStatus(ctx, true);
+          notify(ctx, "status enabled", "info");
+          return;
+        }
 
-      statusEnabled = !statusEnabled;
+        statusEnabled = !statusEnabled;
 
-      if (statusEnabled) {
-        updateStatus(ctx, true);
-        ctx.ui.notify("ctx status enabled", "info");
-      } else {
-        ctx.ui.setStatus(STATUS_ID, undefined);
-        ctx.ui.notify("ctx status disabled", "info");
+        if (statusEnabled) {
+          updateStatus(ctx, true);
+          notify(ctx, "status enabled", "info");
+        } else {
+          safeSetStatus(ctx, STATUS_ID, undefined);
+          notify(ctx, "status disabled", "info");
+        }
+      } catch (err) {
+        notify(ctx, formatError(err), "error");
       }
     },
   });
@@ -205,72 +235,84 @@ export default function ctxManager(pi: ExtensionAPI) {
   pi.registerCommand("ctx-compact", {
     description: "Manually trigger Pi compaction with default or custom instructions",
     handler: async (args, ctx) => {
-      const extra = args.trim();
-      const customInstructions = extra
-        ? `${DEFAULT_COMPACT_INSTRUCTIONS}\n\nExtra user instructions:\n${extra}`
-        : DEFAULT_COMPACT_INSTRUCTIONS;
+      try {
+        const extra = args.trim();
+        const customInstructions = extra
+          ? `${DEFAULT_COMPACT_INSTRUCTIONS}\n\nExtra user instructions:\n${extra}`
+          : DEFAULT_COMPACT_INSTRUCTIONS;
 
-      ctx.ui.notify("ctx compaction started", "info");
+        notify(ctx, "compaction started", "info");
 
-      ctx.compact({
-        customInstructions,
-        onComplete: () => {
-          ctx.ui.notify("ctx compaction completed", "info");
-          updateStatus(ctx, true);
-        },
-        onError: (error) => {
-          ctx.ui.notify(`ctx compaction failed: ${error.message}`, "error");
-          updateStatus(ctx, true);
-        },
-      });
+        ctx.compact({
+          customInstructions,
+          onComplete: () => {
+            notify(ctx, "compaction completed", "info");
+            updateStatus(ctx, true);
+          },
+          onError: (error) => {
+            notify(ctx, `compaction failed: ${error.message}`, "error");
+            updateStatus(ctx, true);
+          },
+        });
+      } catch (err) {
+        notify(ctx, formatError(err), "error");
+      }
     },
   });
 
   pi.registerCommand("ctx-handoff", {
     description: "Ask the current model to write a handoff prompt in the normal chat",
     handler: async (args, ctx) => {
-      const goal = args.trim() || "Continue the current work from the cleanest useful point.";
-      const stats = getContextStats(ctx);
+      try {
+        const goal = args.trim() || "Continue the current work from the cleanest useful point.";
+        const stats = getContextStats(ctx);
 
-      const prompt = [
-        SMART_HANDOFF_PROMPT,
-        "",
-        "User goal for the new session:",
-        goal,
-        "",
-        "Current context stats:",
-        formatStatsOneLine(stats),
-      ].join("\n");
+        const prompt = [
+          SMART_HANDOFF_PROMPT,
+          "",
+          "User goal for the new session:",
+          goal,
+          "",
+          "Current context stats:",
+          formatStatsOneLine(stats),
+        ].join("\n");
 
-      await ctx.waitForIdle();
+        await ctx.waitForIdle();
 
-      ctx.ui.notify("asking model to write handoff prompt in chat", "info");
+        notify(ctx, "asking model to write handoff prompt in chat", "info");
 
-      // This intentionally writes into the normal chat and triggers the model.
-      pi.sendUserMessage(prompt);
+        // This intentionally writes into the normal chat and triggers the model.
+        pi.sendUserMessage(prompt);
+      } catch (err) {
+        notify(ctx, formatError(err), "error");
+      }
     },
   });
 
   pi.registerCommand("ctx-handoff-lite", {
     description: "Build a cheap local handoff draft in a separate editor window",
     handler: async (args, ctx) => {
-      const goal = args.trim() || "Continue the current work from the cleanest useful point.";
-      const draft = buildLiteHandoffDraft(ctx, goal);
+      try {
+        const goal = args.trim() || "Continue the current work from the cleanest useful point.";
+        const draft = buildLiteHandoffDraft(ctx, goal);
 
-      if (!ctx.hasUI) {
-        console.log(draft);
-        return;
+        if (!ctx.hasUI) {
+          console.log(draft);
+          return;
+        }
+
+        const edited = await ctx.ui.editor("ctx-handoff-lite: copy/edit draft", draft);
+
+        if (edited === undefined) {
+          notify(ctx, "handoff-lite closed", "info");
+          return;
+        }
+
+        // Do not send it to chat automatically. This keeps terminal/session history clean.
+        notify(ctx, "handoff-lite draft closed; copy it manually if needed", "info");
+      } catch (err) {
+        notify(ctx, formatError(err), "error");
       }
-
-      const edited = await ctx.ui.editor("ctx-handoff-lite: copy/edit draft", draft);
-
-      if (edited === undefined) {
-        ctx.ui.notify("ctx-handoff-lite closed", "info");
-        return;
-      }
-
-      // Do not send it to chat automatically. This keeps terminal/session history clean.
-      ctx.ui.notify("ctx-handoff-lite draft closed; copy it manually if needed", "info");
     },
   });
 }
@@ -300,7 +342,7 @@ function showTaskDuration(ctx: ExtensionContext, durationMs: number): void {
 
   try {
     if (ctx.hasUI) {
-      ctx.ui.notify(message, "info");
+      notify(ctx, message, "info");
     } else {
       console.log(message);
     }
@@ -337,11 +379,11 @@ function updateStatus(ctx: ExtensionContext, force = false): void {
   if (!statusEnabled && !force) return;
 
   const status = buildStatusLine(ctx);
-  ctx.ui.setStatus(STATUS_ID, status);
+  safeSetStatus(ctx, STATUS_ID, status);
 }
 
 function clearWidget(ctx: ExtensionCommandContext): void {
-  ctx.ui.setWidget(WIDGET_ID, undefined);
+  safeSetWidget(ctx, WIDGET_ID, undefined);
 }
 
 function buildStatusLine(ctx: ExtensionContext): string {
