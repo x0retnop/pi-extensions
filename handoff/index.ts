@@ -51,6 +51,8 @@ type ModelRegistry = ExtensionCommandContext["modelRegistry"];
 type RequestAuth = Pick<ProviderStreamOptions, "apiKey" | "headers">;
 
 const EXTRACTION_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_EXTRACTION_CONVERSATION_CHARS = 160_000;
+const EXTRACTION_HEAD_CHARS = 12_000;
 const CONTEXT_WARN_PERCENT = 60;
 const MESSAGE_WARN_COUNT = 80;
 
@@ -79,8 +81,40 @@ function maybeWarnLargeContext(ctx: ExtensionCommandContext, messageCount: numbe
   if (typeof percent === "number" && percent >= CONTEXT_WARN_PERCENT) reasons.push(`${percent.toFixed(0)}% context`);
   if (messageCount >= MESSAGE_WARN_COUNT) reasons.push(`${messageCount} messages`);
   if (reasons.length > 0) {
-    notify(ctx, `large session (${reasons.join(", ")}); handoff extraction may be slower/costlier`, "warning");
+    notify(ctx, `large session (${reasons.join(", ")}); handoff extraction will use a bounded context slice`, "warning");
   }
+}
+
+function limitConversationText(text: string): { text: string; truncated: boolean } {
+  if (text.length <= MAX_EXTRACTION_CONVERSATION_CHARS) return { text, truncated: false };
+
+  const head = text.slice(0, EXTRACTION_HEAD_CHARS);
+  const tailBudget = Math.max(0, MAX_EXTRACTION_CONVERSATION_CHARS - EXTRACTION_HEAD_CHARS);
+  const tail = text.slice(-tailBudget);
+  const omitted = text.length - head.length - tail.length;
+
+  return {
+    text: `${head}\n\n[handoff: ${omitted.toLocaleString()} chars omitted from the middle of a large session]\n\n${tail}`,
+    truncated: true,
+  };
+}
+
+function makeAbortSignal(parent: AbortSignal | undefined): { signal: AbortSignal; abort: (reason?: unknown) => void; cleanup: () => void } {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(parent?.reason);
+
+  if (parent) {
+    if (parent.aborted) abortFromParent();
+    else parent.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    abort: (reason?: unknown) => {
+      if (!controller.signal.aborted) controller.abort(reason);
+    },
+    cleanup: () => parent?.removeEventListener("abort", abortFromParent),
+  };
 }
 
 async function getRequestAuth(
@@ -193,7 +227,11 @@ async function runHandoffCommand(
 
   // Convert messages to LLM format and serialize
   const llmMessages = convertToLlm(messages);
-  const conversationText = serializeConversation(llmMessages);
+  const limitedConversation = limitConversationText(serializeConversation(llmMessages));
+  if (limitedConversation.truncated) {
+    notify(ctx, "session context is very large; using beginning + recent tail for extraction", "warning");
+  }
+  const conversationText = limitedConversation.text;
   const currentSessionFile = ctx.sessionManager.getSessionFile();
 
   // Collect metadata
@@ -304,24 +342,28 @@ async function generateExtraction(
     // Use phase-based progress loader
     return await ctx.ui.custom<ExtractionResult>((tui, theme, _kb, done) => {
       const loader = new ProgressLoader(tui, theme, EXTRACTION_PHASES[0]);
+      const abort = makeAbortSignal(loader.signal);
       let settled = false;
       let timeout: ReturnType<typeof setTimeout>;
       const finish = (result: ExtractionResult) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
+        abort.cleanup();
         loader.dispose();
         done(result);
       };
       timeout = setTimeout(() => {
+        abort.abort(new Error("Extraction timed out"));
         finish({ success: false, error: "Extraction timed out" });
       }, EXTRACTION_TIMEOUT_MS);
 
       loader.onAbort = () => {
+        abort.abort(new Error("Cancelled"));
         finish({ success: false, error: "Cancelled" });
       };
 
-      doExtractionWithPhases(conversationText, goal, config, ctx, model, loader.signal, (phase) => {
+      doExtractionWithPhases(conversationText, goal, config, ctx, model, abort.signal, (phase) => {
         if (!settled) loader.setPhase(phase);
       })
         .then((result) => {
@@ -339,22 +381,28 @@ async function generateExtraction(
     // Use simple bordered loader
     return await ctx.ui.custom<ExtractionResult>((tui, theme, _kb, done) => {
       const loader = new BorderedLoader(tui, theme, "Generating handoff context...");
+      const abort = makeAbortSignal(loader.signal);
       let settled = false;
       let timeout: ReturnType<typeof setTimeout>;
       const finish = (result: ExtractionResult) => {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
+        abort.cleanup();
         (loader as any).dispose?.();
         done(result);
       };
       timeout = setTimeout(() => {
+        abort.abort(new Error("Extraction timed out"));
         finish({ success: false, error: "Extraction timed out" });
       }, EXTRACTION_TIMEOUT_MS);
 
-      loader.onAbort = () => finish({ success: false, error: "Cancelled" });
+      loader.onAbort = () => {
+        abort.abort(new Error("Cancelled"));
+        finish({ success: false, error: "Cancelled" });
+      };
 
-      doExtraction(conversationText, goal, config, ctx, model, loader.signal)
+      doExtraction(conversationText, goal, config, ctx, model, abort.signal)
         .then(finish)
         .catch((err) => {
           console.error("[handoff] extraction failed:", err);

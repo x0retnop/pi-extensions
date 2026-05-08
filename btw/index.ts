@@ -55,6 +55,8 @@ type RequestAuth = Pick<ProviderStreamOptions, "apiKey" | "headers">;
 
 const CONTEXT_WARN_PERCENT = 60;
 const MESSAGE_WARN_COUNT = 80;
+const MAX_BTW_CONVERSATION_CHARS = 80_000;
+const BTW_HEAD_CHARS = 6_000;
 
 function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -81,8 +83,22 @@ function maybeWarnLargeContext(ctx: ExtensionCommandContext, messageCount: numbe
   if (typeof percent === "number" && percent >= CONTEXT_WARN_PERCENT) reasons.push(`${percent.toFixed(0)}% context`);
   if (messageCount >= MESSAGE_WARN_COUNT) reasons.push(`${messageCount} messages`);
   if (reasons.length > 0) {
-    notify(ctx, `large session (${reasons.join(", ")}); answer may be slower/costlier`, "warning");
+    notify(ctx, `large session (${reasons.join(", ")}); /btw will use a bounded context slice`, "warning");
   }
+}
+
+function limitConversationText(text: string): { text: string; truncated: boolean } {
+  if (text.length <= MAX_BTW_CONVERSATION_CHARS) return { text, truncated: false };
+
+  const head = text.slice(0, BTW_HEAD_CHARS);
+  const tailBudget = Math.max(0, MAX_BTW_CONVERSATION_CHARS - BTW_HEAD_CHARS);
+  const tail = text.slice(-tailBudget);
+  const omitted = text.length - head.length - tail.length;
+
+  return {
+    text: `${head}\n\n[btw: ${omitted.toLocaleString()} chars omitted from the middle of a large session]\n\n${tail}`,
+    truncated: true,
+  };
 }
 
 async function getRequestAuth(
@@ -317,7 +333,11 @@ async function runBtwCommand(
   let conversationText = "";
   if (messages.length > 0) {
     const llmMessages = convertToLlm(messages);
-    conversationText = serializeConversation(llmMessages);
+    const limitedConversation = limitConversationText(serializeConversation(llmMessages));
+    if (limitedConversation.truncated) {
+      notify(ctx, "session context is very large; using beginning + recent tail for /btw", "warning");
+    }
+    conversationText = limitedConversation.text;
   }
 
   // Use the currently selected model

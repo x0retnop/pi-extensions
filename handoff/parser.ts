@@ -12,32 +12,72 @@ import {
  * or other surrounding content.
  */
 export function extractJsonFromText(text: string): unknown | null {
-  // Try to extract from markdown code block first
-  const codeBlockMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (codeBlockMatch) {
-    try {
-      return JSON.parse(codeBlockMatch[1].trim());
-    } catch {
-      // Fall through to try other methods
-    }
-  }
+  const trimmed = text.trim();
 
-  // Try to find JSON object directly (starts with { and ends with })
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    try {
-      return JSON.parse(jsonMatch[0]);
-    } catch {
-      // Fall through
-    }
-  }
-
-  // Try parsing the whole text as JSON
+  // Fast path: exact JSON response.
   try {
-    return JSON.parse(text.trim());
+    return JSON.parse(trimmed);
   } catch {
-    return null;
+    // Try fenced blocks and balanced objects below.
   }
+
+  // Prefer fenced JSON blocks, but tolerate a generic fenced block too.
+  const codeBlockMatches = [...text.matchAll(/```(?:json)?\s*\n?([\s\S]*?)\n?```/gi)];
+  for (const match of codeBlockMatches) {
+    try {
+      return JSON.parse(match[1].trim());
+    } catch {
+      // Try the next block.
+    }
+  }
+
+  // Scan for balanced JSON objects instead of using a greedy /{.*}/ match.
+  for (let start = text.indexOf("{"); start >= 0; start = text.indexOf("{", start + 1)) {
+    const candidate = extractBalancedObject(text, start);
+    if (!candidate) continue;
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Continue scanning; the first brace may belong to prose or an example.
+    }
+  }
+
+  return null;
+}
+
+function extractBalancedObject(text: string, start: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+      if (depth < 0) return null;
+    }
+  }
+
+  return null;
 }
 
 /**
