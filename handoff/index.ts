@@ -25,6 +25,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
   BorderedLoader,
+  buildSessionContext,
   convertToLlm,
   serializeConversation,
 } from "@earendil-works/pi-coding-agent";
@@ -56,7 +57,7 @@ async function getRequestAuthOrThrow(
   model: Model<Api>,
 ): Promise<RequestAuth> {
   const auth = await modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok) throw new Error(auth.error);
+  if (!auth.ok) throw new Error((auth as { error?: string }).error ?? "Failed to resolve model auth");
 
   return {
     ...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
@@ -108,7 +109,7 @@ function resolveExtractionModel(
     return ctx.model;
   }
 
-  const overrideModel = getModel(provider, modelId);
+  const overrideModel = getModel(provider as any, modelId);
   if (!overrideModel) {
     // Model not found, fall back to current
     console.warn(`Handoff: Model ${config.model} not found, using current model`);
@@ -156,7 +157,10 @@ async function runHandoffCommand(
   }
 
   // Get conversation context
-  const sessionContext = ctx.sessionManager.buildSessionContext();
+  const sessionContext = buildSessionContext(
+    ctx.sessionManager.getEntries(),
+    ctx.sessionManager.getLeafId(),
+  );
   const messages = sessionContext.messages;
 
   if (messages.length === 0) {

@@ -106,6 +106,11 @@ class TodoListComponent {
 		}
 	}
 
+	invalidate(): void {
+		this.cachedWidth = undefined;
+		this.cachedLines = undefined;
+	}
+
 	render(width: number): string[] {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 
@@ -227,7 +232,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: TodoParams,
 
 		prepareArguments(args) {
-			if (!args || typeof args !== "object") return args;
+			if (!args || typeof args !== "object") return args as any;
 			const input = args as Record<string, unknown>;
 
 			// Tolerate common model variants.
@@ -246,7 +251,7 @@ export default function (pi: ExtensionAPI) {
 				return { ...input, items };
 			}
 
-			return args;
+			return args as any;
 		},
 
 		async execute(_toolCallId, params) {

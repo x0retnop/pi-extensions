@@ -58,7 +58,7 @@ export function parseExtractionResponse(text: string): ParseResult {
     const errors = [...Value.Errors(ExtractionOutputSchema, parsed)];
     const errorMessages = errors
       .slice(0, 3)
-      .map((e) => `${e.path}: ${e.message}`)
+      .map((e) => `${(e as { path?: string }).path ?? ""}: ${e.message}`)
       .join("; ");
     return {
       success: false,
