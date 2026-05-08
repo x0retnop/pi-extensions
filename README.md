@@ -10,6 +10,8 @@ Tested and known to work with Pi v0.72.1 or newer.
 
 Auto-guards against assistant messages that announce tool use but do not emit real tool calls. Also adds manual rewind for the latest assistant message.
 
+Recent reliability updates: guarded message handling and safer internal marker strings.
+
 ```bash
 pi install git:github.com/x0retnop/pi-extension-a-rewind
 ```
@@ -34,6 +36,8 @@ pi install git:github.com/x0retnop/pi-extension-context
 
 Manual context helper with `/ctx`, status toggles, manual compaction, and handoff helpers.
 
+Recent reliability update: session-local status/timing state is reset on session changes.
+
 ```bash
 pi install git:github.com/x0retnop/pi-extension-ctx-manager
 ```
@@ -41,6 +45,8 @@ pi install git:github.com/x0retnop/pi-extension-ctx-manager
 ### Handoff
 
 Generates a focused handoff prompt from the current session and starts a new session with it pre-filled.
+
+Recent reliability updates: graceful handling of malformed extraction output and progress cleanup/timeout safeguards.
 
 ```bash
 pi install git:github.com/x0retnop/pi-extension-handoff
@@ -50,6 +56,8 @@ pi install git:github.com/x0retnop/pi-extension-handoff
 
 Adds `web_search` and `web_fetch` tools powered by Ollama Cloud.
 
+Recent reliability update: defensive auth lookup and clearer errors for unreadable or malformed `auth.json`.
+
 ```bash
 pi install git:github.com/x0retnop/pi-extension-ollama-cloud-web
 ```
@@ -58,6 +66,8 @@ pi install git:github.com/x0retnop/pi-extension-ollama-cloud-web
 
 Interactive safety gate for `bash` tool calls, tuned for normal safe agent work. It allows common inspection commands, blocks dangerous ones, and asks before risky commands.
 
+Current source default is relaxed mode: common read-only package metadata commands and safe-looking inline Python reads are allowed, while installs, deletes, format/fix/build/test commands, unknown risky commands, and destructive commands still require confirmation or are blocked.
+
 ```bash
 pi install git:github.com/x0retnop/pi-extension-permission-gate
 ```
@@ -65,6 +75,8 @@ pi install git:github.com/x0retnop/pi-extension-permission-gate
 ### Protected Paths
 
 Protects files outside the active project and sensitive system/user locations, keeping agent file access scoped to normal project work.
+
+Current source default is relaxed mode: ordinary external reads are allowed for practical inspection of docs, SDKs, installed libraries, and adjacent files, while writes/edits outside the project and sensitive roots remain protected.
 
 ```bash
 pi install git:github.com/x0retnop/pi-extension-protected-paths
@@ -96,7 +108,8 @@ The most useful sections to customize are:
 - `Autonomy and judgment` — when the agent may act without asking.
 - `Scope and edits` — what files and changes are in scope.
 - `Verification and safety` — what checks are allowed and what actions require permission.
-- `Environment` — shell, OS, and scripting preferences.
+- `Environment and commands` — OS, shell, scripting preferences, and Windows-friendly command guidance.
+- `Safety extensions` — how relaxed `permission-gate` and `protected-paths` modes should affect agent behavior without broadening scope.
 
 `permission-gate` and `protected-paths` pair well with this style: `AGENTS.md` tells the model how to behave, while the extensions add runtime guardrails for commands and filesystem access.
 

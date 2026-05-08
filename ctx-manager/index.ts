@@ -117,6 +117,7 @@ let lastTaskDurationMs: number | undefined;
 
 export default function ctxManager(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
+    resetSessionState();
     updateStatus(ctx);
   });
 
@@ -272,6 +273,12 @@ export default function ctxManager(pi: ExtensionAPI) {
       ctx.ui.notify("ctx-handoff-lite draft closed; copy it manually if needed", "info");
     },
   });
+}
+
+function resetSessionState(): void {
+  statusEnabled = CONFIG.statusEnabledByDefault;
+  activeTaskStartedAtMs = undefined;
+  lastTaskDurationMs = undefined;
 }
 
 function startTaskTimer(): void {

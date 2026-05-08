@@ -124,20 +124,25 @@ export function processExtractionResponse(
   config: HandoffConfig,
   conversationText?: string,
 ): ParseResult & { normalized?: ExtractionOutput } {
-  const parseResult = parseExtractionResponse(responseText);
+  try {
+    const parseResult = parseExtractionResponse(responseText);
 
-  if (!parseResult.success || !parseResult.data) {
-    return parseResult;
+    if (!parseResult.success || !parseResult.data) {
+      return parseResult;
+    }
+
+    // Normalize the extraction (dedupe, cap limits, strip @ prefixes, validate files)
+    const normalized = normalizeExtraction(parseResult.data, config, conversationText);
+
+    return {
+      success: true,
+      data: parseResult.data,
+      normalized,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Failed to process extraction response: ${message}` };
   }
-
-  // Normalize the extraction (dedupe, cap limits, strip @ prefixes, validate files)
-  const normalized = normalizeExtraction(parseResult.data, config, conversationText);
-
-  return {
-    success: true,
-    data: parseResult.data,
-    normalized,
-  };
 }
 
 /**

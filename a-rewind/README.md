@@ -23,6 +23,11 @@ pi install git:github.com/x0retnop/pi-extension-a-rewind
 - In auto mode, injects a retry instruction and filters the failed assistant output from the next model context.
 - Persists the auto-mode setting in the session.
 - Adds a small status/widget indicator when available.
+- Ignores unexpected message-shape errors inside the `message_end` handler so the guard does not interrupt Pi event processing.
+
+## Marker format
+
+Internal hidden/filter markers intentionally use single-bracket strings such as `[a-rewind:...]`. Avoid changing them to double-bracket marker strings, because some harness/output paths may suppress those strings.
 
 ## Settings
 

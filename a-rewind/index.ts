@@ -3,8 +3,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const EXT = "a-rewind";
 const STATE_TYPE = "a-rewind-state";
 
-const FILTER_MARKER = "[[a-rewind-filtered-invalid-assistant-preamble]]";
-const REPAIR_MARKER = "[[a-rewind-hidden-repair-instruction]]";
+const FILTER_MARKER = "[a-rewind:filtered-invalid-assistant-preamble]";
+const REPAIR_MARKER = "[a-rewind:hidden-repair-instruction]";
 
 type AutoMode = "on" | "off";
 
@@ -27,56 +27,57 @@ export default function aRewind(pi: ExtensionAPI) {
 	});
 
 	pi.on("message_end", async (event: any, ctx: any) => {
-		const msg = event.message;
-		if (!msg) return;
+		try {
+			const msg = event.message;
+			if (!msg) return;
 
-		if (msg.role === "user") {
-			state.lastUserText = extractText(msg);
-			return;
-		}
+			if (msg.role === "user") {
+				state.lastUserText = extractText(msg);
+				return;
+			}
 
-		if (msg.role !== "assistant") return;
+			if (msg.role !== "assistant") return;
 
-		const assistantText = extractText(msg);
-		const badPreamble =
-			!hasToolCalls(msg) &&
-			looksLikeFailedToolIntent(assistantText, state.lastUserText);
+			const assistantText = extractText(msg);
+			const badPreamble =
+				!hasToolCalls(msg) &&
+				looksLikeFailedToolIntent(assistantText, state.lastUserText);
 
-		if (!badPreamble) {
-			if (state.retryPending) state.retryPending = false;
-			return;
-		}
+			if (!badPreamble) {
+				if (state.retryPending) state.retryPending = false;
+				return;
+			}
 
-		if (!state.auto) {
+			if (!state.auto) {
+				ctx.ui.notify(
+					"a-rewind: detected suspicious assistant preamble. Use /a-rewind-last to rewind manually.",
+					"warning",
+				);
+				return;
+			}
+
+			const replacement = makeFilteredAssistantMessage(msg);
+
+			if (state.retryPending) {
+				state.retryPending = false;
+				ctx.ui.notify(
+					"a-rewind: model repeated invalid preamble after auto-retry. Filtered it from future context; use /a-rewind-last if needed.",
+					"error",
+				);
+				return { message: replacement };
+			}
+
+			state.retryPending = true;
+
 			ctx.ui.notify(
-				"a-rewind: detected suspicious assistant preamble. Use /a-rewind-last to rewind manually.",
+				"a-rewind: filtered invalid assistant preamble and queued one repair retry.",
 				"warning",
 			);
-			return;
-		}
 
-		const replacement = makeFilteredAssistantMessage(msg);
-
-		if (state.retryPending) {
-			state.retryPending = false;
-			ctx.ui.notify(
-				"a-rewind: model repeated invalid preamble after auto-retry. Filtered it from future context; use /a-rewind-last if needed.",
-				"error",
-			);
-			return { message: replacement };
-		}
-
-		state.retryPending = true;
-
-		ctx.ui.notify(
-			"a-rewind: filtered invalid assistant preamble and queued one repair retry.",
-			"warning",
-		);
-
-		pi.sendMessage(
-			{
-				customType: EXT,
-				content: `${REPAIR_MARKER}
+			pi.sendMessage(
+				{
+					customType: EXT,
+					content: `${REPAIR_MARKER}
 
 The previous assistant output was invalid: it announced or described tool use in visible text but emitted no structured tool call.
 
@@ -87,19 +88,22 @@ Rules:
 - Do not write "using tools", "need implement", "let me inspect", plans, TODOs, or tool-use announcements as visible assistant text.
 - If no tool is needed, answer normally and directly.
 - Do not imitate tool calls in text.`,
-				display: false,
-				details: {
-					reason: "failed-tool-preamble",
-					at: Date.now(),
+					display: false,
+					details: {
+						reason: "failed-tool-preamble",
+						at: Date.now(),
+					},
 				},
-			},
-			{
-				triggerTurn: true,
-				deliverAs: "followUp",
-			},
-		);
+				{
+					triggerTurn: true,
+					deliverAs: "followUp",
+				},
+			);
 
-		return { message: replacement };
+			return { message: replacement };
+		} catch {
+			return undefined;
+		}
 	});
 
 	pi.on("context", async (event: any) => {

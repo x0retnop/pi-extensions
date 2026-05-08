@@ -7,8 +7,12 @@ import { Type } from "typebox";
 const OLLAMA_API_BASE = "https://ollama.com/api";
 
 async function getApiKey(ctx?: ExtensionContext): Promise<string> {
-  const configured = await ctx?.modelRegistry?.authStorage?.getApiKey("ollama", { includeFallback: true });
-  if (configured?.trim()) return configured.trim();
+  try {
+    const configured = await ctx?.modelRegistry?.authStorage?.getApiKey("ollama", { includeFallback: true });
+    if (configured?.trim()) return configured.trim();
+  } catch {
+    // Fall back to env/auth.json if Pi internals change or are unavailable.
+  }
 
   // 1. Самый безопасный и явный вариант: переменная среды
   const envKey = process.env.OLLAMA_API_KEY?.trim();
@@ -23,8 +27,14 @@ async function getApiKey(ctx?: ExtensionContext): Promise<string> {
     );
   }
 
-  const raw = fs.readFileSync(authPath, "utf8");
-  const auth = JSON.parse(raw);
+  let auth: any;
+  try {
+    const raw = fs.readFileSync(authPath, "utf8");
+    auth = JSON.parse(raw);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`OLLAMA_API_KEY is not set and auth.json could not be read or parsed: ${message}`);
+  }
 
   const key = auth?.ollama?.key;
 

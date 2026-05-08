@@ -49,6 +49,8 @@ import {
 type ModelRegistry = ExtensionCommandContext["modelRegistry"];
 type RequestAuth = Pick<ProviderStreamOptions, "apiKey" | "headers">;
 
+const EXTRACTION_TIMEOUT_MS = 10 * 60 * 1000;
+
 async function getRequestAuthOrThrow(
   modelRegistry: ModelRegistry,
   model: Model<Api>,
@@ -288,23 +290,33 @@ async function generateExtraction(
     // Use phase-based progress loader
     return await ctx.ui.custom<ExtractionResult>((tui, theme, _kb, done) => {
       const loader = new ProgressLoader(tui, theme, EXTRACTION_PHASES[0]);
-      loader.onAbort = () => {
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout>;
+      const finish = (result: ExtractionResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
         loader.dispose();
-        done({ success: false, error: "Cancelled" });
+        done(result);
+      };
+      timeout = setTimeout(() => {
+        finish({ success: false, error: "Extraction timed out" });
+      }, EXTRACTION_TIMEOUT_MS);
+
+      loader.onAbort = () => {
+        finish({ success: false, error: "Cancelled" });
       };
 
       doExtractionWithPhases(conversationText, goal, config, ctx, model, loader.signal, (phase) => {
-        loader.setPhase(phase);
+        if (!settled) loader.setPhase(phase);
       })
         .then((result) => {
           const completionMessage = loader.getCompletionMessage();
-          loader.dispose();
-          done({ ...result, completionMessage });
+          finish({ ...result, completionMessage });
         })
         .catch((err) => {
-          loader.dispose();
           console.error("Handoff extraction failed:", err);
-          done({ success: false, error: err.message ?? "Unknown error" });
+          finish({ success: false, error: err.message ?? "Unknown error" });
         });
 
       return loader;
@@ -313,13 +325,26 @@ async function generateExtraction(
     // Use simple bordered loader
     return await ctx.ui.custom<ExtractionResult>((tui, theme, _kb, done) => {
       const loader = new BorderedLoader(tui, theme, "Generating handoff context...");
-      loader.onAbort = () => done({ success: false, error: "Cancelled" });
+      let settled = false;
+      let timeout: ReturnType<typeof setTimeout>;
+      const finish = (result: ExtractionResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        (loader as any).dispose?.();
+        done(result);
+      };
+      timeout = setTimeout(() => {
+        finish({ success: false, error: "Extraction timed out" });
+      }, EXTRACTION_TIMEOUT_MS);
+
+      loader.onAbort = () => finish({ success: false, error: "Cancelled" });
 
       doExtraction(conversationText, goal, config, ctx, model, loader.signal)
-        .then(done)
+        .then(finish)
         .catch((err) => {
           console.error("Handoff extraction failed:", err);
-          done({ success: false, error: err.message ?? "Unknown error" });
+          finish({ success: false, error: err.message ?? "Unknown error" });
         });
 
       return loader;

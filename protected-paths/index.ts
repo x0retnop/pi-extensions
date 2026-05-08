@@ -2,6 +2,14 @@
 
 import path from "node:path";
 
+type ProtectedPathsMode = "strict" | "balanced" | "relaxed";
+
+const CONFIG = {
+  mode: "relaxed" as ProtectedPathsMode,
+};
+
+const sessionAllowedReadRoots = new Set<string>();
+
 function normalizePath(input: string, cwd: string): string {
   if (!input) return "";
   const cleaned = input.replace(/^["']|["']$/g, "");
@@ -54,6 +62,22 @@ function cwdIsTooBroad(cwd: string): boolean {
   return broadRoots.includes(normalizedCwd);
 }
 
+function getTrustedReadRoots(): string[] {
+  const home = getHome();
+
+  return [
+    path.join(home, "AppData", "Roaming", "npm", "node_modules"),
+    path.join(home, "AppData", "Local", "Programs"),
+    path.join(home, ".cargo", "registry"),
+    path.join(home, "go", "pkg", "mod"),
+    path.join(home, ".nuget", "packages"),
+    path.join(home, ".gradle", "caches", "modules-2"),
+    path.join(home, ".m2", "repository"),
+  ]
+    .filter(Boolean)
+    .map((p) => path.resolve(p).toLowerCase());
+}
+
 function getProtectedRoots(): string[] {
   const home = getHome();
 
@@ -86,10 +110,21 @@ function classifyPathAccess(targetPath: string, cwd: string): {
   }
 
   for (const root of getProtectedRoots()) {
-    if (isInside(normalized, root)) {
+    const isDriveRoot = path.resolve(root).toLowerCase() === path.parse(root).root.toLowerCase();
+    const protectedMatch = isDriveRoot ? normalized === root : isInside(normalized, root);
+    if (protectedMatch) {
       return {
         scope: "protected",
         reason: `protected root: ${root}`,
+      };
+    }
+  }
+
+  for (const root of getTrustedReadRoots()) {
+    if (isInside(normalized, root)) {
+      return {
+        scope: "outside_project",
+        reason: `trusted read root: ${root}`,
       };
     }
   }
@@ -181,6 +216,15 @@ async function askOnce(ctx: any, message: string): Promise<boolean> {
   return choice === "Yes";
 }
 
+async function askReadAccess(ctx: any, message: string): Promise<"once" | "directory" | "block"> {
+  if (!ctx?.hasUI) return "block";
+
+  const choice = await ctx.ui.select(message, ["Allow once", "Allow this directory this session", "Block"]);
+  if (choice === "Allow once") return "once";
+  if (choice === "Allow this directory this session") return "directory";
+  return "block";
+}
+
 async function askTwice(ctx: any, message: string): Promise<boolean> {
   if (!ctx?.hasUI) return false;
 
@@ -200,6 +244,14 @@ async function askTwice(ctx: any, message: string): Promise<boolean> {
 }
 
 export default function (pi: any) {
+  pi.on("session_start", async () => {
+    sessionAllowedReadRoots.clear();
+  });
+
+  pi.on("session_shutdown", async () => {
+    sessionAllowedReadRoots.clear();
+  });
+
   pi.on("tool_call", async (event: any, ctx: any) => {
     const cwd = String(ctx?.cwd || process.cwd());
     const tool = String(event.toolName ?? "");
@@ -215,23 +267,37 @@ export default function (pi: any) {
       };
     }
 
-    // read outside project: ask once.
+    // read outside project: relaxed mode allows normal external reads; protected roots still ask.
     if (tool === "read") {
       const filePath = extractFilePath(input);
       if (!filePath) return undefined;
 
+      const normalizedPath = normalizePath(filePath, cwd).toLowerCase();
       const access = classifyPathAccess(filePath, cwd);
 
       if (access.scope === "inside_project") {
         return undefined;
       }
 
-      const allowed = await askOnce(
+      for (const root of sessionAllowedReadRoots) {
+        if (isInside(normalizedPath, root)) return undefined;
+      }
+
+      if (CONFIG.mode === "relaxed" && access.scope === "outside_project") {
+        return undefined;
+      }
+
+      const decision = await askReadAccess(
         ctx,
         `Read file outside current project?\n\nPath: ${filePath}\nReason: ${access.reason}`
       );
 
-      if (!allowed) {
+      if (decision === "directory") {
+        sessionAllowedReadRoots.add(path.dirname(normalizedPath));
+        return undefined;
+      }
+
+      if (decision !== "once") {
         return {
           block: true,
           reason: `Blocked read outside current project: ${filePath}`,

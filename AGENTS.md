@@ -1,4 +1,4 @@
-# Global AGENTS.md
+# Project AGENTS.md
 
 ## Priority and defaults
 
@@ -51,15 +51,53 @@
 - Never perform destructive actions without explicit permission: mass delete, format, reset, clean, force checkout, or broad filesystem changes.
 - If an action may be unsafe, first reduce risk by narrowing scope or using read-only inspection. If risk remains, ask.
 
-## Environment
+## Environment and commands
 
-- Assume Windows 10 with CMD or PowerShell.
+- Assume normal Windows 10 with CMD or PowerShell.
 - Do not assume WSL, Git Bash, macOS, Linux, POSIX shell, or Unix utilities unless explicitly requested.
-- Use `rg` for search and file discovery.
-- Use Python for targeted reads, edits, replacement counts, and lightweight validation.
-- Use inline Python only for short, simple, low-risk one-off operations.
-- For multi-file edits, generated text, Markdown/JSON/code output, nested quoting, or scripts longer than ~20 lines, always create `_temp.py`, run it, fix if needed, then delete it.
-- Do not repeatedly rewrite long inline scripts after syntax errors; switch to a temporary file.
-- Use UTF-8 without BOM.
-- Prefer LF line endings and forward slashes in example paths.
-- Do not mix shell syntaxes.
+- Use the shell mainly as a launcher for `rg`, `python`, `git`, `npm`, `npx`, `pnpm`, `yarn`, or project-local tools.
+- `rg` works and is the default tool for search and file discovery.
+- Python 3 is available globally and is preferred for targeted reads, edits, replacement counts, generated text, and lightweight validation.
+- Avoid bash-only commands or syntax unless explicitly requested: `sed`, `grep`, `awk`, `wc`, `find -printf`, heredoc `<<'PY'`, process substitution, or `for f in ...; do ...`.
+- Prefer Windows-friendly commands and Python over shell pipelines when quoting, encoding, paths, or multi-line text matter.
+- Use UTF-8 without BOM for code, config, Markdown, text, and agent files.
+- Prefer LF line endings and forward slashes in examples. Do not normalize unrelated files.
+- Do not mix shell syntaxes in one command.
+
+Useful low-noise commands:
+
+```text
+rg -n "pattern" .
+rg -n -C 3 "pattern" .
+rg -l "pattern" .
+rg --files -g "*.ts" -g "*.tsx" -g "*.py"
+git status --short
+git diff --stat
+git diff -- path/to/file
+npx --no-install tsc --noEmit
+npx tsc --noEmit
+python -m py_compile path/to/file.py
+```
+
+For short inline Python, `python -c "..."` is OK.
+
+For multi-line Python in PowerShell, use this form:
+
+```powershell
+@'
+from pathlib import Path
+
+p = Path("src/main.ts")
+print(p)
+'@ | python -
+```
+
+For multi-file edits, generated text, Markdown/JSON/code output, nested quoting, or scripts longer than about 20 lines, create `_temp.py`, run it, fix if needed, then delete it.
+Do not keep rewriting long inline commands after quoting/syntax errors; switch to a temporary script.
+
+## Safety extensions
+
+- `permission-gate` may run in relaxed mode: read-only inspection, package metadata lookup, and safe-looking inline Python reads are usually allowed.
+- `protected-paths` may run in relaxed mode: ordinary external reads can be allowed, but writes/edits outside the project and sensitive roots still need caution.
+- These relaxed rules reduce prompt friction; they do not permit broad scope creep. Stay project-local unless external reads are directly useful for the task.
+- Installs, dependency changes, destructive commands, migrations, broad formatters, production builds, servers/watchers, and non-local writes still require explicit user permission.

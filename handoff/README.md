@@ -34,10 +34,19 @@ Examples:
 - Tracks the last invoked skill and includes it in handoff metadata when available.
 - Starts a new session with the generated handoff prompt ready for the user to review and send.
 - Uses the selected model or configured extraction model.
+- Handles malformed extraction/parser output as a graceful handoff error instead of throwing through the command handler.
+- Cleans up progress loaders on completion, cancellation, error, or extraction timeout.
 
 ## Settings
 
-Optional config can be loaded by the extension from project/user files when present. If no config is present, built-in defaults are used.
+Optional config can be loaded from `.pi/settings.json` under the `handoff` key. If no config is present, built-in defaults are used.
+
+Current notable defaults:
+
+- phase progress UI is enabled;
+- file validation is enabled;
+- extraction uses the current model unless configured otherwise;
+- interactive extraction has a built-in timeout to prevent progress UI intervals from living forever if the model call hangs.
 
 ## Compatibility
 

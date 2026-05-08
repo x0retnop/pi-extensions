@@ -12,7 +12,14 @@ type AskKind =
   | "known-ask-command"
   | "unknown-command";
 
+type GateMode = "strict" | "balanced" | "relaxed";
+
+const CONFIG = {
+  mode: "relaxed" as GateMode,
+};
+
 const sessionAllowedKinds = new Set<AskKind>();
+const sessionAllowedCommands = new Set<string>();
 
 const noSessionKinds = new Set<AskKind>([
   "install-command",
@@ -29,6 +36,9 @@ function matchesAny(command: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(command));
 }
 
+function normalizeCommand(command: string): string {
+  return command.trim().replace(/\s+/g, " ");
+}
 
 const safeTempPyPath = String.raw`(?:(?:"(?:\.[\\/])?_temp\.py")|(?:'(?:\.[\\/])?_temp\.py')|(?:(?:\.[\\/])?_temp\.py))`;
 const safeTempPyDeletePatterns: RegExp[] = [
@@ -102,6 +112,49 @@ function isBashPythonHeredoc(command: string): boolean {
   return /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*<<['"]?[A-Z_][A-Z0-9_]*['"]?/is.test(
     command
   );
+}
+
+function isInlinePython(command: string): boolean {
+  return (
+    isPowerShellPythonStdin(command) ||
+    isBashPythonHeredoc(command) ||
+    /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-c\s+[\s\S]+$/i.test(command)
+  );
+}
+
+function looksLikeReadOnlyInlinePython(command: string): boolean {
+  if (!isInlinePython(command)) return false;
+
+  const lower = command.toLowerCase();
+  const riskyTokens = [
+    "write_text",
+    "write_bytes",
+    ".write(",
+    "open(",
+    "'w'",
+    '"w"',
+    "'a'",
+    '"a"',
+    "unlink(",
+    "remove(",
+    "rmdir(",
+    "removedirs(",
+    "shutil.rmtree",
+    "shutil.move",
+    "shutil.copy",
+    "rename(",
+    "replace(",
+    "subprocess",
+    "system(",
+    "popen(",
+    "pip install",
+    "urllib.request",
+    "requests.",
+    "httpx.",
+    "socket.",
+  ];
+
+  return !riskyTokens.some((token) => lower.includes(token));
 }
 
 function hasShellControlOperators(command: string): boolean {
@@ -181,6 +234,21 @@ const allowPatterns: RegExp[] = [
   /^\s*yarn\s+typecheck(?:\s+.*)?$/i,
   /^\s*yarn\s+check(?:\s+.*)?$/i,
   /^\s*yarn\s+lint(?:\s+.*)?$/i,
+];
+
+const relaxedAllowPatterns: RegExp[] = [
+  // Package/library metadata lookups. These inspect registries or local metadata, but do not install.
+  /^\s*npm\s+(?:view|info|search|repo|docs|bugs|home|ls)\b(?:\s+.*)?$/i,
+  /^\s*pnpm\s+(?:view|info|search|why|list|ls)\b(?:\s+.*)?$/i,
+  /^\s*yarn\s+(?:info|why|list)\b(?:\s+.*)?$/i,
+  /^\s*(?:pip|pip3)\s+(?:show|index\s+versions|list|freeze)\b(?:\s+.*)?$/i,
+  /^\s*python\s+-m\s+pip\s+(?:show|index\s+versions|list|freeze)\b(?:\s+.*)?$/i,
+  /^\s*uv\s+pip\s+(?:show|list|freeze)\b(?:\s+.*)?$/i,
+  /^\s*cargo\s+(?:search|info|metadata|tree)\b(?:\s+.*)?$/i,
+  /^\s*go\s+list\b(?:\s+.*)?$/i,
+  /^\s*dotnet\s+(?:package\s+search|nuget\s+list)\b(?:\s+.*)?$/i,
+  /^\s*composer\s+(?:show|search|info)\b(?:\s+.*)?$/i,
+  /^\s*gem\s+(?:info|query|search|list)\b(?:\s+.*)?$/i,
 ];
 
 const askPatterns: RegExp[] = [
@@ -264,12 +332,26 @@ const blockPatterns: RegExp[] = [
 function isAutoAllowedSimpleCommand(command: string): boolean {
   const trimmed = command.trim();
 
-  if (!trimmed || hasShellControlOperators(trimmed) || matchesAny(trimmed, blockPatterns)) {
+  if (!trimmed || matchesAny(trimmed, blockPatterns)) {
     return false;
   }
 
   if (isSafeTempPyDelete(trimmed)) {
     return true;
+  }
+
+  if (CONFIG.mode === "relaxed") {
+    if (matchesAny(trimmed, relaxedAllowPatterns)) {
+      return true;
+    }
+
+    if (looksLikeReadOnlyInlinePython(trimmed)) {
+      return true;
+    }
+  }
+
+  if (hasShellControlOperators(trimmed)) {
+    return false;
   }
 
   if (matchesAny(trimmed, askPatterns)) {
@@ -352,21 +434,32 @@ async function askAllowOnceOrSession(
   ctx: any,
   message: string,
   kind: AskKind
-): Promise<"once" | "session" | "block"> {
+): Promise<"once" | "command" | "session" | "block"> {
   if (!ctx?.hasUI) return "block";
 
   const choices = noSessionKinds.has(kind)
-    ? ["Allow once", "Block"]
-    : ["Allow once", "Always allow this session", "Block"];
+    ? ["Allow once", "Always allow exact command this session", "Block"]
+    : ["Allow once", "Always allow exact command this session", "Always allow this kind this session", "Block"];
 
   const choice = await ctx.ui.select(message, choices);
 
   if (choice === "Allow once") return "once";
-  if (choice === "Always allow this session") return "session";
+  if (choice === "Always allow exact command this session") return "command";
+  if (choice === "Always allow this kind this session") return "session";
   return "block";
 }
 
 export default function (pi: any) {
+  pi.on("session_start", async () => {
+    sessionAllowedKinds.clear();
+    sessionAllowedCommands.clear();
+  });
+
+  pi.on("session_shutdown", async () => {
+    sessionAllowedKinds.clear();
+    sessionAllowedCommands.clear();
+  });
+
   pi.on("tool_call", async (event: any, ctx: any) => {
     const tool = String(event.toolName ?? "");
 
@@ -387,7 +480,11 @@ export default function (pi: any) {
       };
     }
 
-    if (isSafeTempPyDelete(command) || isAutoAllowedCompoundCommand(command)) {
+    if (sessionAllowedCommands.has(normalizeCommand(command))) {
+      return undefined;
+    }
+
+    if (isSafeTempPyDelete(command) || isAutoAllowedSimpleCommand(command) || isAutoAllowedCompoundCommand(command)) {
       return undefined;
     }
 
@@ -406,6 +503,11 @@ export default function (pi: any) {
 
       if (decision === "session") {
         sessionAllowedKinds.add(kind);
+        return undefined;
+      }
+
+      if (decision === "command") {
+        sessionAllowedCommands.add(normalizeCommand(command));
         return undefined;
       }
 
@@ -428,6 +530,11 @@ export default function (pi: any) {
         kind
       );
 
+      if (decision === "command") {
+        sessionAllowedCommands.add(normalizeCommand(command));
+        return undefined;
+      }
+
       if (decision === "once") {
         return undefined;
       }
@@ -447,6 +554,11 @@ export default function (pi: any) {
       `Unknown command. Allow once?\n\n${command}`,
       "unknown-command"
     );
+
+    if (decision === "command") {
+      sessionAllowedCommands.add(normalizeCommand(command));
+      return undefined;
+    }
 
     if (decision === "once") {
       return undefined;

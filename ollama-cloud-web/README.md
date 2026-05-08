@@ -30,6 +30,8 @@ The extension looks for an Ollama API key in this order:
 2. `OLLAMA_API_KEY` environment variable.
 3. `~/.pi/agent/auth.json` with `ollama.key`.
 
+Auth lookup is defensive: if Pi's internal auth storage is unavailable, or `auth.json` cannot be read/parsed, the extension falls back where possible or returns a clear tool error instead of crashing extension loading/event handling.
+
 ## Compatibility
 
 Tested and known to work with Pi v0.72.1 or newer.

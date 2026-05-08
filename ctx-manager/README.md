@@ -27,6 +27,8 @@ pi install git:github.com/x0retnop/pi-extension-ctx-manager
 - Does not replace Pi's footer; it uses status/widget output.
 - `/ctx-handoff` uses the current model and conversation.
 - `/ctx-handoff-lite` builds a cheaper local draft from recent session entries.
+- Tracks current/last task duration for status output.
+- Resets session-local status/timing state on `session_start`, so durations and status toggles do not leak across `/new`, `/resume`, or `/fork`.
 
 ## Settings
 
