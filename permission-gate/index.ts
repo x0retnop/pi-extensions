@@ -4,6 +4,7 @@ type AskKind =
   | "inline-python-stdin"
   | "inline-python-command"
   | "inline-node-command"
+  | "python-script"
   | "build-command"
   | "test-command"
   | "format-command"
@@ -68,7 +69,6 @@ const KIND_METAS: KindMeta[] = [
     kind: "test-command",
     patterns: [
       /^\s*pytest(?:\s+.*)?$/i,
-      /^\s*python\s+-m\s+unittest(?:\s+.*)?$/i,
       /^\s*python\s+.*(?:^|[\\/])?eval_runner\.py(?:\s+.*)?$/i,
       /^\s*python\s+.*[\\/]eval[\\/].*$/i,
       /^\s*npm\s+test(?:\s+.*)?$/i,
@@ -76,6 +76,13 @@ const KIND_METAS: KindMeta[] = [
       /^\s*pnpm\s+test(?:\s+.*)?$/i,
       /^\s*pnpm\s+run\s+test(?:\s+.*)?$/i,
       /^\s*yarn\s+test(?:\s+.*)?$/i,
+    ],
+    allowSession: true,
+  },
+  {
+    kind: "python-script",
+    patterns: [
+      /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+(?!-[cm]\s|-\s)(?:\S+\s+)*\S+\.py\b(?:\s+.*)?$/i,
     ],
     allowSession: true,
   },
@@ -144,7 +151,7 @@ function isSafeTempPyDelete(command: string): boolean {
   return matchesAny(command, safeTempPyDeletePatterns);
 }
 
-function splitOnShellAndAnd(command: string): string[] | null {
+function splitOnCompoundOperators(command: string): string[] | null {
   const parts: string[] = [];
   let quote: "'" | '"' | null = null;
   let start = 0;
@@ -168,7 +175,7 @@ function splitOnShellAndAnd(command: string): string[] | null {
       continue;
     }
 
-    if (ch === "&" && next === "&") {
+    if ((ch === "&" && next === "&") || (ch === "|" && next === "|")) {
       const part = command.slice(start, i).trim();
       if (!part) return null;
       parts.push(part);
@@ -437,6 +444,15 @@ const allowPatterns: RegExp[] = [
   /^\s*node(?:js)?(?:\s+(?:-p|--print))(?:\s+.*)?$/i,
   /^\s*node(?:js)?(?:\s+(?:-c|--check))(?:\s+.*)?$/i,
 
+  // Common read-only pipe / text-processing utilities.
+  /^\s*head(?:\s+.*)?$/i,
+  /^\s*tail(?:\s+.*)?$/i,
+  /^\s*sort(?:\s+.*)?$/i,
+  /^\s*uniq(?:\s+.*)?$/i,
+  /^\s*wc(?:\s+.*)?$/i,
+  /^\s*cut(?:\s+.*)?$/i,
+  /^\s*tr(?:\s+.*)?$/i,
+
   // ripgrep: default search and file discovery tool.
   /^\s*rg(?:\s+.*)?$/i,
 
@@ -450,6 +466,9 @@ const allowPatterns: RegExp[] = [
   /^\s*git\s+rev-parse(?:\s+.*)?$/i,
   /^\s*git\s+remote(?:\s+.*)?$/i,
   /^\s*git\s+ls-files(?:\s+.*)?$/i,
+
+  // Python read-only / safe-only invocations.
+  /^\s*python\s+-m\s+unittest(?:\s+.*)?$/i,
 
   // Python syntax checks. These may create __pycache__, but do not change source files.
   /^\s*python\s+-m\s+py_compile(?:\s+.*)?$/i,
@@ -562,13 +581,17 @@ function isAutoAllowedSimpleCommand(command: string): boolean {
 }
 
 function isAutoAllowedCompoundCommand(command: string): boolean {
-  const parts = splitOnShellAndAnd(command);
+  const parts = splitOnCompoundOperators(command);
   if (!parts || parts.length < 2) return false;
 
   return parts.every((part) => {
-    // Guard: any block or ask inside a compound must trigger explicit review.
-    if (matchesAny(part, blockPatterns) || matchesAny(part, askPatterns)) {
+    if (matchesAny(part, blockPatterns)) {
       return false;
+    }
+    // If a part matches a kind that is already session-allowed, treat it as safe.
+    const kind = getAskKind(part);
+    if (kind && sessionAllowedKinds.has(kind)) {
+      return true;
     }
     return isAutoAllowedSimpleCommand(part) || isAutoAllowedSafePipeline(part);
   });
