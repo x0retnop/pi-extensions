@@ -3,6 +3,7 @@
 type AskKind =
   | "inline-python-stdin"
   | "inline-python-command"
+  | "inline-node-command"
   | "build-command"
   | "test-command"
   | "format-command"
@@ -48,6 +49,13 @@ const KIND_METAS: KindMeta[] = [
     allowSession: true,
   },
   {
+    kind: "inline-node-command",
+    patterns: [
+      /^\s*node(?:js)?(?:\s+--experimental-strip-types)?\s+-e\s+[\s\S]+$/i,
+    ],
+    allowSession: true,
+  },
+  {
     kind: "build-command",
     patterns: [
       /^\s*npm\s+run\s+build(?:\s+.*)?$/i,
@@ -78,7 +86,7 @@ const KIND_METAS: KindMeta[] = [
       /^\s*npm\s+run\s+format(?:\s+.*)?$/i,
       /^\s*pnpm\s+run\s+format(?:\s+.*)?$/i,
       /^\s*yarn\s+format(?:\s+.*)?$/i,
-      /^\s*prettier\b.*\b--write\b/i,
+      /^\s*prettier\b.*--write\b/i,
       /^\s*black(?:\s+.*)?$/i,
       /^\s*ruff\s+format(?:\s+.*)?$/i,
     ],
@@ -239,6 +247,79 @@ function looksLikeReadOnlyInlinePython(command: string): boolean {
   );
 }
 
+function isInlineNode(command: string): boolean {
+  return /^\s*node(?:js)?(?:\s+--experimental-strip-types)?\s+-e\s+[\s\S]+$/i.test(command);
+}
+
+function looksLikeReadOnlyInlineNode(command: string): boolean {
+  if (!isInlineNode(command)) return false;
+
+  const lower = command.toLowerCase();
+  const riskyTokens = [
+    "fs.write",
+    "fs.appendfile",
+    "fs.unlink",
+    "fs.rmdir",
+    "fs.rm",
+    "fs.rename",
+    "fs.copy",
+    "child_process",
+    "spawn(",
+    "exec(",
+    "execsync(",
+    "eval(",
+    "function(",
+    "require('http')",
+    "require('https')",
+    "require('net')",
+    "fetch(",
+    "createwritestream",
+  ];
+
+  return !riskyTokens.some((token) => lower.includes(token));
+}
+
+function isSafeEchoRedirection(command: string): boolean {
+  const trimmed = command.trim();
+  if (!/^\s*echo\s+/i.test(trimmed)) return false;
+
+  let quote: "'" | '"' | null = null;
+  let sawRedirect = false;
+
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const ch = trimmed[i];
+    const next = trimmed[i + 1];
+
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      continue;
+    }
+
+    if (quote === '"') {
+      if (ch === '"') quote = null;
+      continue;
+    }
+
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+
+    if (ch === ">") {
+      sawRedirect = true;
+      continue;
+    }
+
+    if (ch === "|" || ch === ";" || ch === "&" || ch === "<" || ch === "`" || ch === "\n" || ch === "\r") {
+      return false;
+    }
+
+    if (ch === "$" && next === "(") return false;
+  }
+
+  return sawRedirect;
+}
+
 function splitOnSafePipe(command: string): string[] | null {
   const parts: string[] = [];
   let quote: "'" | '"' | null = null;
@@ -294,8 +375,10 @@ function isAutoAllowedSafePipeline(command: string): boolean {
   const parts = splitOnSafePipe(command);
   if (!parts || parts.length < 2) return false;
 
-  const [first, ...rest] = parts;
-  return isAutoAllowedSimpleCommand(first) && rest.every((part) => matchesAny(part, safePipeTailPatterns));
+  return parts.every((part) => {
+    if (matchesAny(part, blockPatterns)) return false;
+    return isAutoAllowedSimpleCommand(part);
+  });
 }
 
 function hasShellControlOperators(command: string): boolean {
@@ -336,9 +419,23 @@ function hasShellControlOperators(command: string): boolean {
 
 const allowPatterns: RegExp[] = [
   // Basic Windows-friendly read-only shell commands.
-  /^\s*(?:pwd|cd|chdir)\s*$/i,
+  /^\s*(?:pwd|cd|chdir)(?:\s+.*)?$/i,
   /^\s*dir(?:\s+.*)?$/i,
   /^\s*Get-ChildItem(?:\s+.*)?$/i,
+
+  // Common Unix-style read-only / safe commands.
+  /^\s*ls(?:\s+.*)?$/i,
+  /^\s*ll(?:\s+.*)?$/i,
+  /^\s*la(?:\s+.*)?$/i,
+  /^\s*grep(?:\s+.*)?$/i,
+  /^\s*echo(?:\s+.*)?$/i,
+  /^\s*mkdir(?:\s+.*)?$/i,
+  /^\s*cat(?:\s+.*)?$/i,
+
+  // Node.js read-only / safe-only invocations.
+  /^\s*node(?:js)?(?:\s+(?:--version|-v|--help))(?:\s+.*)?$/i,
+  /^\s*node(?:js)?(?:\s+(?:-p|--print))(?:\s+.*)?$/i,
+  /^\s*node(?:js)?(?:\s+(?:-c|--check))(?:\s+.*)?$/i,
 
   // ripgrep: default search and file discovery tool.
   /^\s*rg(?:\s+.*)?$/i,
@@ -443,6 +540,13 @@ function isAutoAllowedSimpleCommand(command: string): boolean {
     if (looksLikeReadOnlyInlinePython(trimmed)) {
       return true;
     }
+    if (looksLikeReadOnlyInlineNode(trimmed)) {
+      return true;
+    }
+  }
+
+  if (isSafeEchoRedirection(trimmed)) {
+    return true;
   }
 
   if (hasShellControlOperators(trimmed)) {

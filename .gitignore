@@ -1,6 +1,7 @@
 *.ps1
 .env
 node_modules/
+tests/
 .venv/
 venv/
 __pycache__/
