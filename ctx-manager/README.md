@@ -14,7 +14,7 @@ pi install git:github.com/x0retnop/pi-extension-ctx-manager
 | --- | --- |
 | `/ctx` | Show current context usage and session stats. |
 | `/ctx clear` | Clear the context-manager widget/status output. |
-| `/ctx-status` | Show current footer status mode. |
+| `/ctx-status` | Toggle persistent context status. |
 | `/ctx-status on` | Enable persistent context status. |
 | `/ctx-status off` | Disable persistent context status. |
 | `/ctx-compact [instructions]` | Manually trigger Pi compaction with default or custom instructions. |

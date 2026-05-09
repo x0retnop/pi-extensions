@@ -19,7 +19,7 @@ pi install git:github.com/x0retnop/pi-extension-context
 
 - Lists project context files such as `AGENTS.md` and `CLAUDE.md`.
 - Shows extension and skill commands that Pi has registered.
-- Tracks skills that were loaded through `read` tool results.
+- Tracks skills that were loaded through successful `read` tool results, with session-local cache reset on session changes.
 - Estimates message, system prompt, and active tool tokens.
 - Shows total session token/cost counters when available.
 

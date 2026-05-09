@@ -18,7 +18,9 @@ pi install git:github.com/x0retnop/pi-extension-a-rewind
 
 ### BTW
 
-Ask quick side questions with `/btw` using the current conversation as context, without adding the question or answer to session history.
+Ask quick side questions with `/btw` using the current conversation as bounded context, without adding the question or answer to session history.
+
+Recent reliability update: large sessions use a bounded context slice.
 
 ```bash
 pi install git:github.com/x0retnop/pi-extension-btw
@@ -46,7 +48,7 @@ pi install git:github.com/x0retnop/pi-extension-ctx-manager
 
 Generates a focused handoff prompt from the current session and starts a new session with it pre-filled.
 
-Recent reliability updates: graceful handling of malformed extraction output and progress cleanup/timeout safeguards.
+Recent reliability updates: bounded extraction context, more tolerant JSON parsing, and progress cleanup/timeout abort safeguards.
 
 ```bash
 pi install git:github.com/x0retnop/pi-extension-handoff
@@ -84,7 +86,9 @@ pi install git:github.com/x0retnop/pi-extension-protected-paths
 
 ### Sessions
 
-Adds `/sessions`, an interactive picker for switching between recent Pi sessions.
+Adds `/sessions`, an interactive lazy-loading picker for switching between recent Pi sessions.
+
+Recent performance update: session previews are loaded lazily in small batches.
 
 ```bash
 pi install git:github.com/x0retnop/pi-extension-sessions

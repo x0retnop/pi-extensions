@@ -35,6 +35,7 @@ Examples:
 - Uses the currently selected Pi model.
 - Has no tool access; it cannot read files, run commands, or edit anything.
 - Answers only from the existing conversation context.
+- Bounds very large conversation input by keeping the beginning and recent tail.
 - Shows a scrollable overlay in interactive mode.
 - Prints the answer to stdout in non-interactive mode.
 - Does not write the question or answer to the session history.

@@ -26,6 +26,8 @@ pi install git:github.com/x0retnop/pi-extension-sessions
 
 - Lists recent sessions, sorted by modification time.
 - Opens an interactive picker in TUI mode.
+- Loads session previews lazily: starts with the latest 5 sessions and loads 5 more when the picker reaches the end.
+- Reads only a small preview from each session file for the picker instead of parsing full histories up front.
 - Prints plain session lines in non-interactive mode.
 - Switches to the selected session through Pi's session API.
 - Supports an optional visible item limit.

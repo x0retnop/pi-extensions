@@ -22,7 +22,7 @@ pi install git:github.com/x0retnop/pi-extension-a-rewind
 - Watches assistant messages for tool-use preambles without real tool calls.
 - In auto mode, injects a retry instruction and filters the failed assistant output from the next model context.
 - Persists the auto-mode setting in the session.
-- Adds a small status/widget indicator when available.
+- Adds a small status indicator when available.
 - Ignores unexpected message-shape errors inside the `message_end` handler so the guard does not interrupt Pi event processing.
 
 ## Marker format

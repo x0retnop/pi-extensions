@@ -30,12 +30,14 @@ Examples:
 ## Behavior
 
 - Uses the current session conversation as source material.
+- Bounds very large conversation input by keeping the beginning and recent tail for extraction.
 - Extracts relevant files, commands, facts, decisions, risks, and next steps.
 - Tracks the last invoked skill and includes it in handoff metadata when available.
 - Starts a new session with the generated handoff prompt ready for the user to review and send.
 - Uses the selected model or configured extraction model.
 - Handles malformed extraction/parser output as a graceful handoff error instead of throwing through the command handler.
-- Cleans up progress loaders on completion, cancellation, error, or extraction timeout.
+- Uses a more tolerant JSON parser for extraction responses with surrounding prose or multiple code blocks.
+- Cleans up progress loaders and aborts extraction requests on completion, cancellation, error, or timeout.
 
 ## Settings
 
@@ -46,7 +48,7 @@ Current notable defaults:
 - phase progress UI is enabled;
 - file validation is enabled;
 - extraction uses the current model unless configured otherwise;
-- interactive extraction has a built-in timeout to prevent progress UI intervals from living forever if the model call hangs.
+- interactive extraction has a built-in timeout that aborts the model request and prevents progress UI intervals from living forever if the model call hangs.
 
 ## Compatibility
 
