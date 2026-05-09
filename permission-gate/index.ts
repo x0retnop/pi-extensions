@@ -21,12 +21,97 @@ const CONFIG = {
 const sessionAllowedKinds = new Set<AskKind>();
 const sessionAllowedCommands = new Set<string>();
 
-const noSessionKinds = new Set<AskKind>([
-  "install-command",
-  "delete-command",
-  "compound-command",
-  "unknown-command",
-]);
+// ─── Single source of truth for ask-kinds ───
+// Adding a new kind / model variant requires editing ONLY this array.
+interface KindMeta {
+  kind: AskKind;
+  patterns: RegExp[];
+  allowSession: boolean; // if false → "Always allow this kind this session" is not offered
+}
+
+const KIND_METAS: KindMeta[] = [
+  {
+    kind: "inline-python-stdin",
+    patterns: [
+      // PowerShell: @' … '@ | python -
+      /^\s*@(['"])[\s\S]*?\1@\s*\|\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*$/i,
+      // Bash heredoc: python - <<PY
+      /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*<<['"]?[A-Z_][A-Z0-9_]*['"]?/is,
+    ],
+    allowSession: true,
+  },
+  {
+    kind: "inline-python-command",
+    patterns: [
+      /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-c\s+[\s\S]+$/i,
+    ],
+    allowSession: true,
+  },
+  {
+    kind: "build-command",
+    patterns: [
+      /^\s*npm\s+run\s+build(?:\s+.*)?$/i,
+      /^\s*pnpm\s+run\s+build(?:\s+.*)?$/i,
+      /^\s*yarn\s+build(?:\s+.*)?$/i,
+    ],
+    allowSession: true,
+  },
+  {
+    kind: "test-command",
+    patterns: [
+      /^\s*pytest(?:\s+.*)?$/i,
+      /^\s*python\s+-m\s+unittest(?:\s+.*)?$/i,
+      /^\s*python\s+.*(?:^|[\\/])?eval_runner\.py(?:\s+.*)?$/i,
+      /^\s*python\s+.*[\\/]eval[\\/].*$/i,
+      /^\s*npm\s+test(?:\s+.*)?$/i,
+      /^\s*npm\s+run\s+test(?:\s+.*)?$/i,
+      /^\s*pnpm\s+test(?:\s+.*)?$/i,
+      /^\s*pnpm\s+run\s+test(?:\s+.*)?$/i,
+      /^\s*yarn\s+test(?:\s+.*)?$/i,
+    ],
+    allowSession: true,
+  },
+  {
+    kind: "format-command",
+    patterns: [
+      /(?:^|\s)--fix(?:\s|$)/i,
+      /^\s*npm\s+run\s+format(?:\s+.*)?$/i,
+      /^\s*pnpm\s+run\s+format(?:\s+.*)?$/i,
+      /^\s*yarn\s+format(?:\s+.*)?$/i,
+      /^\s*prettier\b.*\b--write\b/i,
+      /^\s*black(?:\s+.*)?$/i,
+      /^\s*ruff\s+format(?:\s+.*)?$/i,
+    ],
+    allowSession: true,
+  },
+  {
+    kind: "install-command",
+    patterns: [
+      /^\s*npm\s+(?:install|i|update|remove|uninstall|add)(?:\s+.*)?$/i,
+      /^\s*pnpm\s+(?:install|update|remove|uninstall|add)(?:\s+.*)?$/i,
+      /^\s*yarn\s+(?:install|add|remove|upgrade)(?:\s+.*)?$/i,
+      /^\s*pip\s+install(?:\s+.*)?$/i,
+      /^\s*python\s+-m\s+pip\s+install(?:\s+.*)?$/i,
+    ],
+    allowSession: false,
+  },
+  {
+    kind: "delete-command",
+    patterns: [
+      /^\s*(?:del|erase|rmdir|rd)\b/i,
+      /^\s*Remove-Item\b/i,
+      /^\s*rm\b/i,
+    ],
+    allowSession: false,
+  },
+];
+
+// Derived from KIND_METAS so there is never a mismatch.
+const askPatterns = KIND_METAS.flatMap((m) => m.patterns);
+
+const noSessionKinds = new Set<AskKind>(
+  KIND_METAS.filter((m) => !m.allowSession).map((m) => m.kind)
+);
 
 function getCommand(input: any): string {
   return String(input?.command ?? "").trim();
@@ -99,19 +184,11 @@ function splitOnShellAndAnd(command: string): string[] | null {
 }
 
 function isPowerShellPythonStdin(command: string): boolean {
-  // Matches:
-  // @'
-  // print("hello")
-  // '@ | python -
-  return /^\s*@(['"])[\s\S]*?\1@\s*\|\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*$/i.test(
-    command
-  );
+  return /^\s*@(['"])[\s\S]*?\1@\s*\|\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*$/i.test(command);
 }
 
 function isBashPythonHeredoc(command: string): boolean {
-  return /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*<<['"]?[A-Z_][A-Z0-9_]*['"]?/is.test(
-    command
-  );
+  return /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*<<['"]?[A-Z_][A-Z0-9_]*['"]?/is.test(command);
 }
 
 function isInlinePython(command: string): boolean {
@@ -315,50 +392,6 @@ const relaxedAllowPatterns: RegExp[] = [
   /^\s*gem\s+(?:info|query|search|list)\b(?:\s+.*)?$/i,
 ];
 
-const askPatterns: RegExp[] = [
-  // Multi-line or arbitrary Python. Useful for project-local reads/edits, but not safe to auto-allow globally.
-  /^\s*@(['"])[\s\S]*?\1@\s*\|\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*$/i,
-  /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-\s*<<['"]?[A-Z_][A-Z0-9_]*['"]?/is,
-  /^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-c\s+[\s\S]+$/i,
-
-  // Builds may write files, run generators, postbuild scripts, etc.
-  /^\s*npm\s+run\s+build(?:\s+.*)?$/i,
-  /^\s*pnpm\s+run\s+build(?:\s+.*)?$/i,
-  /^\s*yarn\s+build(?:\s+.*)?$/i,
-
-  // Real tests can be slow or have project-specific side effects.
-  /^\s*pytest(?:\s+.*)?$/i,
-  /^\s*python\s+-m\s+unittest(?:\s+.*)?$/i,
-  /^\s*python\s+.*(?:^|[\\/])?eval_runner\.py(?:\s+.*)?$/i,
-  /^\s*python\s+.*[\\/]eval[\\/].*$/i,
-  /^\s*npm\s+test(?:\s+.*)?$/i,
-  /^\s*npm\s+run\s+test(?:\s+.*)?$/i,
-  /^\s*pnpm\s+test(?:\s+.*)?$/i,
-  /^\s*pnpm\s+run\s+test(?:\s+.*)?$/i,
-  /^\s*yarn\s+test(?:\s+.*)?$/i,
-
-  // Formatters or fixers that usually rewrite files.
-  /(?:^|\s)--fix(?:\s|$)/i,
-  /^\s*npm\s+run\s+format(?:\s+.*)?$/i,
-  /^\s*pnpm\s+run\s+format(?:\s+.*)?$/i,
-  /^\s*yarn\s+format(?:\s+.*)?$/i,
-  /^\s*prettier\b.*\b--write\b/i,
-  /^\s*black(?:\s+.*)?$/i,
-  /^\s*ruff\s+format(?:\s+.*)?$/i,
-
-  // Package changes / installs / updates.
-  /^\s*npm\s+(?:install|i|update|remove|uninstall|add)(?:\s+.*)?$/i,
-  /^\s*pnpm\s+(?:install|update|remove|uninstall|add)(?:\s+.*)?$/i,
-  /^\s*yarn\s+(?:install|add|remove|upgrade)(?:\s+.*)?$/i,
-  /^\s*pip\s+install(?:\s+.*)?$/i,
-  /^\s*python\s+-m\s+pip\s+install(?:\s+.*)?$/i,
-
-  // Destructive file operations should require explicit approval.
-  /^\s*(?:del|erase|rmdir|rd)\b/i,
-  /^\s*Remove-Item\b/i,
-  /^\s*rm\b/i,
-];
-
 const blockPatterns: RegExp[] = [
   // Clearly dangerous system-level commands.
   /^\s*format\b/i,
@@ -392,7 +425,6 @@ const blockPatterns: RegExp[] = [
   /\bchown\b/i,
 ];
 
-
 function isAutoAllowedSimpleCommand(command: string): boolean {
   const trimmed = command.trim();
 
@@ -408,7 +440,6 @@ function isAutoAllowedSimpleCommand(command: string): boolean {
     if (matchesAny(trimmed, relaxedAllowPatterns)) {
       return true;
     }
-
     if (looksLikeReadOnlyInlinePython(trimmed)) {
       return true;
     }
@@ -418,6 +449,7 @@ function isAutoAllowedSimpleCommand(command: string): boolean {
     return false;
   }
 
+  // Ask-kinds must go through the explicit ask flow, not auto-allow.
   if (matchesAny(trimmed, askPatterns)) {
     return false;
   }
@@ -427,71 +459,22 @@ function isAutoAllowedSimpleCommand(command: string): boolean {
 
 function isAutoAllowedCompoundCommand(command: string): boolean {
   const parts = splitOnShellAndAnd(command);
-  return parts !== null && parts.every((part) => isAutoAllowedSimpleCommand(part) || isAutoAllowedSafePipeline(part));
+  if (!parts || parts.length < 2) return false;
+
+  return parts.every((part) => {
+    // Guard: any block or ask inside a compound must trigger explicit review.
+    if (matchesAny(part, blockPatterns) || matchesAny(part, askPatterns)) {
+      return false;
+    }
+    return isAutoAllowedSimpleCommand(part) || isAutoAllowedSafePipeline(part);
+  });
 }
 
-function getAskKind(command: string): AskKind {
-  if (isPowerShellPythonStdin(command) || isBashPythonHeredoc(command)) {
-    return "inline-python-stdin";
+function getAskKind(command: string): AskKind | undefined {
+  for (const meta of KIND_METAS) {
+    if (matchesAny(command, meta.patterns)) return meta.kind;
   }
-
-  if (/^\s*(?:python|py)(?:\s+-3(?:\.\d+)?)?\s+-c\s+[\s\S]+$/i.test(command)) {
-    return "inline-python-command";
-  }
-
-  if (
-    /^\s*npm\s+run\s+build(?:\s+.*)?$/i.test(command) ||
-    /^\s*pnpm\s+run\s+build(?:\s+.*)?$/i.test(command) ||
-    /^\s*yarn\s+build(?:\s+.*)?$/i.test(command)
-  ) {
-    return "build-command";
-  }
-
-  if (
-    /^\s*pytest(?:\s+.*)?$/i.test(command) ||
-    /^\s*python\s+-m\s+unittest(?:\s+.*)?$/i.test(command) ||
-    /^\s*python\s+.*(?:^|[\\/])?eval_runner\.py(?:\s+.*)?$/i.test(command) ||
-    /^\s*python\s+.*[\\/]eval[\\/].*$/i.test(command) ||
-    /^\s*npm\s+test(?:\s+.*)?$/i.test(command) ||
-    /^\s*npm\s+run\s+test(?:\s+.*)?$/i.test(command) ||
-    /^\s*pnpm\s+test(?:\s+.*)?$/i.test(command) ||
-    /^\s*pnpm\s+run\s+test(?:\s+.*)?$/i.test(command) ||
-    /^\s*yarn\s+test(?:\s+.*)?$/i.test(command)
-  ) {
-    return "test-command";
-  }
-
-  if (
-    /(?:^|\s)--fix(?:\s|$)/i.test(command) ||
-    /^\s*npm\s+run\s+format(?:\s+.*)?$/i.test(command) ||
-    /^\s*pnpm\s+run\s+format(?:\s+.*)?$/i.test(command) ||
-    /^\s*yarn\s+format(?:\s+.*)?$/i.test(command) ||
-    /^\s*prettier\b.*\b--write\b/i.test(command) ||
-    /^\s*black(?:\s+.*)?$/i.test(command) ||
-    /^\s*ruff\s+format(?:\s+.*)?$/i.test(command)
-  ) {
-    return "format-command";
-  }
-
-  if (
-    /^\s*npm\s+(?:install|i|update|remove|uninstall|add)(?:\s+.*)?$/i.test(command) ||
-    /^\s*pnpm\s+(?:install|update|remove|uninstall|add)(?:\s+.*)?$/i.test(command) ||
-    /^\s*yarn\s+(?:install|add|remove|upgrade)(?:\s+.*)?$/i.test(command) ||
-    /^\s*pip\s+install(?:\s+.*)?$/i.test(command) ||
-    /^\s*python\s+-m\s+pip\s+install(?:\s+.*)?$/i.test(command)
-  ) {
-    return "install-command";
-  }
-
-  if (
-    /^\s*(?:del|erase|rmdir|rd)\b/i.test(command) ||
-    /^\s*Remove-Item\b/i.test(command) ||
-    /^\s*rm\b/i.test(command)
-  ) {
-    return "delete-command";
-  }
-
-  return "known-ask-command";
+  return undefined;
 }
 
 async function askAllowOnceOrSession(
@@ -537,29 +520,32 @@ export default function (pi: any) {
       return undefined;
     }
 
+    // 1. Hard blocks (immediate, no session override)
     if (matchesAny(command, blockPatterns)) {
       return {
         block: true,
-        reason: `Blocked by permission-gate.ts:\n${command}`,
+        reason: `Blocked by permission-gate:\n${command}`,
       };
     }
 
+    // 2. Exact command already approved this session
     if (sessionAllowedCommands.has(normalizeCommand(command))) {
       return undefined;
     }
 
+    // 3. Auto-allow heuristics
     if (
       isSafeTempPyDelete(command) ||
-      isAutoAllowedSimpleCommand(command) ||
       isAutoAllowedSafePipeline(command) ||
-      isAutoAllowedCompoundCommand(command)
+      isAutoAllowedCompoundCommand(command) ||
+      isAutoAllowedSimpleCommand(command)
     ) {
       return undefined;
     }
 
-    if (matchesAny(command, askPatterns)) {
-      const kind = getAskKind(command);
-
+    // 4. Known ask-kinds (single source of truth: KIND_METAS)
+    const kind = getAskKind(command);
+    if (kind) {
       if (sessionAllowedKinds.has(kind)) {
         return undefined;
       }
@@ -574,50 +560,42 @@ export default function (pi: any) {
         sessionAllowedKinds.add(kind);
         return undefined;
       }
-
       if (decision === "command") {
         sessionAllowedCommands.add(normalizeCommand(command));
         return undefined;
       }
-
       if (decision === "once") {
         return undefined;
       }
-
       return {
         block: true,
         reason: `User denied command:\n${command}`,
       };
     }
 
+    // 5. Compound / control operators that did not match above
     if (hasShellControlOperators(command)) {
-      const kind: AskKind = "compound-command";
-
+      const compoundKind: AskKind = "compound-command";
       const decision = await askAllowOnceOrSession(
         ctx,
         `Compound shell command detected. Allow once?\n\n${command}`,
-        kind
+        compoundKind
       );
 
       if (decision === "command") {
         sessionAllowedCommands.add(normalizeCommand(command));
         return undefined;
       }
-
       if (decision === "once") {
         return undefined;
       }
-
       return {
         block: true,
         reason: `Blocked compound shell command:\n${command}`,
       };
     }
 
-    if (matchesAny(command, allowPatterns)) {
-      return undefined;
-    }
-
+    // 6. Truly unknown command
     const decision = await askAllowOnceOrSession(
       ctx,
       `Unknown command. Allow once?\n\n${command}`,
@@ -628,11 +606,9 @@ export default function (pi: any) {
       sessionAllowedCommands.add(normalizeCommand(command));
       return undefined;
     }
-
     if (decision === "once") {
       return undefined;
     }
-
     return {
       block: true,
       reason: `Blocked unknown command:\n${command}`,
