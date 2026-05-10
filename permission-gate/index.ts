@@ -74,22 +74,33 @@ export default function (pi: any) {
     sessionAllowedReadRoots.clear();
   });
 
+  const MODES: GateMode[] = ["strict", "balanced", "relaxed", "yolo"];
+
   pi.registerCommand("gate-mode", {
-    description: "Set permission gate mode: strict | balanced | relaxed | yolo",
+    description: "Set or cycle permission gate mode: strict | balanced | relaxed | yolo",
     handler: async (args: string, ctx: any) => {
       const mode = args.trim().toLowerCase();
+
       if (!mode) {
-        ctx.ui.notify?.(`Permission gate mode: ${CONFIG.mode}`, "info");
+        // Cycle to next mode
+        const currentIndex = MODES.indexOf(CONFIG.mode);
+        const nextMode = MODES[(currentIndex + 1) % MODES.length];
+        CONFIG.mode = nextMode;
+        saveMode(CONFIG.mode);
+        showStatus(ctx);
+        ctx.ui.notify?.(`Permission gate mode cycled to: ${CONFIG.mode.toUpperCase()}`, "success");
         return;
       }
-      if (!["strict", "balanced", "relaxed", "yolo"].includes(mode)) {
+
+      if (!MODES.includes(mode as GateMode)) {
         ctx.ui.notify?.(`Invalid mode: ${mode}. Use: strict | balanced | relaxed | yolo`, "error");
         return;
       }
+
       CONFIG.mode = mode as GateMode;
       saveMode(CONFIG.mode);
       showStatus(ctx);
-      ctx.ui.notify?.(`Permission gate mode set to: ${CONFIG.mode}`, "success");
+      ctx.ui.notify?.(`Permission gate mode set to: ${CONFIG.mode.toUpperCase()}`, "success");
     },
   });
 

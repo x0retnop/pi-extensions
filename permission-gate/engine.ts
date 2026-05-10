@@ -101,7 +101,8 @@ export function decide(
     return { action: "allow" };
   }
 
-  if (isSafeTempDelete(command)) {
+  const { body: bodyForSafeCheck } = stripLeadingCd(command);
+  if (isSafeTempDelete(bodyForSafeCheck) || isSafeTempDelete(command)) {
     return { action: "allow" };
   }
 
