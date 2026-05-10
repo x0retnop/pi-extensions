@@ -68,7 +68,12 @@ pi install git:github.com/x0retnop/pi-extension-ollama-cloud-web
 
 Interactive safety gate for `bash` tool calls, tuned for normal safe agent work. It allows common inspection commands, blocks dangerous ones, and asks before risky commands.
 
-Current source default is relaxed mode: common read-only package metadata commands and safe-looking inline Python reads are allowed, while installs, deletes, format/fix/build/test commands, unknown risky commands, and destructive commands still require confirmation or are blocked.
+Four selectable modes — strict, balanced, relaxed, and yolo — with a live status indicator and `/gate-mode` command to switch at runtime.
+
+- `strict` — safest, most commands require confirmation.
+- `balanced` — default-style allow list plus confirmations for risky commands.
+- `relaxed` — auto-allows read-only lookups, safe inline Python/Node, pipelines, and compounds. Recommended for day-to-day agent work.
+- `yolo` — minimal friction for focused project work. Only hard blocks and destructive operations (delete, install) still ask; everything else passes freely.
 
 ```bash
 pi install git:github.com/x0retnop/pi-extension-permission-gate
