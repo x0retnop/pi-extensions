@@ -2,13 +2,22 @@
 
 import { homedir } from "node:os";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { GateMode } from "./types.js";
 import {
   decide,
+  decideBash,
   askAllowOnceOrSession,
+  askReadAccess,
+  askTwice,
   normalizeCommand,
 } from "./engine.js";
+import {
+  classifyPathAccess,
+  extractFilePath,
+  cwdIsTooBroad,
+  isInside,
+} from "./path-guard.js";
 
 const SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
 
@@ -45,6 +54,7 @@ function saveMode(mode: GateMode): void {
 let CONFIG = { mode: loadMode() };
 
 const sessionAllowedCommands = new Set<string>();
+const sessionAllowedReadRoots = new Set<string>();
 
 function showStatus(ctx: any) {
   if (ctx?.ui?.setStatus) {
@@ -55,11 +65,13 @@ function showStatus(ctx: any) {
 export default function (pi: any) {
   pi.on("session_start", async (_event: any, ctx: any) => {
     sessionAllowedCommands.clear();
+    sessionAllowedReadRoots.clear();
     showStatus(ctx);
   });
 
   pi.on("session_shutdown", async () => {
     sessionAllowedCommands.clear();
+    sessionAllowedReadRoots.clear();
   });
 
   pi.registerCommand("gate-mode", {
@@ -82,47 +94,123 @@ export default function (pi: any) {
   });
 
   pi.on("tool_call", async (event: any, ctx: any) => {
+    const cwd = String(ctx?.cwd || process.cwd());
     const tool = String(event.toolName ?? "");
+    const input = event.input ?? {};
 
-    if (tool !== "bash") {
-      return undefined;
-    }
-
-    const command = String(event.input?.command ?? "").trim();
-
-    if (!command) {
-      return undefined;
-    }
-
-    const decision = decide(command, CONFIG.mode, sessionAllowedCommands);
-
-    if (decision.action === "block") {
+    // Global CWD guard
+    if (cwdIsTooBroad(cwd)) {
       return {
         block: true,
-        reason: `Blocked by permission-gate:\n${command}\n${decision.reason}`,
+        reason:
+          `Blocked: PI is running from a too-broad directory.\n` +
+          `Current directory: ${cwd}\n` +
+          `Start PI inside a specific project folder instead.`,
       };
     }
 
-    if (decision.action === "allow") {
+    // ─── READ ───
+    if (tool === "read") {
+      const filePath = extractFilePath(input);
+      if (!filePath) return undefined;
+
+      const access = classifyPathAccess(filePath, cwd);
+
+      if (access.scope === "inside_project") {
+        return undefined;
+      }
+
+      const normalizedPath = join(cwd, filePath).toLowerCase();
+      for (const root of sessionAllowedReadRoots) {
+        if (isInside(normalizedPath, root)) return undefined;
+      }
+
+      if ((CONFIG.mode === "relaxed" || CONFIG.mode === "yolo") && access.scope === "outside_project") {
+        return undefined;
+      }
+
+      const decision = await askReadAccess(
+        ctx,
+        `Read file outside current project?\n\nPath: ${filePath}\nReason: ${access.reason}`
+      );
+
+      if (decision === "directory") {
+        sessionAllowedReadRoots.add(dirname(normalizedPath));
+        return undefined;
+      }
+      if (decision !== "once") {
+        return {
+          block: true,
+          reason: `User denied read outside current project:\n${filePath}`,
+        };
+      }
       return undefined;
     }
 
-    // Ask user
-    const choice = await askAllowOnceOrSession(
-      ctx,
-      `Allow command?\n${decision.reason}\n\n${command}`
-    );
+    // ─── WRITE / EDIT ───
+    if (tool === "write" || tool === "edit") {
+      const filePath = extractFilePath(input);
+      if (!filePath) return undefined;
 
-    if (choice === "command") {
-      sessionAllowedCommands.add(normalizeCommand(command));
+      const access = classifyPathAccess(filePath, cwd);
+      if (access.scope === "inside_project") {
+        return undefined;
+      }
+
+      const allowed = await askTwice(
+        ctx,
+        `${tool.toUpperCase()} file outside current project?\n\n` +
+        `Path: ${filePath}\n` +
+        `Reason: ${access.reason}\n\n` +
+        `This may modify files outside the active project.`
+      );
+
+      if (!allowed) {
+        return {
+          block: true,
+          reason: `User denied ${tool} outside current project:\n${filePath}`,
+        };
+      }
       return undefined;
     }
-    if (choice === "once") {
-      return undefined;
+
+    // ─── BASH ───
+    if (tool === "bash") {
+      const command = String(input.command ?? "").trim();
+      if (!command) return undefined;
+
+      const decision = decideBash(command, CONFIG.mode, sessionAllowedCommands, cwd);
+
+      if (decision.action === "block") {
+        return {
+          block: true,
+          reason: `Blocked by permission-gate:\n${command}\n${decision.reason}`,
+        };
+      }
+
+      if (decision.action === "allow") {
+        return undefined;
+      }
+
+      // Ask user
+      const choice = await askAllowOnceOrSession(
+        ctx,
+        `Allow command?\n${decision.reason}\n\n${command}`
+      );
+
+      if (choice === "command") {
+        sessionAllowedCommands.add(normalizeCommand(command));
+        return undefined;
+      }
+      if (choice === "once") {
+        return undefined;
+      }
+      return {
+        block: true,
+        reason: `User denied command:\n${command}`,
+      };
     }
-    return {
-      block: true,
-      reason: `User denied command:\n${command}`,
-    };
+
+    return undefined;
   });
 }

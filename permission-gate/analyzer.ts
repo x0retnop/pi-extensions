@@ -17,6 +17,7 @@ import {
   mergeCategories,
   isAutoAllowed,
 } from "./command-db.js";
+import { scanInline } from "./inline-scan.js";
 
 const db = loadCommandDB();
 
@@ -121,6 +122,19 @@ export function analyzeSegment(seg: Segment): AnalyzedSegment {
       if (!sawEscalate && fm.toRisk) {
         risk = fm.toRisk;
       }
+    }
+  }
+
+  // Inline script analysis (python -c, node -e, heredoc)
+  const inlineScan = scanInline(seg.raw);
+  if (inlineScan) {
+    risk = maxRisk(risk, inlineScan.risk) as Risk;
+    for (const cat of inlineScan.categories) {
+      if (!categories.includes(cat)) categories.push(cat);
+    }
+    // In relaxed/yolo, read-only inline scripts can be auto-allowed
+    if (inlineScan.risk === "read" && !autoAllowModes.includes("relaxed")) {
+      autoAllowModes.push("relaxed", "yolo");
     }
   }
 

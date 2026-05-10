@@ -1,8 +1,13 @@
 # Permission Gate
 
-Adds an interactive safety gate for `bash` tool calls. It is tuned for normal agent work: common read-only inspection commands can pass without friction, while risky commands are blocked or require confirmation.
+Unified safety gate for **bash**, **read**, **write**, and **edit** tool calls. Uses structural command analysis and a path-aware decision engine instead of regex heuristics.
 
-This extension is meant to support a safe, practical workflow for coding agents. It works especially well together with an `AGENTS.md` file that tells the agent how to work, when to ask, and which local safety rules to follow.
+## What it does
+
+- **Bash commands**: Parsed into segments/pipelines/compounds. Risk is determined by a `CommandDB` (190 commands, 576 subcommands) rather than fragile regex.
+- **Read/write/edit tools**: Path is classified as `inside_project`, `outside_project`, or `protected`. Protected roots (e.g. `C:\Windows`, `~/.ssh`, `~/.pi`) are blocked. Writes outside the project require double confirmation.
+- **Hard blocks**: Destructive commands (`rm -rf /`, `git reset --hard`, `format`, `diskpart`, `curl | sh`) are blocked without asking.
+- **Session approvals**: Allowed commands can be remembered for the session.
 
 ## Install
 
@@ -10,29 +15,18 @@ This extension is meant to support a safe, practical workflow for coding agents.
 pi install git:github.com/x0retnop/pi-extension-permission-gate
 ```
 
-## Behavior
-
-- Auto-allows common read-only commands such as search/list/status style commands.
-- Blocks clearly dangerous system-level commands.
-- Asks before install/update/remove commands.
-- Asks before delete commands.
-- Asks before format/fix/build/test commands (in non-yolo modes).
-- Asks before unknown commands (in non-yolo modes).
-- Offers session-scoped approvals and resets them on `session_start` / `session_shutdown`.
-- Keeps everyday agent work fast while still adding a guardrail around commands with side effects.
+> **Important**: If you previously used `protected-paths`, disable or remove it. Permission Gate now includes all path-protection features.
 
 ## Modes
 
-Permission Gate supports four modes. The current mode is persisted in `~/.pi/agent/settings.json` and shown in the TUI status bar.
+| Mode | Bash read | Bash write | Bash execute | Bash delete/install | Read outside project | Write outside project |
+|------|-----------|------------|--------------|---------------------|----------------------|----------------------|
+| `strict` | allow | ask | ask | ask | ask | block |
+| `balanced` | allow | allow | ask | ask | ask (protected always block) | double-ask |
+| `relaxed` | allow | allow | ask | ask | allow trusted / ask other | double-ask |
+| `yolo` | allow | allow | allow | ask | allow trusted / ask other | double-ask |
 
-| Mode | Behavior |
-|------|----------|
-| `strict` | Safest — most commands require explicit confirmation. |
-| `balanced` | Default-style allow list plus confirmations for risky commands. |
-| `relaxed` | Optimized for coding-agent convenience. Auto-allows read-only package lookups, safe inline Python/Node, pipelines, and compounds while keeping hard blocks. |
-| `yolo` | Minimal friction for active project work. Only hard blocks (e.g. `format`, `diskpart`, `rm -rf /`) and destructive operations (delete, install) still require confirmation; everything else passes freely. |
-
-Switch modes at runtime with:
+Switch at runtime:
 
 ```text
 /gate-mode strict
@@ -41,80 +35,78 @@ Switch modes at runtime with:
 /gate-mode yolo
 ```
 
-Or check the current mode:
+Check current mode:
 
 ```text
 /gate-mode
 ```
 
-### Relaxed mode additions
+Mode is persisted in `~/.pi/agent/settings.json` under `permissionGate.mode`.
 
-In `relaxed` mode the gate also auto-allows common read-only package/library inspection commands, for example:
+## Architecture
 
-- `npm view`, `npm info`, `npm search`
-- `pnpm view`, `pnpm info`, `pnpm why`, `pnpm list`
-- `yarn info`, `yarn why`, `yarn list`
-- `pip show`, `pip index versions`, `pip list`, `pip freeze`
-- `python -m pip show`, `python -m pip index versions`, `python -m pip list`
-- `uv pip show`, `uv pip list`
-- `cargo search`, `cargo info`, `cargo metadata`, `cargo tree`
-- `go list`
-- `composer show`, `composer search`
-- `gem info`, `gem search`, `gem list`
-
-It also auto-allows read-only-looking inline Python and Node.js patterns that agents commonly use for inspection, including:
-
-```bash
-python -c "from pathlib import Path; print(Path('file').read_text())"
-python - <<PY
-from pathlib import Path
-print(Path('file').read_text())
-PY
-node -e "console.log('ok')"
-node -p "process.version"
+```
+tool_call
+  ├── read  → path-guard (classifyPathAccess)
+  ├── write → path-guard (double-ask if outside project)
+  ├── edit  → path-guard (double-ask if outside project)
+  └── bash  → tokenizer → analyzer (CommandDB) → engine
+                ↓
+         path-guard (traversal / external write check)
 ```
 
-Inline scripts still ask when they appear to write/delete files, spawn subprocesses, perform network calls, or install packages.
+### CommandDB
 
-### YOLO mode
+Commands and their risks are declared in `commanddb.json` (loaded at runtime):
 
-`yolo` is meant for focused project work where the agent already knows the codebase and you want minimal interruptions. In this mode:
+```json
+{
+  "git": {
+    "defaultRisk": "write",
+    "subcommands": {
+      "status": { "risk": "read", "autoAllowModes": ["balanced", "relaxed", "yolo"] },
+      "reset": {
+        "risk": "write",
+        "flags": { "--hard": { "effect": "escalate", "toRisk": "destructive" } }
+      }
+    }
+  }
+}
+```
 
-- **Auto-allowed**: builds, tests, formatters, Python scripts (`python path/to/script.py`), inline Python/Node, pipelines (`\|`), compounds (`&&`, `\|\|`), and unknown commands.
-- **Still asks**: delete (`rm`, `del`, `Remove-Item`) and install (`npm install`, `pip install`, etc.).
-- **Hard-blocked**: system-level destructive commands (`format`, `diskpart`, `git clean`, `rm -rf /`, etc.).
+Adding a new command means adding a JSON entry — no regex required.
 
-Approval choices
+### Tokenizer
 
-When a command needs confirmation, the prompt may offer:
+Correctly handles:
+- Pipelines (`|`)
+- Compounds (`&&`, `||`, `;`)
+- Redirections (`>`, `>>`, `<`, `2>`)
+- Single/double quotes and escapes
 
-- `Allow once`
-- `Always allow exact command this session`
-- `Always allow this kind this session`
-- `Block`
+## Special behaviors
 
-For high-risk kinds such as install/delete/unknown/compound commands, broad kind-level session approval is intentionally not offered.
+- **`curl ... | sh`** → hard-blocked as destructive (network + execute pipeline)
+- **`$(...)` / `` `...` ``** in bash → treated as execute risk
+- **`rm _temp.py`** → auto-allowed (safe temp delete heuristic)
+- **`cd "C:/project" && echo > file.txt`** → allowed if the write target is inside the project (cd prefix is stripped from path check)
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/gate-mode` | Show the current permission gate mode. |
-| `/gate-mode strict` | Switch to strict mode. |
-| `/gate-mode balanced` | Switch to balanced mode. |
-| `/gate-mode relaxed` | Switch to relaxed mode. |
-| `/gate-mode yolo` | Switch to yolo mode. |
+| `/gate-mode` | Show current mode. |
+| `/gate-mode strict` | Strict — most things ask. |
+| `/gate-mode balanced` | Balanced — safe read/write passes. |
+| `/gate-mode relaxed` | Relaxed — optimized for agent work. |
+| `/gate-mode yolo` | YOLO — only delete/install ask, destructive blocks. |
 
-## Customizing rules
+## Customizing
 
-Modes are persisted in `~/.pi/agent/settings.json` under `permissionGate.mode`. The allow/block/ask command patterns are defined in the extension source. Edit them carefully.
-
-For safety, it is best to add or remove allowed commands with help from a strong LLM model, then manually review the resulting rules before using them. Small regex changes can make the gate too permissive or too annoying.
+- Edit `commanddb.json` to add/modify command risks.
+- Edit `types.ts`, `tokenizer.ts`, `analyzer.ts` to change structural analysis logic.
+- For safety, review CommandDB changes manually before relying on them.
 
 ## Compatibility
 
-Tested and known to work with Pi v0.72.1 or newer.
-
-## Notes
-
-This extension follows the public Pi extension API and patterns from the official Pi documentation and examples.
+Tested with Pi v0.72.1 or newer.
