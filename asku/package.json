@@ -1,0 +1,14 @@
+{
+  "name": "pi-extension-asku",
+  "version": "0.1.0",
+  "description": "Interactive ask_user_question tool for Pi",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}

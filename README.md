@@ -16,6 +16,14 @@ Recent reliability updates: guarded message handling and safer internal marker s
 pi install git:github.com/x0retnop/pi-extension-a-rewind
 ```
 
+### AskU
+
+Adds `ask_user_question`, an interactive TUI tool for structured clarifying questions. Adapted from [`ghoseb/pi-askuserquestion`](https://github.com/ghoseb/pi-askuserquestion) for this collection.
+
+```bash
+pi install ./asku
+```
+
 ### BTW
 
 Ask quick side questions with `/btw` using the current conversation as bounded context, without adding the question or answer to session history.
@@ -134,4 +142,4 @@ cd pi-extensions
 pi install ./btw
 ```
 
-Replace `./btw` with any extension folder name, for example `./todo`, `./sessions`, or `./permission-gate`.
+Replace `./btw` with any extension folder name, for example `./asku`, `./todo`, `./sessions`, or `./permission-gate`.
