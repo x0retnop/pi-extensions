@@ -40,12 +40,3 @@ export function extractHeadingTitle(text: string): string | null {
 	const cleaned = match[1].replace(/\*+/g, "").trim();
 	return cleaned || null;
 }
-
-export function mapFfmpegError(err: unknown): string {
-	const { code, stderr, message } = readExecError(err);
-	if (code === "ENOENT") return "ffmpeg is not installed. Install with: brew install ffmpeg";
-	if (isTimeoutError(err)) return "ffmpeg timed out extracting frame";
-	if (stderr.includes("403")) return "Stream URL returned 403 — may have expired, try again";
-	const snippet = trimErrorText(stderr || message);
-	return snippet ? `ffmpeg failed: ${snippet}` : "ffmpeg failed";
-}

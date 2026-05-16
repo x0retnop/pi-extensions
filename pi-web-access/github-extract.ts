@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, rmSync, statSync, readdirSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { extname, join, resolve as resolvePath, sep as pathSep } from "node:path";
 import { activityMonitor } from "./activity.js";
 import type { ExtractedContent } from "./extract.js";
@@ -76,7 +76,7 @@ function loadGitHubConfig(): GitHubCloneConfig {
 		enabled: true,
 		maxRepoSizeMB: 350,
 		cloneTimeoutSeconds: 30,
-		clonePath: "/tmp/pi-github-repos",
+		clonePath: join(tmpdir(), "pi-github-repos"),
 	};
 
 	if (!existsSync(CONFIG_PATH)) {

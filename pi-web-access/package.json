@@ -1,30 +1,18 @@
 {
   "name": "pi-web-access",
   "version": "0.10.7",
-  "description": "Web search, URL fetching, GitHub repo cloning, PDF extraction, and fallback extraction for Pi coding agent",
+  "description": "Web search, URL fetching, and code search for Pi coding agent",
   "type": "module",
-  "scripts": {
-    "test": "node --test"
-  },
   "keywords": [
     "pi-package",
     "pi",
     "pi-coding-agent",
     "extension",
     "web-search",
-    "fetch",
-    "scraping"
+    "fetch"
   ],
   "author": "Nico Bailon",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-web-access.git"
-  },
-  "bugs": {
-    "url": "https://github.com/nicobailon/pi-web-access/issues"
-  },
-  "homepage": "https://github.com/nicobailon/pi-web-access#readme",
   "dependencies": {
     "@mozilla/readability": "^0.5.0",
     "linkedom": "^0.16.0",
@@ -35,10 +23,6 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "video": "https://github.com/nicobailon/pi-web-access/raw/refs/heads/main/pi-web-fetch-demo.mp4"
+    ]
   }
 }

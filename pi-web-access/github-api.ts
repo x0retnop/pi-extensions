@@ -5,6 +5,9 @@ import type { GitHubUrlInfo } from "./github-extract.js";
 const MAX_TREE_ENTRIES = 200;
 const MAX_INLINE_FILE_CHARS = 100_000;
 
+const GITHUB_API_BASE = "https://api.github.com";
+const GITHUB_RAW_BASE = "https://raw.githubusercontent.com";
+
 let ghAvailable: boolean | null = null;
 let ghHintShown = false;
 
@@ -26,107 +29,97 @@ export function showGhHint(): void {
 	}
 }
 
-export async function checkRepoSize(owner: string, repo: string): Promise<number | null> {
-	if (!(await checkGhAvailable())) return null;
+interface RepoInfo {
+	size: number;
+	default_branch: string;
+}
 
-	return new Promise((resolve) => {
-		execFile("gh", ["api", `repos/${owner}/${repo}`, "--jq", ".size"], { timeout: 10000 }, (err, stdout) => {
-			if (err) {
-				resolve(null);
-				return;
-			}
-			const kb = parseInt(stdout.trim(), 10);
-			resolve(Number.isNaN(kb) ? null : kb);
+interface TreeEntry {
+	path: string;
+}
+
+function apiHeaders(): Record<string, string> {
+	return {
+		Accept: "application/vnd.github+json",
+		"User-Agent": "pi-web-access",
+		"X-GitHub-Api-Version": "2022-11-28",
+	};
+}
+
+async function apiFetch<T>(path: string): Promise<T | null> {
+	try {
+		const res = await fetch(`${GITHUB_API_BASE}${path}`, { headers: apiHeaders() });
+		if (!res.ok) return null;
+		return (await res.json()) as T;
+	} catch {
+		return null;
+	}
+}
+
+async function rawFetch(url: string, maxBytes?: number): Promise<string | null> {
+	try {
+		const res = await fetch(url, {
+			headers: { "User-Agent": "pi-web-access" },
 		});
-	});
+		if (!res.ok) return null;
+		const text = await res.text();
+		if (maxBytes && text.length > maxBytes) {
+			return text.slice(0, maxBytes) + "\n\n[Content truncated]";
+		}
+		return text;
+	} catch {
+		return null;
+	}
+}
+
+export async function checkRepoSize(owner: string, repo: string): Promise<number | null> {
+	const info = await apiFetch<RepoInfo>(`/repos/${owner}/${repo}`);
+	if (!info) return null;
+	return info.size; // size is in KB
 }
 
 async function getDefaultBranch(owner: string, repo: string): Promise<string | null> {
-	if (!(await checkGhAvailable())) return null;
-
-	return new Promise((resolve) => {
-		execFile("gh", ["api", `repos/${owner}/${repo}`, "--jq", ".default_branch"], { timeout: 10000 }, (err, stdout) => {
-			if (err) {
-				resolve(null);
-				return;
-			}
-			const branch = stdout.trim();
-			resolve(branch || null);
-		});
-	});
+	const info = await apiFetch<RepoInfo>(`/repos/${owner}/${repo}`);
+	return info?.default_branch ?? null;
 }
 
 async function fetchTreeViaApi(owner: string, repo: string, ref: string): Promise<string | null> {
-	if (!(await checkGhAvailable())) return null;
+	const data = await apiFetch<{ tree: TreeEntry[] }>(`/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`);
+	if (!data?.tree) return null;
 
-	return new Promise((resolve) => {
-		execFile(
-			"gh",
-			["api", `repos/${owner}/${repo}/git/trees/${ref}?recursive=1`, "--jq", ".tree[].path"],
-			{ timeout: 15000, maxBuffer: 5 * 1024 * 1024 },
-			(err, stdout) => {
-				if (err) {
-					resolve(null);
-					return;
-				}
-				const paths = stdout.trim().split("\n").filter(Boolean);
-				if (paths.length === 0) {
-					resolve(null);
-					return;
-				}
-				const truncated = paths.length > MAX_TREE_ENTRIES;
-				const display = paths.slice(0, MAX_TREE_ENTRIES).join("\n");
-				resolve(truncated ? display + `\n... (${paths.length} total entries)` : display);
-			},
-		);
-	});
+	const paths = data.tree.map((e) => e.path);
+	if (paths.length === 0) return null;
+
+	const truncated = paths.length > MAX_TREE_ENTRIES;
+	const display = paths.slice(0, MAX_TREE_ENTRIES).join("\n");
+	return truncated ? display + `\n... (${paths.length} total entries)` : display;
 }
 
 async function fetchReadmeViaApi(owner: string, repo: string, ref: string): Promise<string | null> {
-	if (!(await checkGhAvailable())) return null;
-
-	return new Promise((resolve) => {
-		execFile(
-			"gh",
-			["api", `repos/${owner}/${repo}/readme?ref=${ref}`, "--jq", ".content"],
-			{ timeout: 10000 },
-			(err, stdout) => {
-				if (err) {
-					resolve(null);
-					return;
-				}
-				try {
-					const decoded = Buffer.from(stdout.trim(), "base64").toString("utf-8");
-					resolve(decoded.length > 8192 ? decoded.slice(0, 8192) + "\n\n[README truncated at 8K chars]" : decoded);
-				} catch {
-					resolve(null);
-				}
-			},
-		);
-	});
+	const readme = await apiFetch<{ content: string; encoding: string }>(`/repos/${owner}/${repo}/readme?ref=${ref}`);
+	if (!readme?.content) return null;
+	try {
+		const decoded = Buffer.from(readme.content, "base64").toString("utf-8");
+		return decoded.length > 8192 ? decoded.slice(0, 8192) + "\n\n[README truncated at 8K chars]" : decoded;
+	} catch {
+		return null;
+	}
 }
 
 async function fetchFileViaApi(owner: string, repo: string, path: string, ref: string): Promise<string | null> {
-	if (!(await checkGhAvailable())) return null;
+	// Prefer raw.githubusercontent.com to avoid API rate limits for file content
+	const rawUrl = `${GITHUB_RAW_BASE}/${owner}/${repo}/${ref}/${path}`;
+	const raw = await rawFetch(rawUrl, MAX_INLINE_FILE_CHARS);
+	if (raw !== null) return raw;
 
-	return new Promise((resolve) => {
-		execFile(
-			"gh",
-			["api", `repos/${owner}/${repo}/contents/${path}?ref=${ref}`, "--jq", ".content"],
-			{ timeout: 10000, maxBuffer: 2 * 1024 * 1024 },
-			(err, stdout) => {
-				if (err) {
-					resolve(null);
-					return;
-				}
-				try {
-					resolve(Buffer.from(stdout.trim(), "base64").toString("utf-8"));
-				} catch {
-					resolve(null);
-				}
-			},
-		);
-	});
+	// Fallback to API contents endpoint (handles symlinks, LFS pointers, large files)
+	const file = await apiFetch<{ content: string; encoding: string }>(`/repos/${owner}/${repo}/contents/${path}?ref=${ref}`);
+	if (!file?.content) return null;
+	try {
+		return Buffer.from(file.content, "base64").toString("utf-8");
+	} catch {
+		return null;
+	}
 }
 
 export async function fetchViaApi(
@@ -150,12 +143,7 @@ export async function fetchViaApi(
 		if (!content) return null;
 
 		lines.push(`## ${info.path}`);
-		if (content.length > MAX_INLINE_FILE_CHARS) {
-			lines.push(content.slice(0, MAX_INLINE_FILE_CHARS));
-			lines.push(`\n[File truncated at 100K chars]`);
-		} else {
-			lines.push(content);
-		}
+		lines.push(content);
 
 		return {
 			url,
