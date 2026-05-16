@@ -330,7 +330,7 @@ export default function (pi: ExtensionAPI) {
 			"For official documentation or GitHub repositories, use domainFilter like ['github.com'] or ['docs.example.com'].",
 			"For deep research that needs full page text, set includeContent: true to fetch page content in the background.",
 			"When the topic is broad or contentious, increase numResults up to 10-15 for better coverage.",
-			"After web_search, always use fetch_content on the most relevant URL when the user needs details from a page.",
+			"After web_search, use fetch_content on the most relevant URL when the user needs details from a page.",
 		],
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Single search query. For research tasks, prefer 'queries' with multiple varied angles instead." })),
@@ -471,7 +471,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "code_search",
 		label: "Code Search",
-		description: "Search for code examples, documentation, and API references. Returns relevant code snippets and docs from GitHub, Stack Overflow, and official documentation. Use for any programming question — API usage, library examples, debugging help.",
+		description: "Search for code examples, documentation, and API references. Returns relevant code snippets and docs. Use for any programming question — API usage, library examples, debugging help.",
 		promptSnippet:
 			"Use for programming/API/library questions to retrieve concrete examples and docs before implementing or debugging code.",
 		parameters: Type.Object({
@@ -684,7 +684,7 @@ export default function (pi: ExtensionAPI) {
 		label: "Get Search Content",
 		description: "Retrieve full content from a previous web_search or fetch_content call.",
 		promptSnippet:
-			"Use after web_search/fetch_content when full stored content is needed via responseId plus query/url selectors.",
+			"Use to retrieve full stored content from a previous web_search or fetch_content call.",
 		parameters: Type.Object({
 			responseId: Type.String({ description: "The responseId from web_search or fetch_content" }),
 			query: Type.Optional(Type.String({ description: "Get content for this query (web_search)" })),
