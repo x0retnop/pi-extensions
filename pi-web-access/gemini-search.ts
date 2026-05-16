@@ -3,14 +3,32 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { activityMonitor } from "./activity.js";
 import { isGeminiWebAvailable, queryWithCookies } from "./gemini-web.js";
-import { isPerplexityAvailable, searchWithPerplexity, type SearchResult, type SearchResponse, type SearchOptions } from "./perplexity.js";
 import { hasExaApiKey, isExaAvailable, searchWithExa } from "./exa.js";
 
-export type SearchProvider = "auto" | "perplexity" | "gemini" | "exa";
+export type SearchProvider = "auto" | "gemini" | "exa";
 export type ResolvedSearchProvider = Exclude<SearchProvider, "auto">;
 
 export interface AttributedSearchResponse extends SearchResponse {
 	provider: ResolvedSearchProvider;
+}
+
+export interface SearchResult {
+	title: string;
+	url: string;
+	snippet: string;
+}
+
+export interface SearchResponse {
+	answer: string;
+	results: SearchResult[];
+	inlineContent?: { url: string; title: string; content: string; error: string | null }[];
+}
+
+export interface SearchOptions {
+	numResults?: number;
+	recencyFilter?: "day" | "week" | "month" | "year";
+	domainFilter?: string[];
+	signal?: AbortSignal;
 }
 
 const CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
@@ -56,7 +74,7 @@ function normalizeSearchModel(value: unknown): string | undefined {
 
 function normalizeSearchProvider(value: unknown): SearchProvider {
 	const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-	return normalized === "auto" || normalized === "perplexity" || normalized === "gemini" || normalized === "exa"
+	return normalized === "auto" || normalized === "gemini" || normalized === "exa"
 		? normalized
 		: "auto";
 }
@@ -96,11 +114,6 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 	const config = getSearchConfig();
 	const provider = options.provider ?? config.searchProvider;
 
-	if (provider === "perplexity") {
-		const result = await searchWithPerplexity(query, options);
-		return { ...result, provider: "perplexity" };
-	}
-
 	if (provider === "gemini") {
 		const result = await searchWithGemini(query, options, true);
 		if (result) return { ...result, provider: "gemini" };
@@ -116,7 +129,7 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 			if (result && "exhausted" in result) {
 				throw new Error(
 					"Exa monthly free tier exhausted (1,000 requests). Resets next month.\n" +
-					"  Use provider: 'perplexity' or 'gemini', or upgrade at exa.ai/pricing"
+					"  Use provider: 'gemini', or upgrade at exa.ai/pricing"
 				);
 			}
 			if (result && "answer" in result) return { ...result, provider: "exa" };
@@ -143,16 +156,6 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 		}
 	}
 
-	if (isPerplexityAvailable()) {
-		try {
-			const result = await searchWithPerplexity(query, options);
-			return { ...result, provider: "perplexity" };
-		} catch (err) {
-			if (isAbortError(err)) throw err;
-			fallbackErrors.push(`Perplexity: ${errorMessage(err)}`);
-		}
-	}
-
 	try {
 		const geminiResult = await searchWithGemini(query, options, false);
 		if (geminiResult) return { ...geminiResult, provider: "gemini" };
@@ -167,9 +170,8 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 
 	throw new Error(
 		"No search provider available. Either:\n" +
-		"  1. Set perplexityApiKey in ~/.pi/web-search.json\n" +
-		"  2. Set EXA_API_KEY (or exaApiKey) in ~/.pi/web-search.json\n" +
-		"  3. Sign into gemini.google.com in a supported Chromium-based browser"
+		"  1. Set EXA_API_KEY (or exaApiKey) in ~/.pi/web-search.json\n" +
+		"  2. Sign into gemini.google.com in a supported Chromium-based browser"
 	);
 }
 

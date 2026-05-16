@@ -1,12 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Box, Text, truncateToWidth } from "@mariozechner/pi-tui";
+import { Text, truncateToWidth } from "@mariozechner/pi-tui";
 import { Type } from "typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { fetchAllContent, type ExtractedContent } from "./extract.js";
 import { clearCloneCache } from "./github-extract.js";
 import { search } from "./gemini-search.js";
 import { executeCodeSearch } from "./code-search.js";
-import type { SearchResult } from "./perplexity.js";
+import type { SearchResult } from "./gemini-search.js";
 
 import {
 	clearResults,
@@ -20,28 +20,6 @@ import {
 	type StoredSearchData,
 } from "./storage.js";
 import { activityMonitor, type ActivityEntry } from "./activity.js";
-import { homedir } from "node:os";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-
-const WEB_SEARCH_CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
-
-interface WebSearchConfig {
-	shortcuts?: {
-		activity?: string;
-	};
-}
-
-function loadConfig(): WebSearchConfig {
-	if (!existsSync(WEB_SEARCH_CONFIG_PATH)) return {};
-	const raw = readFileSync(WEB_SEARCH_CONFIG_PATH, "utf-8");
-	try {
-		return JSON.parse(raw) as WebSearchConfig;
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		throw new Error(`Failed to parse ${WEB_SEARCH_CONFIG_PATH}: ${message}`);
-	}
-}
 
 function normalizeQueryList(queryList: unknown[]): string[] {
 	const normalized: string[] = [];
@@ -136,7 +114,7 @@ function updateWidget(ctx: ExtensionContext): void {
 			(resetMs > 0 ? theme.fg("dim", ` (resets in ${resetSec}s)`) : ""),
 	);
 
-	ctx.ui.setWidget("web-activity", new Text(lines.join("\n"), 0, 0));
+	ctx.ui.setWidget("web-activity", lines);
 }
 
 function formatEntryLine(
@@ -187,8 +165,7 @@ function handleSessionChange(ctx: ExtensionContext): void {
 }
 
 export default function (pi: ExtensionAPI) {
-	const initConfig = loadConfig();
-	const activityKey = initConfig.shortcuts?.activity ?? "ctrl+shift+w";
+
 
 	function startBackgroundFetch(urls: string[]): string | null {
 		if (urls.length === 0) return null;
@@ -306,17 +283,23 @@ export default function (pi: ExtensionAPI) {
 		};
 	}
 
-	pi.registerShortcut(activityKey, {
-		description: "Toggle web search activity widget",
-		handler: async (ctx) => {
-			widgetVisible = !widgetVisible;
+	pi.registerCommand("pi-web-activity", {
+		description: "Toggle web search activity widget on/off",
+		handler: async (args, ctx) => {
+			const arg = args.trim().toLowerCase();
+			if (arg === "on") widgetVisible = true;
+			else if (arg === "off") widgetVisible = false;
+			else widgetVisible = !widgetVisible;
+
 			if (widgetVisible) {
 				widgetUnsubscribe = activityMonitor.onUpdate(() => updateWidget(ctx));
 				updateWidget(ctx);
+				ctx.ui.notify("Activity monitor ON", "info");
 			} else {
 				widgetUnsubscribe?.();
 				widgetUnsubscribe = null;
-				ctx.ui.setWidget("web-activity", null);
+				ctx.ui.setWidget("web-activity", undefined);
+				ctx.ui.notify("Activity monitor OFF", "info");
 			}
 		},
 	});
