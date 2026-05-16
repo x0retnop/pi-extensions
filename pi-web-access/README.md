@@ -1,14 +1,6 @@
-<p>
-  <img src="banner.png" alt="pi-web-access" width="1100">
-</p>
-
 # Pi Web Access
 
 **Web search, content extraction, and code search for Pi agent. Zero-config Exa search with optional Gemini Web fallback.**
-
-[![npm version](https://img.shields.io/npm/v/pi-web-access?style=for-the-badge)](https://www.npmjs.com/package/pi-web-access)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows*-blue?style=for-the-badge)]()
 
 ## Why Pi Web Access
 
