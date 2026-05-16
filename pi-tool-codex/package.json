@@ -1,0 +1,83 @@
+{
+  "name": "@vinyroli/pi-tool-codex",
+  "version": "0.37.15",
+  "description": "Compact tool call rendering, diff visualization, and output truncation extension for Pi coding agent. Hides, collapses, and truncates verbose tool output for cleaner TUI display.",
+  "type": "module",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "src",
+    "config/config.example.json",
+    "assets/preview.png",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "npx --yes -p typescript@5.7.3 tsc -p tsconfig.json --noCheck",
+    "lint": "npm run build",
+    "test": "npx --yes tsx --test --test-force-exit tests/*.test.ts",
+    "changelog": "node ./scripts/generate-changelog.mjs full",
+    "changelog:release": "node ./scripts/generate-changelog.mjs release",
+    "check": "npm run lint && npm run test",
+    "prepublishOnly": "npm run check",
+    "prepare": "husky"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "pi-coding-agent",
+    "pi-tui",
+    "coding-agent",
+    "tui",
+    "tool-rendering",
+    "tool-output",
+    "diff-visualization",
+    "output-truncation",
+    "hide",
+    "collapse",
+    "truncate",
+    "compact",
+    "diff",
+    "output-mode"
+  ],
+  "author": "MasuRii",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vinyroli/pi-tool-codex.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vinyroli/pi-tool-codex/issues"
+  },
+  "homepage": "https://github.com/vinyroli/pi-tool-codex#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.67.2",
+    "@mariozechner/pi-tui": "^0.67.2"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
+    "conventional-changelog": "^7.2.0",
+    "conventional-changelog-conventionalcommits": "^9.3.1",
+    "husky": "^9.1.7"
+  },
+  "overrides": {
+    "file-type": ">=21.3.1"
+  }
+}
