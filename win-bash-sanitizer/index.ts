@@ -31,10 +31,8 @@ export default function (pi: ExtensionAPI) {
 			customType: "win-bash-rules",
 			content: [
 				"You are on Windows with Git Bash.",
-				"Path rules: use '/c/...' instead of 'C:\\\\'. Wrap spaced paths in SINGLE quotes.",
 				"Redirection: use '2>/dev/null', never '2>nul'.",
 				"Listing: use 'ls', never 'dir'. Do NOT use '|| dir ...' fallbacks.",
-				"Never end a quoted path with backslash: WRONG: \"C:\\\\dir\\\\\"  RIGHT: '/c/dir'",
 				"Use bash commands (cp, mv, rm, cat) instead of Windows commands (copy, move, del, type).",
 			].join("\n"),
 			display: false,
@@ -134,13 +132,19 @@ function processCommandChain(cmd: string): string {
 				return part;
 			}
 
-			const mapped = applyMapping(trimmed);
-			if (mapped !== trimmed) return mapped;
-
-			// Bash command with potential Windows artifacts
+			// Fix paths BEFORE mapping so applyMapping sees quoted/clean paths
 			let fixed = fixWindowsPaths(trimmed);
 			fixed = fixBackslashes(fixed);
-			if (fixed !== trimmed) return fixed;
+			const working = fixed !== trimmed ? fixed : trimmed;
+
+			const mapped = applyMapping(working);
+			if (mapped !== working) {
+				return part.replace(trimmed, mapped);
+			}
+
+			if (fixed !== trimmed) {
+				return part.replace(trimmed, fixed);
+			}
 			return part;
 		})
 		.join("");
@@ -229,32 +233,54 @@ function fixEnvVars(cmd: string): string {
 	return cmd.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_, name) => `$${name}`);
 }
 
-/** Convert C:\ style paths to /c/ style. Handles quoted and unquoted forms. */
+/** Convert C:\ style paths to /c/ style. Handles quoted and unquoted forms,
+ *  including unquoted paths with spaces (greedily consumes until operator). */
 function fixWindowsPaths(cmd: string): string {
+	// Helper: convert C:\c\… mistaken paths and normal drive prefixes
+	const fixDrive = (p: string) =>
+		p
+			.replace(/([A-Za-z]):\\([a-z])\\/g, (_m, drive, letter) =>
+				drive.toLowerCase() === letter ? `/${letter}/` : _m
+			)
+			.replace(/^([A-Za-z]):[/\\]/, (_m: string, drive: string) => `/${drive.toLowerCase()}/`);
+
 	// 1. Double-quoted paths: "C:\foo\bar" or "C:\foo bar\baz"
 	cmd = cmd.replace(/"([A-Za-z]:\\(?:[^"]|\\.)*)"/g, (_match, inner) => {
 		let p = inner
 			.replace(/\\"/g, '"')
-			.replace(/\\/g, "/")
-			.replace(/^([A-Za-z]):\//, (_m: string, drive: string) => `/${drive.toLowerCase()}/`);
-		p = p.replace(/\/$/, ""); // strip trailing /
+			.replace(/\/$/, ""); // strip trailing /
+		p = fixDrive(p)
+			.replace(/\\/g, "/");
 		if (p.includes(" ")) return `'${p}'`;
 		return p;
 	});
 
-	// 2. Unquoted paths: tokens starting with C:\ (with \-escaped spaces inside)
+	// 2. Unquoted paths: tokens starting with C:\ (greedily consumes spaces until operator)
 	let result = "";
 	let i = 0;
 	while (i < cmd.length) {
-		const m = cmd.slice(i).match(/^([A-Za-z]):\\((?:[^ \t\n\r"']|\\.)+)/);
+		const m = cmd.slice(i).match(/^([A-Za-z]):\\((?:[^"']|\\.)+)/);
 		if (m) {
-			let p = m[0]
+			let pathEnd = i + m[0].length;
+			// Greedily consume space-separated fragments that look like path parts
+			while (true) {
+				const rest = cmd.slice(pathEnd);
+				// Stop at bash operators
+				if (/^\s*(&&|\|\||;|\|>|>>|>|<|2>|2>>)\s*/.test(rest)) break;
+				// Consume space + path fragment
+				const frag = rest.match(/^(\s+)([A-Za-z0-9_\-\\.\(\)\[\]{}%@!^+,=~`]+)/);
+				if (!frag) break;
+				pathEnd += frag[0].length;
+			}
+			const fullPath = cmd.slice(i, pathEnd);
+			let p = fullPath
 				.replace(/\\([ \t\n\r"'])/g, "$1")
 				.replace(/\\/g, "/")
-				.replace(/^([A-Za-z]):\//, (_m: string, drive: string) => `/${drive.toLowerCase()}/`);
-			p = p.replace(/\/$/, "");
-			result += p.includes(" ") ? `'${p}'` : p;
-			i += m[0].length;
+				.replace(/\/$/, "");
+			p = fixDrive(p);
+			if (p.includes(" ")) result += `'${p}'`;
+			else result += p;
+			i = pathEnd;
 		} else {
 			result += cmd[i];
 			i++;
@@ -267,8 +293,10 @@ function fixWindowsPaths(cmd: string): string {
 function fixBackslashes(cmd: string): string {
 	return cmd.replace(/\\([^\s"'\\])/g, (match, char, offset) => {
 		const before = cmd.slice(0, offset);
-		const quotes = before.match(/'/g);
-		if (quotes && quotes.length % 2 !== 0) return match; // inside single quotes
+		const sgl = before.match(/'/g);
+		if (sgl && sgl.length % 2 !== 0) return match; // inside single quotes
+		const dbl = before.match(/"/g);
+		if (dbl && dbl.length % 2 !== 0) return match; // inside double quotes
 		return char;
 	});
 }
