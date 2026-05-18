@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 const TOOL_STATUS_BULLET_STATE_KEY = "__piToolDisplayStatusBullet";
 const TOOL_STATUS_BULLET_INTERVAL_MS = 700;

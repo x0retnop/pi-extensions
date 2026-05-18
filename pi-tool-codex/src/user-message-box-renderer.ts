@@ -4,7 +4,7 @@ import {
   visibleWidth,
   type DefaultTextStyle,
   type MarkdownTheme,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import {
   patchUserMessageRenderPrototype,
   type PatchableUserMessagePrototype,

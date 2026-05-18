@@ -7,26 +7,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DB_PATH = join(__dirname, "commanddb.json");
 
-let cachedDB: CommandDB | null = null;
-let cachedAliasMap: Map<string, string> | null = null;
-
 export function loadCommandDB(): CommandDB {
-  if (cachedDB) return cachedDB;
   if (!existsSync(DB_PATH)) {
-    cachedDB = {};
-    return cachedDB;
+    return {};
   }
   try {
     const raw = readFileSync(DB_PATH, "utf-8");
-    cachedDB = JSON.parse(raw) as CommandDB;
+    return JSON.parse(raw) as CommandDB;
   } catch {
-    cachedDB = {};
+    return {};
   }
-  return cachedDB;
 }
 
 export function buildAliasMap(db: CommandDB): Map<string, string> {
-  if (cachedAliasMap) return cachedAliasMap;
   const map = new Map<string, string>();
   for (const [canonical, meta] of Object.entries(db)) {
     const key = canonical.toLowerCase();
@@ -35,7 +28,6 @@ export function buildAliasMap(db: CommandDB): Map<string, string> {
       map.set(alias.toLowerCase(), canonical);
     }
   }
-  cachedAliasMap = map;
   return map;
 }
 

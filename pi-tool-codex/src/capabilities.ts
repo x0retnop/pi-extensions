@@ -1,4 +1,4 @@
-import { getAgentDir, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isMcpToolCandidate } from "./tool-metadata.js";

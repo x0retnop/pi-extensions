@@ -1,5 +1,5 @@
-import { AssistantMessageComponent, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import type { MarkdownTheme } from "@mariozechner/pi-tui";
+import { AssistantMessageComponent, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { MarkdownTheme } from "@earendil-works/pi-tui";
 import { applyConversationInterruptedLabel } from "./interruption-label.js";
 
 const ASSISTANT_HEADING_FOREGROUND = "\x1b[38;2;255;255;255m";

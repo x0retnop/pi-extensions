@@ -11,6 +11,10 @@ import {
   askReadAccess,
   askTwice,
   normalizeCommand,
+  formatBashPrompt,
+  formatReadPrompt,
+  formatWritePrompt,
+  formatWriteConfirm,
 } from "./engine.js";
 import {
   classifyPathAccess,
@@ -142,7 +146,7 @@ export default function (pi: any) {
 
       const decision = await askReadAccess(
         ctx,
-        `Read file outside current project?\n\nPath: ${filePath}\nReason: ${access.reason}`
+        formatReadPrompt(filePath, access.reason)
       );
 
       if (decision === "directory") {
@@ -170,10 +174,8 @@ export default function (pi: any) {
 
       const allowed = await askTwice(
         ctx,
-        `${tool.toUpperCase()} file outside current project?\n\n` +
-        `Path: ${filePath}\n` +
-        `Reason: ${access.reason}\n\n` +
-        `This may modify files outside the active project.`
+        formatWritePrompt(tool, filePath, access.reason),
+        formatWriteConfirm(tool, filePath)
       );
 
       if (!allowed) {
@@ -206,7 +208,7 @@ export default function (pi: any) {
       // Ask user
       const choice = await askAllowOnceOrSession(
         ctx,
-        `Allow command?\n${decision.reason}\n\n${command}`
+        formatBashPrompt(command, decision)
       );
 
       if (choice === "command") {

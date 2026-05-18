@@ -42,8 +42,16 @@ export function analyze(command: string): AnalyzedCommand {
 }
 
 function isExternalWriteLike(command: string): boolean {
-  return />{1,2}/.test(command) ||
-    /^\s*(?:cp|copy|xcopy|robocopy|mv|move|New-Item|Set-Content|Add-Content|Out-File|cmd\s+\/c|powershell|pwsh)\b/i.test(command);
+  if (/^\s*(?:cp|copy|xcopy|robocopy|mv|move|New-Item|Set-Content|Add-Content|Out-File|cmd\s+\/c|powershell|pwsh)\b/i.test(command)) {
+    return true;
+  }
+  // Strip safe null redirects before checking for real output redirections
+  const cleaned = command
+    .replace(/\s*2>\s*["']?\/dev\/null["']?/g, "")
+    .replace(/\s*1?>\s*["']?\/dev\/null["']?/g, "")
+    .replace(/\s*2>\s*["']?nul["']?/gi, "")
+    .replace(/\s*1?>\s*["']?nul["']?/gi, "");
+  return />{1,2}/.test(cleaned);
 }
 
 function stripLeadingCd(command: string): { body: string; cdTarget: string | null } {
@@ -145,6 +153,16 @@ export function decide(
   };
 }
 
+function isSafeReadBash(analysis: AnalyzedCommand): boolean {
+  if (analysis.isCompound) return false;
+  const badCats = new Set(["delete", "execute", "install", "destructive", "unknown"]);
+  for (const cat of analysis.categories) {
+    if (badCats.has(cat)) return false;
+  }
+  if (analysis.risk !== "read" && analysis.risk !== "network") return false;
+  return true;
+}
+
 export function decideBash(
   command: string,
   mode: GateMode,
@@ -154,26 +172,78 @@ export function decideBash(
   // Path risk check first
   const pathDecision = checkBashPathRisk(command, cwd);
   if (pathDecision) {
+    // In yolo mode, allow safe read-only commands outside the project
+    if (mode === "yolo" && pathDecision.action === "ask") {
+      const analysis = analyze(command);
+      if (isSafeReadBash(analysis)) {
+        return { action: "allow" };
+      }
+    }
     return pathDecision;
   }
 
   const decision = decide(command, mode, sessionAllowedCommands);
 
-  // YOLO: write/delete outside project still requires confirmation
+  // YOLO: safe read outside project is allowed; anything else outside project requires confirmation
   if (mode === "yolo" && decision.action === "allow") {
     const { body } = stripLeadingCd(command);
     if (commandMentionsExternalOrProtectedPath(body)) {
       const analysis = analyze(command);
-      if (analysis.categories.includes("write") || analysis.categories.includes("delete")) {
-        return {
-          action: "ask",
-          reason: `Write/delete outside current project requires confirmation in yolo mode`,
-        };
+      if (isSafeReadBash(analysis)) {
+        return { action: "allow" };
       }
+      return {
+        action: "ask",
+        reason: `Command outside current project requires confirmation in yolo mode`,
+      };
     }
   }
 
   return decision;
+}
+
+export function riskEmoji(risk: string): string {
+  switch (risk.toLowerCase()) {
+    case "read": return "🟢";
+    case "write": return "🟡";
+    case "network": return "🔵";
+    case "execute": return "🟠";
+    case "install": return "🟠";
+    case "delete": return "🔴";
+    case "destructive": return "⛔";
+    default: return "⚠️";
+  }
+}
+
+function extractRiskFromReason(reason?: string): string {
+  if (!reason) return "unknown";
+  const m = reason.match(/\b(read|write|delete|execute|install|destructive|network)\b/i);
+  if (m) return m[1].toLowerCase();
+  if (/block/i.test(reason)) return "destructive";
+  if (/copy|move|cp|mv/i.test(reason)) return "write";
+  if (/remove|rm|del/i.test(reason)) return "delete";
+  if (/run|shell/i.test(reason)) return "execute";
+  return "unknown";
+}
+
+export function formatBashPrompt(command: string, decision: Decision): string {
+  const risk = extractRiskFromReason(decision.reason);
+  const emoji = riskEmoji(risk);
+  const riskLabel = risk.toUpperCase();
+  const reason = decision.reason || "Elevated risk";
+  return `${emoji} ${riskLabel} — command requires confirmation\n\nCommand:\n  ${command}\n\nReason:\n  ${reason}`;
+}
+
+export function formatReadPrompt(filePath: string, reason: string): string {
+  return `🟢 READ — outside current project\n\nFile:\n  ${filePath}\n\nScope:\n  ${reason}`;
+}
+
+export function formatWritePrompt(tool: string, filePath: string, reason: string): string {
+  return `🟡 WRITE — ${tool.toUpperCase()} outside project\n\nFile:\n  ${filePath}\n\nScope:\n  ${reason}\n\n⚠️ This will modify files outside the active project.`;
+}
+
+export function formatWriteConfirm(tool: string, filePath: string): string {
+  return `🔴 Final confirmation — ${tool.toUpperCase()}\n\nFile:\n  ${filePath}\n\nThis change is outside the project. Are you absolutely sure?`;
 }
 
 export async function askAllowOnceOrSession(
@@ -182,11 +252,11 @@ export async function askAllowOnceOrSession(
 ): Promise<"once" | "command" | "block"> {
   if (!ctx?.hasUI) return "block";
 
-  const choices = ["Allow once", "Always allow exact command this session", "Block"];
+  const choices = ["Allow once", "Always allow this command", "Block"];
   const choice = await ctx.ui.select(message, choices);
 
   if (choice === "Allow once") return "once";
-  if (choice === "Always allow exact command this session") return "command";
+  if (choice === "Always allow this command") return "command";
   return "block";
 }
 
@@ -198,29 +268,30 @@ export async function askReadAccess(
 
   const choice = await ctx.ui.select(message, [
     "Allow once",
-    "Allow this directory this session",
+    "Allow this directory",
     "Block",
   ]);
 
   if (choice === "Allow once") return "once";
-  if (choice === "Allow this directory this session") return "directory";
+  if (choice === "Allow this directory") return "directory";
   return "block";
 }
 
 export async function askTwice(
   ctx: any,
-  message: string
+  firstMessage: string,
+  secondMessage: string
 ): Promise<boolean> {
   if (!ctx?.hasUI) return false;
 
   const first = await ctx.ui.select(
-    `${message}\n\nFirst confirmation: allow?`,
-    ["Yes", "No"]
+    firstMessage,
+    ["Yes, allow", "No, block"]
   );
-  if (first !== "Yes") return false;
+  if (first !== "Yes, allow") return false;
 
   const second = await ctx.ui.select(
-    `${message}\n\nSecond confirmation: are you sure?`,
+    secondMessage,
     ["Yes, I am sure", "No"]
   );
   return second === "Yes, I am sure";

@@ -33,7 +33,7 @@ export default function (pi: ExtensionAPI) {
         compat: {
           supportsDeveloperRole: false,
           supportsReasoningEffort: true,
-          reasoningEffortMap: {
+          thinkingLevelMap: {
             minimal: "low",
             low: "low",
             medium: "medium",

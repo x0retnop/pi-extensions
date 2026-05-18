@@ -97,10 +97,17 @@ Pi dependencies (`@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`, `@e
 Official docs when needed: <https://pi.dev/docs/latest>. Most useful sections: `Extensions`, `Pi Packages`, `Session format`, `TUI components`.
 
 Internal quick references:
+- `docs/pi-workflow.md` — dev vs runtime layout, dependency rules, sync process. Read this first when picking up this repo.
 - `docs/pi-local-map.md` — where to find types and shipped docs inside the local `pi-coding-agent` package.
 - `docs/pi-quickref.md` — condensed API reference (events, ExtensionAPI, ExtensionContext, UI primitives, TypeBox patterns).
 - `docs/creating-extensions.md` — step-by-step guide for new packages in this collection.
 - `docs/patterns.md` — copy-paste snippets for tools, commands, TUI, blocking, state persistence.
+- `docs/pi-version-sync.md` — how to check extensions after Pi CLI updates.
+
+## Pi CLI updates and extension health
+
+Pi CLI evolves; extensions can quietly break or become obsolete after updates.  
+When the user says Pi was updated, run the lightweight sync check described in `docs/pi-version-sync.md` before making any extension edits.
 
 ## How to work with context
 

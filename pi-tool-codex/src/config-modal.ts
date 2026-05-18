@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { ZellijModal } from "./zellij-modal.js";
 import type { ToolDisplayCapabilities } from "./capabilities.js";
 import { getToolDisplayConfigPath } from "./config-store.js";

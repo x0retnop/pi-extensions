@@ -1,7 +1,7 @@
 import {
   type ExtensionAPI,
   UserMessageComponent,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   patchNativeUserMessagePrototype,
   type PatchableUserMessagePrototype,

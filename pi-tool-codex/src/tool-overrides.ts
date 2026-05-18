@@ -6,7 +6,7 @@ import type {
   LsToolDetails,
   ReadToolDetails,
   ToolRenderResultOptions,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   createBashTool,
   createEditTool,
@@ -15,8 +15,8 @@ import {
   createReadTool,
   createWriteTool,
   formatSize,
-} from "@mariozechner/pi-coding-agent";
-import { Text, visibleWidth } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { Text, visibleWidth } from "@earendil-works/pi-tui";
 import { existsSync, readFileSync } from "node:fs";
 import { isDevelopmentCommand, renderBashCall } from "./bash-display.js";
 import { homedir } from "node:os";

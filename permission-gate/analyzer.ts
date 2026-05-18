@@ -148,8 +148,10 @@ export function analyzeSegment(seg: Segment): AnalyzedSegment {
   categories = applyRedirects(categories, seg.redirects);
   for (const red of seg.redirects) {
     if (red.type === ">" || red.type === ">>" || red.type.startsWith("1") || red.type.startsWith("2")) {
-      risk = maxRisk(risk, "write") as Risk;
-      if (!categories.includes("write")) categories.push("write");
+      if (!isNullRedirectTarget(red.target)) {
+        risk = maxRisk(risk, "write") as Risk;
+        if (!categories.includes("write")) categories.push("write");
+      }
     }
     if (red.type === "<") {
       if (!categories.includes("read")) categories.push("read");
@@ -173,11 +175,16 @@ export function analyzeSegment(seg: Segment): AnalyzedSegment {
   };
 }
 
+function isNullRedirectTarget(target: string): boolean {
+  const t = target.trim().toLowerCase();
+  return t === "/dev/null" || t === "nul";
+}
+
 function applyRedirects(cats: Category[], redirects: Segment["redirects"]): Category[] {
   const out = [...cats];
   for (const red of redirects) {
     if (red.type === ">" || red.type === ">>" || red.type.startsWith("1") || red.type.startsWith("2")) {
-      if (!out.includes("write")) out.push("write");
+      if (!isNullRedirectTarget(red.target) && !out.includes("write")) out.push("write");
     }
     if (red.type === "<") {
       if (!out.includes("read")) out.push("read");

@@ -1,4 +1,4 @@
-import { InteractiveMode, keyText } from "@mariozechner/pi-coding-agent";
+import { InteractiveMode, keyText } from "@earendil-works/pi-coding-agent";
 import { TOOL_HISTORY_INDENT } from "./tool-status-bullets.js";
 
 const WORKING_TIMER_PATCH_VERSION = 3;
