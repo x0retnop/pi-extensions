@@ -29,7 +29,11 @@ export function validateQuestions(questions: Question[]): string | null {
     seen.add(normalizedQuestion);
 
     const labels = new Set<string>();
-    for (const opt of q.options) {
+    const opts = q.options ?? [];
+    if (opts.length === 1) {
+      return `Question "${question}" has only 1 option; provide 2-4 or omit options for free-text`;
+    }
+    for (const opt of opts) {
       const label = opt.label.trim();
       if (!label) return `Option label must not be empty in question "${question}"`;
       if (RESERVED_LABELS.has(normalize(label))) {

@@ -98,9 +98,13 @@ export class AskUserQuestionComponent implements Component {
 
   private allOptions(q: Question): DisplayOption[] {
     return [
-      ...q.options,
+      ...(q.options ?? []),
       { label: "Type your own answer...", isOther: true as const },
     ];
+  }
+
+  private isOpenMode(q: Question): boolean {
+    return !q.options || q.options.length === 0;
   }
 
   private allConfirmed(): boolean {
@@ -113,6 +117,33 @@ export class AskUserQuestionComponent implements Component {
 
   private get totalTabs(): number {
     return this.questions.length + 1; // questions + Submit
+  }
+
+  private leaveTab(): void {
+    const q = this.questions[this.activeTab];
+    const state = this.states[this.activeTab];
+    if (q && state && this.isOpenMode(q)) {
+      state.freeTextValue = this.editor.getText();
+    }
+  }
+
+  private syncEditorToTab(): void {
+    const q = this.questions[this.activeTab];
+    const state = this.states[this.activeTab];
+    if (q && state && this.isOpenMode(q)) {
+      this.editor.setText(state.freeTextValue ?? "");
+    } else {
+      this.editor.setText("");
+    }
+  }
+
+  private switchTab(delta: 1 | -1): void {
+    this.leaveTab();
+    this.autoConfirmIfAnswered();
+    this.activeTab = (this.activeTab + delta + this.totalTabs) % this.totalTabs;
+    this.syncEditorToTab();
+    this.invalidate();
+    this.tui.requestRender();
   }
 
   // ── Public interface ────────────────────────────────────────────────────────
@@ -212,6 +243,10 @@ export class AskUserQuestionComponent implements Component {
     add: (s: string) => void,
   ): void {
     const t = this.theme;
+    if (this.isOpenMode(q)) {
+      this.renderOpenQuestionBody(q, state, width, add);
+      return;
+    }
     const opts = this.allOptions(q);
 
     // Question text (word-wrapped)
@@ -317,6 +352,29 @@ export class AskUserQuestionComponent implements Component {
     }
   }
 
+  private renderOpenQuestionBody(
+    q: Question,
+    _state: QuestionState,
+    width: number,
+    add: (s: string) => void,
+  ): void {
+    const t = this.theme;
+    {
+      const wrapped = wrapTextWithAnsi(
+        t.fg("text", ` ${q.question}`),
+        Math.max(1, width - 2),
+      );
+      for (const line of wrapped) add(line);
+    }
+    add("");
+    const editorLines = this.editor.render(Math.max(1, width - 4));
+    for (const line of editorLines) {
+      add(` ${line}`);
+    }
+    add("");
+    add(t.fg("dim", " Enter submit · Esc cancel"));
+  }
+
   private renderSubmitTab(_width: number, add: (s: string) => void): void {
     const t = this.theme;
     const allDone = this.allConfirmed();
@@ -359,15 +417,15 @@ export class AskUserQuestionComponent implements Component {
 
   private getAnswerText(q: Question, state: QuestionState): string | null {
     if (!state.confirmed) return null;
-    if (q.multiSelect) {
+    if (q.multiSelect && q.options && q.options.length > 0) {
       const labels = [...state.selectedIndices]
         .sort((a, b) => a - b)
-        .map((idx) => q.options[idx].label);
+        .map((idx) => q.options![idx].label);
       if (state.freeTextValue !== null) labels.push(state.freeTextValue);
       return labels.join(", ");
     }
     if (state.freeTextValue !== null) return state.freeTextValue;
-    if (state.selectedIndex !== null)
+    if (state.selectedIndex !== null && q.options && q.options.length > 0)
       return q.options[state.selectedIndex].label;
     return null;
   }
@@ -480,15 +538,15 @@ export class AskUserQuestionComponent implements Component {
       const q = this.questions[i];
       const s = this.states[i];
       if (!s.confirmed) continue;
-      if (q.multiSelect) {
+      if (q.multiSelect && q.options && q.options.length > 0) {
         const labels = [...s.selectedIndices]
           .sort((a, b) => a - b)
-          .map((idx) => q.options[idx].label);
+          .map((idx) => q.options![idx].label);
         if (s.freeTextValue !== null) labels.push(s.freeTextValue);
         answers[q.question] = labels.join(", ");
       } else if (s.freeTextValue !== null) {
         answers[q.question] = s.freeTextValue;
-      } else if (s.selectedIndex !== null) {
+      } else if (s.selectedIndex !== null && q.options && q.options.length > 0) {
         answers[q.question] = q.options[s.selectedIndex].label;
       }
     }
@@ -529,6 +587,27 @@ export class AskUserQuestionComponent implements Component {
 
     const state = this.states[this.activeTab];
     const q = this.questions[this.activeTab];
+
+    // ── Open mode: free-text question without options ───────────────────────────
+    if (this.isOpenMode(q)) {
+      if (matchesKey(data, Key.escape)) {
+        this.cancel();
+        return;
+      }
+      if (matchesKey(data, Key.enter)) {
+        const text = this.editor.getText().trim();
+        if (text) {
+          state.freeTextValue = text;
+          state.confirmed = true;
+          this.confirmAndAdvance();
+        }
+        return;
+      }
+      this.editor.handleInput(data);
+      this.invalidate();
+      this.tui.requestRender();
+      return;
+    }
 
     // ── Edit mode: route to inline editor ──────────────────────────────────────
     if (state.inEditMode) {
@@ -574,18 +653,12 @@ export class AskUserQuestionComponent implements Component {
     }
 
     if (!this.isSingle && matchesKey(data, Key.right)) {
-      this.autoConfirmIfAnswered();
-      this.activeTab = (this.activeTab + 1) % this.totalTabs;
-      this.invalidate();
-      this.tui.requestRender();
+      this.switchTab(1);
       return;
     }
 
     if (!this.isSingle && matchesKey(data, Key.left)) {
-      this.autoConfirmIfAnswered();
-      this.activeTab = (this.activeTab - 1 + this.totalTabs) % this.totalTabs;
-      this.invalidate();
-      this.tui.requestRender();
+      this.switchTab(-1);
       return;
     }
 

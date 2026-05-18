@@ -29,15 +29,21 @@ export const QuestionSchema = Type.Object({
     description:
       "Short label used in the tab bar when multiple questions are shown. Max 12 characters.",
   }),
-  options: Type.Array(OptionSchema, {
-    minItems: 2,
-    maxItems: 4,
-    description: "Between 2 and 4 choices for the user to select from",
-  }),
-  multiSelect: Type.Boolean({
-    description:
-      "When true the user may select multiple options. Answers are joined with ', '.",
-  }),
+  options: Type.Optional(
+    Type.Array(OptionSchema, {
+      minItems: 2,
+      maxItems: 4,
+      description:
+        "Between 2 and 4 choices for the user to select from. Omit for a free-text (open) question.",
+    }),
+  ),
+  multiSelect: Type.Optional(
+    Type.Boolean({
+      default: false,
+      description:
+        "When true the user may select multiple options. Answers are joined with ', '. Ignored when options are omitted.",
+    }),
+  ),
 });
 
 export const InputSchema = Type.Object({

@@ -18,7 +18,7 @@ pi install git:github.com/x0retnop/pi-extension-a-rewind
 
 ### AskU
 
-Adds `ask_user_question`, an interactive TUI tool for structured clarifying questions. Adapted from [`ghoseb/pi-askuserquestion`](https://github.com/ghoseb/pi-askuserquestion) for this collection.
+Adds `ask_user_question`, an interactive TUI tool for structured clarifying questions. Supports choice mode (2-4 options) and open mode (free-text). Adapted from [`ghoseb/pi-askuserquestion`](https://github.com/ghoseb/pi-askuserquestion) for this collection.
 
 ```bash
 pi install ./asku

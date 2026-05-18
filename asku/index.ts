@@ -8,18 +8,18 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "ask_user_question",
     label: "Ask User",
-    description: `Ask the user 1–4 clarifying questions before proceeding.
-Use this tool to:
-1. Clarify ambiguous instructions
-2. Get the user's preference between valid approaches
-3. Make decisions on implementation choices
-4. Offer choices about what direction to take
-Each question must have 2–4 options. Users can always select "Other" to type a free-text answer, so do not include an "Other" option yourself.
-Option labels should be concise (1–5 words).
-Set multiSelect: true when more than one option can validly apply at the same time.
-The header field is a short label (max 12 characters) used in the tab bar when showing multiple questions.
-If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label.
-Always use this tool instead of asking questions in plain text — it provides a structured, interactive UI.`,
+    description: `MANDATORY when you need user input as a choice or short free-text answer.
+NEVER use this tool for explanations or open-ended discussion — write plain text instead.
+
+Modes:
+- Choice: provide 2-4 options per question. User picks one (or many with multiSelect).
+- Open: omit options for a free-text question (name, path, yes/no, quick confirmation).
+
+Rules:
+- 1-4 questions per call.
+- Each question needs a short header (max 12 chars) for the tab bar.
+- Do not add an "Other" option; free-text is built-in for choice mode.
+- If you recommend an option, put it first and add "(Recommended)" to the label.`,
 
     parameters: InputSchema,
 
