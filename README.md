@@ -78,16 +78,18 @@ Unified safety gate for `bash`, `read`, `write`, and `edit` tool calls. Uses str
 
 - **Bash**: Parsed into segments/pipelines/compounds. Risk is determined by a `CommandDB` (190 commands, 576 subcommands) rather than fragile regex. Inline Python/Node scripts are scanned for write/delete/network/execute patterns.
 - **Read/write/edit**: Path is classified as `inside_project`, `outside_project`, or `protected`. Protected roots are hard-blocked. Writes and edits outside the project require double confirmation.
+- **YOLO safe-read outside project**: In `yolo` mode, read-only commands (`ls`, `cat`, `rg`, `grep`, `find`, `head`) targeting paths outside the project are allowed automatically. Redirections to `/dev/null` or `nul` do not count as write risk.
 - **Hard blocks**: Destructive commands (`rm -rf /`, `git reset --hard`, `format`, `diskpart`, `curl | sh`) are blocked without asking.
+- **Visual approvals**: Risk emoji (🟢 read, 🟡 write, 🔴 delete, ⛔ destructive) and structured prompt text for faster scanning.
 
 Four selectable modes — strict, balanced, relaxed, and yolo — with a live status indicator and `/gate-mode` command to switch or cycle at runtime.
 
 - `strict` — safest, most commands require confirmation.
 - `balanced` — default-style allow list plus confirmations for risky commands.
 - `relaxed` — auto-allows read-only lookups, safe inline Python/Node, pipelines, and compounds. Recommended for day-to-day agent work.
-- `yolo` — minimal friction for focused project work. Only hard blocks and destructive operations (delete, install) still ask; everything else passes freely.
+- `yolo` — minimal friction for focused project work. Hard blocks and destructive operations still ask; write/delete outside the project asks; safe read outside the project is allowed.
 
-Recent update: unified `protected-paths` features, inline-script analysis for Python/Node, and cyclic `/gate-mode` switching.
+Recent update: YOLO safe-read outside project, visual approval prompts, Git Bash path support (`/c/...`), `find -exec/-delete` flags, and null-redirect handling.
 
 ```bash
 pi install git:github.com/x0retnop/pi-extension-permission-gate

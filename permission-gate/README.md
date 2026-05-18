@@ -7,6 +7,7 @@ Unified safety gate for **bash**, **read**, **write**, and **edit** tool calls. 
 - **Bash commands**: Parsed into segments/pipelines/compounds. Risk is determined by a `CommandDB` (190 commands, 576 subcommands) rather than fragile regex.
 - **Inline scripts**: `python -c`, `python - <<EOF`, and `node -e` are scanned for write/delete/network/execute patterns. Write/delete to paths outside the project requires confirmation even in YOLO mode.
 - **Read/write/edit tools**: Path is classified as `inside_project`, `outside_project`, or `protected`. Protected roots (e.g. `C:\Windows`, `~/.ssh`, `~/.pi`) are blocked. Writes and edits outside the project require double confirmation.
+- **YOLO safe-read outside project**: In `yolo` mode, read-only commands (`ls`, `cat`, `rg`, `grep`, `find`, `head`, `tail`) that target paths outside the project are allowed automatically. Redirections to `/dev/null` or `nul` do not count as write operations.
 - **Hard blocks**: Destructive commands (`rm -rf /`, `git reset --hard`, `format`, `diskpart`, `curl | sh`) are blocked without asking.
 - **Session approvals**: Allowed commands can be remembered for the session.
 
@@ -25,7 +26,7 @@ pi install git:github.com/x0retnop/pi-extension-permission-gate
 | `strict` | allow | ask | ask | ask | ask | block |
 | `balanced` | allow | allow | ask | ask | ask (protected always block) | double-ask |
 | `relaxed` | allow | allow | ask | ask | allow trusted / ask other | double-ask |
-| `yolo` | allow | allow | allow | ask | allow | double-ask |
+| `yolo` | allow | allow safe-read outside project | allow | ask | allow | double-ask |
 
 Switch at runtime:
 
@@ -93,7 +94,11 @@ Correctly handles:
 - **`$(...)` / `` `...` ``** in bash → treated as execute risk
 - **`rm _temp.py`** → auto-allowed (safe temp delete heuristic)
 - **`cd "C:/project" && echo > file.txt`** → allowed if the write target is inside the project (cd prefix is stripped from path check)
+- **Git Bash paths (`/c/...`)** → correctly detected as outside-project / protected
+- **`2>/dev/null` / `>nul`** → not treated as write risk; safe-read commands with null redirects are allowed in yolo
+- **`find -exec` / `find -delete`** → escalated to execute / delete risk
 - **Write/edit outside project denied** → model sees `User denied write/edit outside current project:` instead of generic `Blocked` for clearer correction
+- **Visual approvals** → risk emoji (🟢 read, 🟡 write, 🔴 delete, ⛔ destructive) and structured prompt text for faster scanning
 
 ## Commands
 

@@ -126,7 +126,7 @@ export function commandHasTraversal(command: string): boolean {
 export function commandMentionsExternalOrProtectedPath(command: string): boolean {
   const lower = command.toLowerCase();
   const hints = [
-    "c:\\", "c:/",
+    "c:\\", "c:/", "/c/", "\\c\\",
     "\\windows", "/windows",
     "program files", "programdata",
     "\\users\\", "/users/",
