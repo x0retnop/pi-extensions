@@ -156,7 +156,10 @@ export default function (pi: any) {
       if (decision !== "once") {
         return {
           block: true,
-          reason: `User denied read outside current project:\n${filePath}`,
+          reason:
+            `User declined reading a file outside the current project: ${filePath}\n\n` +
+            `The agent should avoid accessing files outside the active workspace. ` +
+            `If the file is needed, ask the user to place it inside the project or use a path within the project directory.`,
         };
       }
       return undefined;
@@ -179,9 +182,13 @@ export default function (pi: any) {
       );
 
       if (!allowed) {
+        const action = tool === "write" ? "writing" : "editing";
         return {
           block: true,
-          reason: `User denied ${tool} outside current project:\n${filePath}`,
+          reason:
+            `User declined ${action} a file outside the current project: ${filePath}\n\n` +
+            `The agent should keep all file modifications within the active project. ` +
+            `If the change is genuinely required elsewhere, explain why and ask the user explicitly.`,
         };
       }
       return undefined;
@@ -218,9 +225,13 @@ export default function (pi: any) {
       if (choice === "once") {
         return undefined;
       }
+      const riskHint = decision.reason ? `\nRisk context: ${decision.reason}` : "";
       return {
         block: true,
-        reason: `User denied command:\n${command}`,
+        reason:
+          `User declined the following command because it requires elevated permissions or operates outside the project scope:\n  ${command}${riskHint}\n\n` +
+          `The agent should avoid destructive or out-of-scope operations. ` +
+          `Suggested: use a safer alternative, stay within the project directory, or ask the user for guidance if the task truly requires this.`,
       };
     }
 

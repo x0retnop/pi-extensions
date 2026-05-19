@@ -21,6 +21,41 @@ export function isSafeTempDelete(command: string): boolean {
   return SAFE_TEMP_PATTERNS.some((p) => p.test(command));
 }
 
+function checkSafeServerCommands(command: string, mode: GateMode): Decision | null {
+  if (mode !== "relaxed" && mode !== "yolo") return null;
+
+  const normalized = normalizeCommand(command);
+
+  // Stop local uvicorn server
+  if (/^\s*(pkill|killall)(?:\s+-[a-zA-Z0-9]+)*\s+uvicorn\s*$/i.test(normalized)) {
+    return { action: "allow", reason: "safe server stop (uvicorn)" };
+  }
+
+  // Check port status (netstat/ss piped to grep/findstr)
+  if (/^\s*(netstat|ss)\s+\S+.*\|\s*(grep|findstr)\s+\S+/i.test(normalized)) {
+    return { action: "allow", reason: "safe port check" };
+  }
+
+  // Start uvicorn server — single command only, no pipes/compounds
+  const analysis = analyze(command);
+  if (!analysis.isCompound && !analysis.isPipeline) {
+    if (/^\s*(?:(?:python3?|py)(?:\s+-[a-zA-Z0-9]+)*\s+)?uvicorn\b/i.test(normalized)) {
+      return { action: "allow", reason: "safe server start (uvicorn)" };
+    }
+  }
+
+  return null;
+}
+
+function isAiHelper(command: string): Decision | null {
+  const normalized = normalizeCommand(command);
+  // Allow python / python3 / py (with optional flags) running ai_helper.py
+  if (/^\s*(?:python3?|py)(?:\s+-[a-zA-Z0-9]+)*\s+.*?ai-helper[\\/]ai_helper\.py\b/i.test(normalized)) {
+    return { action: "allow", reason: "ai_helper.py gate script" };
+  }
+  return null;
+}
+
 function fallbackNeedsAsk(risk: string, mode: GateMode): boolean {
   switch (mode) {
     case "strict":
@@ -169,6 +204,10 @@ export function decideBash(
   sessionAllowedCommands: Set<string>,
   cwd: string
 ): Decision {
+  // Trusted helper script — bypass path/write checks
+  const helperDecision = isAiHelper(command);
+  if (helperDecision) return helperDecision;
+
   // Path risk check first
   const pathDecision = checkBashPathRisk(command, cwd);
   if (pathDecision) {
@@ -181,6 +220,9 @@ export function decideBash(
     }
     return pathDecision;
   }
+
+  const serverDecision = checkSafeServerCommands(command, mode);
+  if (serverDecision) return serverDecision;
 
   const decision = decide(command, mode, sessionAllowedCommands);
 
