@@ -41,6 +41,7 @@ Main packages:
 - `ollama-cloud-web` — adds `web_search` and `web_fetch` tools via Ollama Cloud.
 - `permission-gate` — safety gate for `bash/read/write/edit`: structural command analysis, path guard, protected roots, strict/balanced/relaxed/yolo modes.
 - `pi-docs-toggle` — toggles Pi docs context.
+- `role-sw` — `/role` command to switch between preset agent roles with TUI select; role is persisted per session.
 - `sessions` — `/sessions`, interactive lazy-loading picker for Pi sessions.
 - `tm` — temperature/model utility extension.
 - `todo` — model-callable todo checklist tool, `/todos`, `/todo-mode`.

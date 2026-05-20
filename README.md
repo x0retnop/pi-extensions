@@ -103,6 +103,16 @@ pi install git:github.com/x0retnop/pi-extension-permission-gate
 pi install git:github.com/x0retnop/pi-extension-protected-paths
 ```
 
+### Role Switcher
+
+Switch between preset agent roles via `/role`. Uses an interactive TUI select when called without arguments, or accepts a role name directly (e.g., `/role code_auditor`).
+
+Roles are loaded from `~/.pi/agent/roles/` and the active role is persisted in the session — it survives reloads and `/resume`.
+
+```bash
+pi install ./role-sw
+```
+
 ### Sessions
 
 Adds `/sessions`, an interactive lazy-loading picker for switching between recent Pi sessions.
