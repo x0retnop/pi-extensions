@@ -26,6 +26,7 @@ export function analyzeSegment(seg: Segment): AnalyzedSegment {
     return {
       commandName: "",
       originalName: "",
+      argv: seg.argv,
       flags: [],
       redirects: seg.redirects,
       risk: "read",
@@ -46,6 +47,7 @@ export function analyzeSegment(seg: Segment): AnalyzedSegment {
       return {
         commandName: originalName.toLowerCase(),
         originalName,
+        argv: seg.argv,
         flags: seg.argv.slice(1).filter((a) => a.startsWith("-")),
         redirects: seg.redirects,
         risk: "execute",
@@ -60,6 +62,7 @@ export function analyzeSegment(seg: Segment): AnalyzedSegment {
     return {
       commandName: originalName.toLowerCase(),
       originalName,
+      argv: seg.argv,
       flags: seg.argv.slice(1).filter((a) => a.startsWith("-")),
       redirects: seg.redirects,
       risk,
@@ -128,9 +131,19 @@ export function analyzeSegment(seg: Segment): AnalyzedSegment {
   // Inline script analysis (python -c, node -e, heredoc)
   const inlineScan = scanInline(seg.raw);
   if (inlineScan) {
-    risk = maxRisk(risk, inlineScan.risk) as Risk;
+    // If inline script contains destructive operations, trust its risk over the wrapper command.
+    if (inlineScan.risk === "delete" || inlineScan.risk === "destructive") {
+      risk = inlineScan.risk;
+    } else {
+      risk = maxRisk(risk, inlineScan.risk) as Risk;
+    }
     for (const cat of inlineScan.categories) {
       if (!categories.includes(cat)) categories.push(cat);
+    }
+    // Strip auto-allow when inline script escalates to destructive/delete/install.
+    // The wrapper command's safety profile does not apply to arbitrary inline code.
+    if (inlineScan.risk === "delete" || inlineScan.risk === "destructive" || inlineScan.risk === "install") {
+      autoAllowModes = [];
     }
     // In relaxed/yolo, read-only inline scripts can be auto-allowed
     if (inlineScan.risk === "read" && !autoAllowModes.includes("relaxed")) {
@@ -166,6 +179,7 @@ export function analyzeSegment(seg: Segment): AnalyzedSegment {
     commandName: canonical,
     originalName,
     subcommand,
+    argv: seg.argv,
     flags,
     redirects: seg.redirects,
     risk,

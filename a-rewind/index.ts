@@ -1,8 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const EXT = "a-rewind";
+const TIMER_STATUS_ID = "a-rewind-timer";
 
 type NotifyLevel = "info" | "warning" | "error";
+
+let timerEnabled = true;
+let activeTaskStartedAtMs: number | undefined;
+let lastTaskDurationMs: number | undefined;
 
 function formatError(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
@@ -22,7 +27,126 @@ function notify(ctx: any, message: string, level: NotifyLevel = "info"): void {
 	}
 }
 
+function safeSetStatus(ctx: any, id: string, value: string | undefined): void {
+	if (ctx?.hasUI && typeof ctx.ui?.setStatus === "function") {
+		ctx.ui.setStatus(id, value);
+	}
+}
+
+function formatDuration(ms: number): string {
+	const totalSeconds = Math.max(0, Math.round(ms / 1000));
+	const seconds = totalSeconds % 60;
+	const totalMinutes = Math.floor(totalSeconds / 60);
+	const minutes = totalMinutes % 60;
+	const hours = Math.floor(totalMinutes / 60);
+
+	if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+	if (minutes > 0) return `${minutes}m ${seconds}s`;
+	return `${seconds}s`;
+}
+
+function startTaskTimer(): void {
+	activeTaskStartedAtMs = Date.now();
+}
+
+function finishTaskTimer(): number | undefined {
+	if (activeTaskStartedAtMs === undefined) return undefined;
+	const durationMs = Math.max(0, Date.now() - activeTaskStartedAtMs);
+	activeTaskStartedAtMs = undefined;
+	lastTaskDurationMs = durationMs;
+	return durationMs;
+}
+
+function formatTaskTimingForStatus(): string {
+	if (activeTaskStartedAtMs !== undefined) {
+		return ` · ${formatDuration(Date.now() - activeTaskStartedAtMs)}`;
+	}
+	if (lastTaskDurationMs !== undefined) {
+		return ` · last ${formatDuration(lastTaskDurationMs)}`;
+	}
+	return "";
+}
+
+function updateTimerStatus(ctx: any): void {
+	if (!timerEnabled) {
+		safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+		return;
+	}
+	const timing = formatTaskTimingForStatus();
+	if (timing) {
+		safeSetStatus(ctx, TIMER_STATUS_ID, `task${timing}`);
+	} else {
+		safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+	}
+}
+
+function resetTimerState(): void {
+	activeTaskStartedAtMs = undefined;
+	lastTaskDurationMs = undefined;
+}
+
 export default function aRewind(pi: ExtensionAPI) {
+	pi.on("session_start", async (_event: any, ctx: any) => {
+		resetTimerState();
+		updateTimerStatus(ctx);
+	});
+
+	pi.on("before_agent_start", async (_event: any, ctx: any) => {
+		startTaskTimer();
+		updateTimerStatus(ctx);
+	});
+
+	pi.on("agent_end", async (_event: any, ctx: any) => {
+		const durationMs = finishTaskTimer();
+		if (durationMs !== undefined) {
+			notify(ctx, `task time: ${formatDuration(durationMs)}`, "info");
+		}
+		updateTimerStatus(ctx);
+	});
+
+	pi.on("turn_end", async (_event: any, ctx: any) => {
+		updateTimerStatus(ctx);
+	});
+
+	pi.registerCommand("a-rewind-tt", {
+		description: "Toggle task timer display in the status bar",
+		handler: async (args: string, ctx: any) => {
+			try {
+				const arg = args.trim().toLowerCase();
+
+				if (arg === "off" || arg === "disable" || arg === "0") {
+					timerEnabled = false;
+					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+					notify(ctx, "task timer display disabled", "info");
+					return;
+				}
+
+				if (arg === "on" || arg === "enable" || arg === "1") {
+					timerEnabled = true;
+					updateTimerStatus(ctx);
+					notify(ctx, "task timer display enabled", "info");
+					return;
+				}
+
+				if (arg === "status") {
+					notify(ctx, `task timer display is ${timerEnabled ? "enabled" : "disabled"}`, "info");
+					return;
+				}
+
+				timerEnabled = !timerEnabled;
+				if (timerEnabled) {
+					updateTimerStatus(ctx);
+					notify(ctx, "task timer display enabled", "info");
+				} else {
+					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+					notify(ctx, "task timer display disabled", "info");
+				}
+			} catch (err) {
+				notify(ctx, formatError(err), "error");
+			}
+		},
+	});
+
 	pi.registerCommand("a-rewind-last", {
 		description: "Rewind session to before the latest assistant message",
 		handler: async (_args: string, ctx: any) => {

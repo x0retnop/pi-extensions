@@ -61,6 +61,7 @@ export interface AnalyzedSegment {
   commandName: string;
   originalName: string;
   subcommand?: string;
+  argv: string[];
   flags: string[];
   redirects: Redirect[];
   risk: Risk | "unknown";

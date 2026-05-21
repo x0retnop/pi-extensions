@@ -1,5 +1,6 @@
 import path from "node:path";
 import { homedir } from "node:os";
+import { readFileSync, existsSync } from "node:fs";
 
 export type PathScope = "inside_project" | "outside_project" | "protected";
 
@@ -10,6 +11,32 @@ export interface PathAccess {
 
 function getHome(): string {
   return process.env.USERPROFILE || process.env.HOME || homedir();
+}
+
+let cachedWorkspaceRoots: string[] | undefined;
+
+export function loadWorkspaceRoots(): string[] {
+  if (cachedWorkspaceRoots !== undefined) return cachedWorkspaceRoots;
+  try {
+    const settingsPath = path.join(getHome(), ".pi", "agent", "settings.json");
+    if (existsSync(settingsPath)) {
+      const raw = JSON.parse(readFileSync(settingsPath, "utf-8"));
+      const roots = raw.permissionGate?.workspaceRoots;
+      if (Array.isArray(roots)) {
+        cachedWorkspaceRoots = roots
+          .filter((r): r is string => typeof r === "string")
+          .map((r) => path.resolve(r).toLowerCase())
+          .filter(Boolean);
+        return cachedWorkspaceRoots;
+      }
+    }
+  } catch {}
+  cachedWorkspaceRoots = [];
+  return cachedWorkspaceRoots;
+}
+
+export function clearWorkspaceRootCache(): void {
+  cachedWorkspaceRoots = undefined;
 }
 
 export function normalizePath(input: string, cwd: string): string {
@@ -73,12 +100,19 @@ function getProtectedRoots(): string[] {
     .map((p) => path.resolve(p).toLowerCase());
 }
 
-export function classifyPathAccess(targetPath: string, cwd: string): PathAccess {
+export function classifyPathAccess(targetPath: string, cwd: string, workspaceRoots?: string[]): PathAccess {
   const normalized = normalizePath(targetPath, cwd).toLowerCase();
   const normalizedCwd = path.resolve(cwd).toLowerCase();
 
   if (isInside(normalized, normalizedCwd)) {
     return { scope: "inside_project", reason: "inside current project" };
+  }
+
+  const roots = workspaceRoots && workspaceRoots.length > 0 ? workspaceRoots : loadWorkspaceRoots();
+  for (const root of roots) {
+    if (isInside(normalized, root)) {
+      return { scope: "inside_project", reason: "inside workspace" };
+    }
   }
 
   for (const root of getProtectedRoots()) {
@@ -121,17 +155,4 @@ export function extractFilePath(input: any): string | null {
 // Bash path heuristics
 export function commandHasTraversal(command: string): boolean {
   return command.includes("..\\") || command.includes("../");
-}
-
-export function commandMentionsExternalOrProtectedPath(command: string): boolean {
-  const lower = command.toLowerCase();
-  const hints = [
-    "c:\\", "c:/", "/c/", "\\c\\",
-    "\\windows", "/windows",
-    "program files", "programdata",
-    "\\users\\", "/users/",
-    ".ssh", ".pi", ".config",
-    "desktop", "documents", "downloads",
-  ];
-  return hints.some((hint) => lower.includes(hint.toLowerCase()));
 }

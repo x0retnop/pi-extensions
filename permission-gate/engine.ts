@@ -1,10 +1,11 @@
 import { tokenize } from "./tokenizer.js";
 import { analyzeCommand } from "./analyzer.js";
 import type { Decision, GateMode, AnalyzedCommand } from "./types.js";
+import type { PathScope } from "./path-guard.js";
 import {
   classifyPathAccess,
   commandHasTraversal,
-  commandMentionsExternalOrProtectedPath,
+  loadWorkspaceRoots,
 } from "./path-guard.js";
 
 export function normalizeCommand(command: string): string {
@@ -56,6 +57,23 @@ function isAiHelper(command: string): Decision | null {
   return null;
 }
 
+function isKimiWebbridge(command: string): Decision | null {
+  const normalized = normalizeCommand(command);
+  // Allow curl calls to the local kimi-webbridge daemon
+  if (/^\s*curl\s+.*http:\/\/127\.0\.0\.1:10086\/command/i.test(normalized)) {
+    return { action: "allow", reason: "kimi-webbridge local daemon" };
+  }
+  // Allow kimi-webbridge binary invocations
+  if (/~\/.kimi-webbridge\/bin\/kimi-webbridge\b/i.test(normalized)) {
+    return { action: "allow", reason: "kimi-webbridge daemon binary" };
+  }
+  // Allow the screenshot helper script
+  if (/kimi-webbridge[\\/]scripts[\\/]screenshot\.sh\b/i.test(normalized)) {
+    return { action: "allow", reason: "kimi-webbridge screenshot helper" };
+  }
+  return null;
+}
+
 function fallbackNeedsAsk(risk: string, mode: GateMode): boolean {
   switch (mode) {
     case "strict":
@@ -98,34 +116,55 @@ function stripLeadingCd(command: string): { body: string; cdTarget: string | nul
 
 function checkBashPathRisk(command: string, cwd: string): Decision | null {
   const { body, cdTarget } = stripLeadingCd(command);
+  const workspaceRoots = loadWorkspaceRoots();
 
-  if (commandHasTraversal(body) && isExternalWriteLike(body)) {
-    return {
-      action: "block",
-      reason: `Blocked bash command with path traversal:\n${command}`,
-    };
+  // Block traversal + write-like only when resolved path leaves project/workspace
+  if (isExternalWriteLike(body) && commandHasTraversal(body)) {
+    const targets = extractBashPathTargets(body, cwd, workspaceRoots);
+    const hasOutside = targets.some((t) => {
+      if (!t.path.includes("..")) return false;
+      const resolved = classifyPathAccess(t.path, cwd, workspaceRoots);
+      return resolved.scope === "outside_project" || resolved.scope === "protected";
+    });
+    if (hasOutside) {
+      return {
+        action: "block",
+        reason:
+          `Blocked bash command with path traversal outside project/workspace:\n${command}\n\n` +
+          `This is restricted by the user's permission gate settings. ` +
+          `Do not attempt to bypass this block using python, node, PowerShell, or other interpreters.`,
+      };
+    }
   }
 
-  if (commandMentionsExternalOrProtectedPath(body) && isExternalWriteLike(body)) {
-    return {
-      action: "ask",
-      reason: `Bash command may write outside current project.\n\n${command}`,
-    };
+  // Check actual extracted paths for external/protected write targets
+  if (isExternalWriteLike(body)) {
+    const targets = extractBashPathTargets(body, cwd, workspaceRoots);
+    const hasOutside = targets.some((t) => t.scope === "outside_project" || t.scope === "protected");
+    if (hasOutside) {
+      return {
+        action: "ask",
+        reason: `Bash command may write outside current project/workspace.\n\n${command}`,
+      };
+    }
   }
 
   // If cd changes to external/protected dir and subsequent command is write-like
   if (cdTarget && isExternalWriteLike(body)) {
-    const access = classifyPathAccess(cdTarget, cwd);
+    const access = classifyPathAccess(cdTarget, cwd, workspaceRoots);
     if (access.scope === "protected") {
       return {
         action: "block",
-        reason: `Blocked bash command changing to protected directory:\n${command}`,
+        reason:
+          `Blocked bash command changing to protected directory:\n${command}\n\n` +
+          `This is restricted by the user's permission gate settings. ` +
+          `Do not attempt to bypass this block using python, node, PowerShell, or other interpreters.`,
       };
     }
     if (access.scope === "outside_project") {
       return {
         action: "ask",
-        reason: `Bash command writes after cd to outside project.\n\n${command}`,
+        reason: `Bash command writes after cd to outside project/workspace.\n\n${command}`,
       };
     }
   }
@@ -154,7 +193,11 @@ export function decide(
   if (analysis.risk === "destructive") {
     return {
       action: "block",
-      reason: `Blocked destructive command (${analysis.categories.join(", ")})`,
+      reason:
+        `Blocked destructive command (${analysis.categories.join(", ")}). ` +
+        `This operation is restricted by the user's permission gate settings. ` +
+        `Do not attempt to bypass this restriction using python, node, PowerShell, or other interpreters. ` +
+        `If this operation is genuinely required, explain why to the user and wait for explicit approval.`,
     };
   }
 
@@ -198,6 +241,59 @@ function isSafeReadBash(analysis: AnalyzedCommand): boolean {
   return true;
 }
 
+function extractBashPathTargets(
+  command: string,
+  cwd: string,
+  workspaceRoots?: string[]
+): Array<{ path: string; scope: PathScope }> {
+  const analysis = analyze(command);
+  const targets: Array<{ path: string; scope: PathScope }> = [];
+  const INTERPRETERS_WITH_INLINE = new Set([
+    "python", "python3", "py", "node", "nodejs", "ruby", "perl", "php", "java",
+  ]);
+
+  for (const part of analysis.parts) {
+    for (const seg of part.segments) {
+      const cmd = seg.commandName.toLowerCase();
+      const hasInlineFlag = seg.flags.some((f) => f === "-c" || f === "-e");
+      const isInterpreter = INTERPRETERS_WITH_INLINE.has(cmd);
+
+      let sawDoubleDash = false;
+      for (let i = 1; i < seg.argv.length; i++) {
+        const tok = seg.argv[i];
+        if (!sawDoubleDash) {
+          if (tok === "--") {
+            sawDoubleDash = true;
+            continue;
+          }
+          if (tok.startsWith("-")) continue;
+        }
+        // Skip inline code argument for interpreters
+        if (isInterpreter && hasInlineFlag && i === seg.argv.length - 1) continue;
+
+        let path = tok;
+        if (
+          (path.startsWith('"') && path.endsWith('"')) ||
+          (path.startsWith("'") && path.endsWith("'"))
+        ) {
+          path = path.slice(1, -1);
+        }
+        if (!path) continue;
+        const access = classifyPathAccess(path, cwd, workspaceRoots);
+        targets.push({ path, scope: access.scope });
+      }
+
+      for (const red of seg.redirects) {
+        if (red.target) {
+          const access = classifyPathAccess(red.target, cwd, workspaceRoots);
+          targets.push({ path: red.target, scope: access.scope });
+        }
+      }
+    }
+  }
+  return targets;
+}
+
 export function decideBash(
   command: string,
   mode: GateMode,
@@ -207,6 +303,10 @@ export function decideBash(
   // Trusted helper script — bypass path/write checks
   const helperDecision = isAiHelper(command);
   if (helperDecision) return helperDecision;
+
+  // Kimi WebBridge local browser automation — bypass path checks
+  const webbridgeDecision = isKimiWebbridge(command);
+  if (webbridgeDecision) return webbridgeDecision;
 
   // Path risk check first
   const pathDecision = checkBashPathRisk(command, cwd);
@@ -226,17 +326,44 @@ export function decideBash(
 
   const decision = decide(command, mode, sessionAllowedCommands);
 
+  // Scope-aware downgrade for destructive/delete commands targeting only inside-project paths
+  if (decision.action === "block") {
+    const isDestructiveBlock =
+      /destructive|delete/i.test(decision.reason || "") &&
+      !/path traversal|protected directory/i.test(decision.reason || "");
+    if (isDestructiveBlock) {
+      const targets = extractBashPathTargets(command, cwd, loadWorkspaceRoots());
+      if (targets.length > 0) {
+        const allInside = targets.every((t) => t.scope === "inside_project");
+        if (allInside) {
+          if (mode === "relaxed" || mode === "yolo") {
+            return {
+              action: "allow",
+              reason: "destructive command targets are inside current project/workspace",
+            };
+          }
+          return {
+            action: "ask",
+            reason: `Destructive command inside current project/workspace requires confirmation\n\n${command}`,
+          };
+        }
+      }
+    }
+  }
+
   // YOLO: safe read outside project is allowed; anything else outside project requires confirmation
   if (mode === "yolo" && decision.action === "allow") {
     const { body } = stripLeadingCd(command);
-    if (commandMentionsExternalOrProtectedPath(body)) {
+    const targets = extractBashPathTargets(body, cwd, loadWorkspaceRoots());
+    const hasOutside = targets.some((t) => t.scope === "outside_project" || t.scope === "protected");
+    if (hasOutside) {
       const analysis = analyze(command);
       if (isSafeReadBash(analysis)) {
         return { action: "allow" };
       }
       return {
         action: "ask",
-        reason: `Command outside current project requires confirmation in yolo mode`,
+        reason: `Command outside current project/workspace requires confirmation in yolo mode`,
       };
     }
   }

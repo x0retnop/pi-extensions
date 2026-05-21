@@ -21,6 +21,8 @@ import {
   extractFilePath,
   cwdIsTooBroad,
   isInside,
+  loadWorkspaceRoots,
+  clearWorkspaceRootCache,
 } from "./path-guard.js";
 
 const SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
@@ -59,6 +61,7 @@ let CONFIG = { mode: loadMode() };
 
 const sessionAllowedCommands = new Set<string>();
 const sessionAllowedReadRoots = new Set<string>();
+const sessionAllowedWriteRoots = new Set<string>();
 
 function showStatus(ctx: any) {
   if (ctx?.ui?.setStatus) {
@@ -70,12 +73,15 @@ export default function (pi: any) {
   pi.on("session_start", async (_event: any, ctx: any) => {
     sessionAllowedCommands.clear();
     sessionAllowedReadRoots.clear();
+    sessionAllowedWriteRoots.clear();
+    clearWorkspaceRootCache();
     showStatus(ctx);
   });
 
   pi.on("session_shutdown", async () => {
     sessionAllowedCommands.clear();
     sessionAllowedReadRoots.clear();
+    sessionAllowedWriteRoots.clear();
   });
 
   const MODES: GateMode[] = ["strict", "balanced", "relaxed", "yolo"];
@@ -112,6 +118,7 @@ export default function (pi: any) {
     const cwd = String(ctx?.cwd || process.cwd());
     const tool = String(event.toolName ?? "");
     const input = event.input ?? {};
+    const workspaceRoots = loadWorkspaceRoots();
 
     // Global CWD guard
     if (cwdIsTooBroad(cwd)) {
@@ -129,7 +136,7 @@ export default function (pi: any) {
       const filePath = extractFilePath(input);
       if (!filePath) return undefined;
 
-      const access = classifyPathAccess(filePath, cwd);
+      const access = classifyPathAccess(filePath, cwd, workspaceRoots);
 
       if (access.scope === "inside_project") {
         return undefined;
@@ -170,18 +177,36 @@ export default function (pi: any) {
       const filePath = extractFilePath(input);
       if (!filePath) return undefined;
 
-      const access = classifyPathAccess(filePath, cwd);
+      const access = classifyPathAccess(filePath, cwd, workspaceRoots);
       if (access.scope === "inside_project") {
         return undefined;
       }
 
-      const allowed = await askTwice(
+      const normalizedPath = join(cwd, filePath).toLowerCase();
+      for (const root of sessionAllowedWriteRoots) {
+        if (isInside(normalizedPath, root)) return undefined;
+      }
+
+      if (access.scope === "protected") {
+        return {
+          block: true,
+          reason:
+            `Blocked ${tool} to protected path: ${filePath}\n\n` +
+            `This is restricted by the user's permission gate settings. ` +
+            `Do not attempt to bypass this restriction using python, node, PowerShell, or other interpreters.`,
+        };
+      }
+
+      const decision = await askReadAccess(
         ctx,
-        formatWritePrompt(tool, filePath, access.reason),
-        formatWriteConfirm(tool, filePath)
+        formatWritePrompt(tool, filePath, access.reason)
       );
 
-      if (!allowed) {
+      if (decision === "directory") {
+        sessionAllowedWriteRoots.add(dirname(normalizedPath));
+        return undefined;
+      }
+      if (decision !== "once") {
         const action = tool === "write" ? "writing" : "editing";
         return {
           block: true,
@@ -230,8 +255,8 @@ export default function (pi: any) {
         block: true,
         reason:
           `User declined the following command because it requires elevated permissions or operates outside the project scope:\n  ${command}${riskHint}\n\n` +
-          `The agent should avoid destructive or out-of-scope operations. ` +
-          `Suggested: use a safer alternative, stay within the project directory, or ask the user for guidance if the task truly requires this.`,
+          `The agent must not attempt workarounds (e.g., python shutil.rmtree, node fs.rm, PowerShell Remove-Item). ` +
+          `If the task truly requires this operation, explain why it was needed and wait for the user to provide an alternative approach.`,
       };
     }
 

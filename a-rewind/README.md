@@ -16,6 +16,9 @@ pi install git:github.com/x0retnop/pi-extension-a-rewind
 | `/a-rewind-auto off` | Disable automatic guard mode. |
 | `/a-rewind-auto status` | Show whether automatic guard mode is enabled. |
 | `/a-rewind-last` | Rewind the current session to before the latest assistant message. |
+| `/a-rewind-tt on` | Enable task timer display in the status bar. |
+| `/a-rewind-tt off` | Disable task timer display. |
+| `/a-rewind-tt status` | Show whether task timer display is enabled. |
 
 ## Behavior
 
@@ -24,6 +27,8 @@ pi install git:github.com/x0retnop/pi-extension-a-rewind
 - Persists the auto-mode setting in the session.
 - Adds a small status indicator when available.
 - Ignores unexpected message-shape errors inside the `message_end` handler so the guard does not interrupt Pi event processing.
+- Tracks task duration from `before_agent_start` to `agent_end` and shows it in the status bar when enabled.
+- Notifies task completion time after each agent run.
 
 ## Marker format
 
@@ -31,7 +36,7 @@ Internal hidden/filter markers intentionally use single-bracket strings such as 
 
 ## Settings
 
-No file-based settings. Use `/a-rewind-auto on|off|status`.
+No file-based settings. Use `/a-rewind-auto on|off|status` and `/a-rewind-tt on|off|status`.
 
 ## Compatibility
 

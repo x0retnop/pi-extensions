@@ -24,6 +24,8 @@ const PYTHON_RISKY_PATTERNS: Array<{ regex: RegExp; risk: Risk; category: Catego
   { regex: /\bshutil\.rmtree\b/i, risk: "delete", category: "delete", name: "shutil.rmtree" },
   { regex: /\bshutil\.move\b/i, risk: "write", category: "write", name: "shutil.move" },
   { regex: /\bshutil\.copy\b/i, risk: "write", category: "write", name: "shutil.copy" },
+  { regex: /\bpathlib\.Path\s*\([^)]*\)\s*\.unlink\s*\(/i, risk: "delete", category: "delete", name: "pathlib.Path.unlink()" },
+  { regex: /\bpathlib\.Path\s*\([^)]*\)\s*\.rmdir\s*\(/i, risk: "delete", category: "delete", name: "pathlib.Path.rmdir()" },
   // Execute
   { regex: /\bsubprocess\b/i, risk: "execute", category: "execute", name: "subprocess" },
   { regex: /\bos\.system\s*\(/i, risk: "execute", category: "execute", name: "os.system()" },
@@ -52,7 +54,10 @@ const NODE_RISKY_PATTERNS: Array<{ regex: RegExp; risk: Risk; category: Category
   // Delete
   { regex: /\bfs\.unlink/i, risk: "delete", category: "delete", name: "fs.unlink*" },
   { regex: /\bfs\.rmdir/i, risk: "delete", category: "delete", name: "fs.rmdir*" },
-  { regex: /\bfs\.rm\b/i, risk: "delete", category: "delete", name: "fs.rm*" },
+  { regex: /\bfs\.rm/i, risk: "delete", category: "delete", name: "fs.rm*" },
+  { regex: /require\s*\(\s*["']fs["']\s*\)\s*\.\s*unlink/i, risk: "delete", category: "delete", name: "require('fs').unlink*" },
+  { regex: /require\s*\(\s*["']fs["']\s*\)\s*\.\s*rmdir/i, risk: "delete", category: "delete", name: "require('fs').rmdir*" },
+  { regex: /require\s*\(\s*["']fs["']\s*\)\s*\.\s*rm/i, risk: "delete", category: "delete", name: "require('fs').rm*" },
   { regex: /\bunlinkSync\b/i, risk: "delete", category: "delete", name: "fs.unlinkSync()" },
   // Execute
   { regex: /\bchild_process\b/i, risk: "execute", category: "execute", name: "child_process" },
