@@ -29,6 +29,7 @@ export interface SearchOptions {
 	recencyFilter?: "day" | "week" | "month" | "year";
 	domainFilter?: string[];
 	signal?: AbortSignal;
+	depth?: string;
 }
 
 const CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
@@ -114,8 +115,13 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 	const config = getSearchConfig();
 	const provider = options.provider ?? config.searchProvider;
 
+	const searchOptions: SearchOptions = {
+		...options,
+		numResults: options.numResults ?? (options.depth === "deep" ? 15 : options.depth === "quick" ? 5 : 10),
+	};
+
 	if (provider === "gemini") {
-		const result = await searchWithGemini(query, options, true);
+		const result = await searchWithGemini(query, searchOptions, true);
 		if (result) return { ...result, provider: "gemini" };
 		throw new Error(
 			"Gemini search unavailable. Sign into gemini.google.com in a supported Chromium-based browser."
@@ -125,7 +131,7 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 	if (provider === "exa") {
 		const exaApiKeyConfigured = hasExaApiKey();
 		try {
-			const result = await searchWithExa(query, options);
+			const result = await searchWithExa(query, searchOptions);
 			if (result && "exhausted" in result) {
 				throw new Error(
 					"Exa monthly free tier exhausted (1,000 requests). Resets next month.\n" +
@@ -148,7 +154,7 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 
 	if (provider !== "exa" && isExaAvailable()) {
 		try {
-			const result = await searchWithExa(query, options);
+			const result = await searchWithExa(query, searchOptions);
 			if (result && "answer" in result) return { ...result, provider: "exa" };
 		} catch (err) {
 			if (isAbortError(err)) throw err;
@@ -157,7 +163,7 @@ export async function search(query: string, options: FullSearchOptions = {}): Pr
 	}
 
 	try {
-		const geminiResult = await searchWithGemini(query, options, false);
+		const geminiResult = await searchWithGemini(query, searchOptions, false);
 		if (geminiResult) return { ...geminiResult, provider: "gemini" };
 	} catch (err) {
 		if (isAbortError(err)) throw err;

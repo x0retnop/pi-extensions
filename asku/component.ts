@@ -206,7 +206,7 @@ export class AskUserQuestionComponent implements Component {
       const s = this.states[i];
       const isActive = i === this.activeTab;
       // Truncate header to 12 chars
-      const header = truncateToWidth(q.header, 12);
+      const header = truncateToWidth(q.header, 20);
       const label = ` ${header} `;
 
       let styled: string;
@@ -390,12 +390,12 @@ export class AskUserQuestionComponent implements Component {
       const answer = this.getAnswerText(q, state);
       if (answer !== null) {
         add(
-          t.fg("muted", ` ${truncateToWidth(q.header, 12)}: `) +
+          t.fg("muted", ` ${truncateToWidth(q.header, 20)}: `) +
             t.fg("text", answer),
         );
       } else {
         add(
-          t.fg("dim", ` ${truncateToWidth(q.header, 12)}: `) +
+          t.fg("dim", ` ${truncateToWidth(q.header, 20)}: `) +
             t.fg("warning", "—"),
         );
       }
@@ -407,7 +407,7 @@ export class AskUserQuestionComponent implements Component {
     } else {
       const missing = this.questions
         .filter((_, i) => !this.states[i].confirmed)
-        .map((q) => truncateToWidth(q.header, 12))
+        .map((q) => truncateToWidth(q.header, 20))
         .join(", ");
       add(t.fg("warning", ` Still needed: ${missing}`));
     }

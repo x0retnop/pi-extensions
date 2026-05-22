@@ -388,7 +388,7 @@ async function searchWithExaMcp(query: string, options: ExaSearchOptions = {}): 
 			"web_search_exa",
 			{
 				query: enrichedQuery,
-				numResults: options.numResults ?? 5,
+				numResults: options.numResults ?? (options.depth === "deep" ? 15 : options.depth === "quick" ? 5 : 10),
 				livecrawl: "fallback",
 				type: "auto",
 				contextMaxCharacters: options.includeContent ? 50000 : 3000,
@@ -447,10 +447,11 @@ export async function searchWithExa(query: string, options: ExaSearchOptions = {
 	const budget = reserveRequestBudget();
 	if (budget) return budget;
 
+	const defaultNumResults = options.numResults ?? (options.depth === "deep" ? 15 : options.depth === "quick" ? 5 : 10);
 	const useSearch = options.includeContent
 		|| !!options.recencyFilter
 		|| !!options.domainFilter?.length
-		|| !!(options.numResults && options.numResults !== 5);
+		|| !!(options.numResults && options.numResults !== defaultNumResults);
 
 	const activityId = activityMonitor.logStart({ type: "api", query });
 
@@ -493,7 +494,7 @@ export async function searchWithExa(query: string, options: ExaSearchOptions = {
 			body: JSON.stringify({
 				query,
 				type: "auto",
-				numResults: options.numResults ?? 5,
+				numResults: defaultNumResults,
 				...domainFilters,
 				...(startDate ? { startPublishedDate: startDate } : {}),
 				contents: {

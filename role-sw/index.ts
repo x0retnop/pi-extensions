@@ -10,6 +10,7 @@ const ROLES: Record<string, string> = {
   architect_planner: join(homedir(), ".pi", "agent", "roles", "architect_planner.md"),
   code_auditor:      join(homedir(), ".pi", "agent", "roles", "code_auditor.md"),
   coding_agent:      join(homedir(), ".pi", "agent", "roles", "coding_agent.md"),
+  kimi:              join(homedir(), ".pi", "agent", "roles", "kimi.md"),
   project_keeper:    join(homedir(), ".pi", "agent", "roles", "project_keeper.md"),
 };
 

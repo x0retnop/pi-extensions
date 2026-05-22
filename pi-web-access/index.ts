@@ -33,6 +33,7 @@ function normalizeQueryList(queryList: unknown[]): string[] {
 
 const pendingFetches = new Map<string, AbortController>();
 let sessionActive = false;
+let sessionSearchCount = 0;
 let widgetVisible = false;
 let widgetUnsubscribe: (() => void) | null = null;
 
@@ -80,6 +81,47 @@ function formatFullResults(queryData: QueryResultData): string {
 		output += `### ${r.title}\n${r.url}\n\n`;
 	}
 	return output;
+}
+
+function getDomain(url: string): string {
+	try {
+		return new URL(url).hostname.replace(/^www\./, "");
+	} catch {
+		return url;
+	}
+}
+
+function analyzeSources(results: SearchResult[]) {
+	const counts = new Map<string, number>();
+	let hasOfficial = false;
+	let hasPrimary = false;
+	const newsDomains = new Set<string>();
+
+	const officialHosts = new Set(["github.com", "openai.com", "anthropic.com", "about.gitlab.com", "blog.google", "developers.googleblog.com", "cloud.google.com"]);
+	const primaryHosts = new Set(["sec.gov", "courtlistener.com", "arxiv.org", "storage.courtlistener.com"]);
+
+	for (const r of results) {
+		const domain = getDomain(r.url);
+		counts.set(domain, (counts.get(domain) ?? 0) + 1);
+
+		const isOfficial = officialHosts.has(domain) || domain.startsWith("docs.") || domain.startsWith("developers.") || domain.startsWith("support.") || domain.startsWith("developer.");
+		const isPrimary = primaryHosts.has(domain) || domain.endsWith(".gov") || domain.endsWith(".europa.eu");
+		if (isOfficial) hasOfficial = true;
+		if (isPrimary) hasPrimary = true;
+		if (!isOfficial && !isPrimary) newsDomains.add(domain);
+	}
+
+	let topDomain = "";
+	let topCount = 0;
+	for (const [d, c] of counts) {
+		if (c > topCount) {
+			topCount = c;
+			topDomain = d;
+		}
+	}
+	const topShare = results.length > 0 ? Math.round((topCount / results.length) * 100) : 0;
+
+	return { topDomain, topShare, hasOfficial, hasPrimary, newsDomains: newsDomains.size };
 }
 
 function abortPendingFetches(): void {
@@ -154,6 +196,7 @@ function handleSessionChange(ctx: ExtensionContext): void {
 	abortPendingFetches();
 	clearCloneCache();
 	sessionActive = true;
+	sessionSearchCount = 0;
 	restoreFromSession(ctx);
 	widgetUnsubscribe?.();
 	widgetUnsubscribe = null;
@@ -228,6 +271,8 @@ export default function (pi: ExtensionAPI) {
 		urls: string[];
 		includeContent: boolean;
 		inlineContent?: ExtractedContent[];
+		depth?: string;
+		researchRound: number;
 	}
 
 	function buildSearchReturn(opts: SearchReturnOptions) {
@@ -265,6 +310,53 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
+		const totalResults = tr;
+		const successfulQueries = sc;
+		const isSparse = totalResults < 5 || opts.results.some(r => !r.error && r.results.length < 2);
+		const hasErrors = opts.results.some(r => r.error);
+		const allEmpty = successfulQueries === 0;
+
+		output += "\n\n---\n";
+		output += `**Research Round ${opts.researchRound}** • Depth: ${opts.depth ?? "standard"}\n`;
+		if (allEmpty) {
+			output += `⚠️ No results. Try alternate phrasing, remove domain filters, or check recencyFilter.\n`;
+		} else if (isSparse) {
+			output += `⚠️ Sparse coverage (${totalResults} sources). Consider follow-up queries with broader or alternate phrasing.\n`;
+		} else {
+			output += `Coverage: ${totalResults} sources from ${successfulQueries}/${opts.queryList.length} queries. `;
+			if (opts.depth === "deep") {
+				output += `Deep mode: verify if primary sources, official docs, and opposing views are represented. If not, continue with targeted follow-ups.\n`;
+			} else {
+				output += `If this is a technical or controversial topic, consider a deeper round with \`depth: "deep"\` or additional queries.\n`;
+			}
+		}
+		if (hasErrors) {
+			output += `Some queries encountered errors — retry failed angles if needed.\n`;
+		}
+
+		if (!allEmpty) {
+			const allResultsFlat = opts.results.flatMap(r => r.results);
+			const { topDomain, topShare, hasOfficial, hasPrimary, newsDomains } = analyzeSources(allResultsFlat);
+			output += `\n**Source mix:** `;
+			const parts: string[] = [];
+			if (topShare > 40) parts.push(`${topShare}% from ${topDomain}`);
+			if (hasOfficial) parts.push("official docs present");
+			else parts.push("no official docs");
+			if (hasPrimary) parts.push("primary sources present");
+			else parts.push("no primary sources");
+			parts.push(`${newsDomains} independent outlets`);
+			output += parts.join(" • ") + "\n";
+			if (topShare > 40) {
+				output += `⚠️ Heavy reliance on ${topDomain}. Diversify with independent or official sources in follow-ups.\n`;
+			}
+			if (!hasOfficial && opts.depth !== "quick") {
+				output += `→ Missing official sources. Try site:github.com or site:company.com in next queries.\n`;
+			}
+			if (!hasPrimary && opts.depth === "deep") {
+				output += `→ Missing primary/regulatory sources. Consider SEC, court, or research papers for fact-checking.\n`;
+			}
+		}
+
 		const searchId = storeAndPublishSearch(opts.results);
 		const isBackgroundFetch = fetchId !== null && !hasInlineReady;
 
@@ -276,6 +368,8 @@ export default function (pi: ExtensionAPI) {
 				successfulQueries: sc,
 				totalResults: tr,
 				includeContent: opts.includeContent,
+				depth: opts.depth,
+				researchRound: opts.researchRound,
 				fetchId,
 				fetchUrls: isBackgroundFetch ? opts.urls : undefined,
 				searchId,
@@ -322,21 +416,19 @@ export default function (pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web Search",
 		description:
-			"Search the web for current information, official docs, discussions, or URLs. Returns an AI-synthesized answer with source citations. Prefer {queries: [...]} with 2-4 varied angles over a single query for broader coverage. After search, use fetch_content to read specific pages in detail.",
+			"Search the web for current information, official docs, discussions, or URLs. Performs ONE round of research. Returns a synthesized answer with source citations. For thorough coverage, call this tool multiple times with follow-up queries based on findings.",
 		promptSnippet:
-			"Use for current information, docs, or unknown URLs. Prefer {queries:[...]} with varied angles. After search, use fetch_content for details.",
+			"Use for current information, docs, or unknown URLs. One call = one round. Use depth: 'deep' for thorough research.",
 		promptGuidelines: [
-			"For recent news, trends, or time-sensitive topics, set recencyFilter to 'day' or 'week'.",
-			"For official documentation or GitHub repositories, use domainFilter like ['github.com'] or ['docs.example.com'].",
-			"For deep research that needs full page text, set includeContent: true to fetch page content in the background.",
-			"When the topic is broad or contentious, increase numResults up to 10-15 for better coverage.",
-			"After web_search, use fetch_content on the most relevant URL when the user needs details from a page.",
+			"Use web_search when the user needs current information, docs, or unknown URLs.",
+			"One web_search call = one round. For complex topics, perform 2-4 rounds with targeted follow-up queries.",
 		],
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Single search query. For research tasks, prefer 'queries' with multiple varied angles instead." })),
 			queries: Type.Optional(Type.Array(Type.String(), { description: "Multiple queries searched in sequence, each returning its own synthesized answer. Prefer this for research — vary phrasing, scope, and angle across 2-4 queries to maximize coverage. Good: ['React vs Vue performance benchmarks 2026', 'React vs Vue developer experience comparison', 'React ecosystem size vs Vue ecosystem']. Bad: ['React vs Vue', 'React vs Vue comparison', 'React vs Vue review'] (too similar, redundant results)." })),
-			numResults: Type.Optional(Type.Number({ description: "Results per query (default: 5, max: 20). Increase for broad or contentious topics." })),
+			numResults: Type.Optional(Type.Number({ description: "Results per query (default: 10, max: 20). Increase for broad or contentious topics." })),
 			includeContent: Type.Optional(Type.Boolean({ description: "Fetch full page content in the background for all result URLs. Use for deep research when you need page text, not just summaries." })),
+			depth: Type.Optional(StringEnum(["quick", "standard", "deep"], { description: "Research depth. 'quick' = 5 sources, 'standard' = 10, 'deep' = 15+ and encourages follow-up rounds." })),
 			recencyFilter: Type.Optional(
 				StringEnum(["day", "week", "month", "year"], { description: "Filter results by recency. Use 'day' or 'week' for news and trends; 'month' or 'year' for broader context." }),
 			),
@@ -356,6 +448,9 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			const depth = params.depth ?? "standard";
+			const researchRound = ++sessionSearchCount;
+
 			const searchResults: QueryResultData[] = [];
 			const allUrls: string[] = [];
 			const allInlineContent: ExtractedContent[] = [];
@@ -374,6 +469,7 @@ export default function (pi: ExtensionAPI) {
 						recencyFilter: params.recencyFilter,
 						domainFilter: params.domainFilter,
 						includeContent: params.includeContent,
+						depth,
 						signal,
 					});
 
@@ -396,6 +492,8 @@ export default function (pi: ExtensionAPI) {
 				urls: allUrls,
 				includeContent: params.includeContent ?? false,
 				inlineContent: allInlineContent.length > 0 ? allInlineContent : undefined,
+				depth,
+				researchRound,
 			});
 		},
 
@@ -432,6 +530,8 @@ export default function (pi: ExtensionAPI) {
 				error?: string;
 				fetchId?: string;
 				fetchUrls?: string[];
+				depth?: string;
+				researchRound?: number;
 				phase?: string;
 				progress?: number;
 				currentQuery?: string;
@@ -451,11 +551,12 @@ export default function (pi: ExtensionAPI) {
 
 			let statusLine: string;
 			const queryInfo = details?.queryCount === 1 ? "" : `${details?.successfulQueries}/${details?.queryCount} queries, `;
-			statusLine = theme.fg("success", `${queryInfo}${details?.totalResults ?? 0} sources`);
+			const roundInfo = details?.researchRound ? ` (round ${details.researchRound}${details?.depth && details.depth !== "standard" ? `, ${details.depth}` : ""})` : "";
+			statusLine = theme.fg("success", `${queryInfo}${details?.totalResults ?? 0} sources`) + theme.fg("muted", roundInfo);
 			if (details?.fetchId && details?.fetchUrls) {
-				statusLine += theme.fg("muted", ` (fetching ${details.fetchUrls.length} URLs)`);
+				statusLine += theme.fg("muted", ` • fetching ${details.fetchUrls.length} URLs`);
 			} else if (details?.fetchId) {
-				statusLine += theme.fg("muted", " (content ready)");
+				statusLine += theme.fg("muted", " • content ready");
 			}
 
 			if (!expanded) {

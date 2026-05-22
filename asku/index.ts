@@ -17,7 +17,7 @@ Modes:
 
 Rules:
 - 1-4 questions per call.
-- Each question needs a short header (max 12 chars) for the tab bar.
+- Each question needs a short header (max 40 chars) for the tab bar.
 - Do not add an "Other" option; free-text is built-in for choice mode.
 - If you recommend an option, put it first and add "(Recommended)" to the label.`,
 

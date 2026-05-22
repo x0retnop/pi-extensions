@@ -15,6 +15,7 @@ Place role prompt files in `~/.pi/agent/roles/`:
 - `architect_planner.md`
 - `code_auditor.md`
 - `coding_agent.md`
+- `kimi.md`
 - `project_keeper.md`
 
 Commands:

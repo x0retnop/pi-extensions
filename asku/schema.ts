@@ -5,13 +5,13 @@ import { type Static, Type } from "typebox";
 export const OptionSchema = Type.Object({
   label: Type.String({
     minLength: 1,
-    maxLength: 80,
+    maxLength: 120,
     description:
       "Display label shown to the user and returned as the answer value",
   }),
   description: Type.Optional(
     Type.String({
-      maxLength: 240,
+      maxLength: 600,
       description: "Optional clarifying text shown below the label",
     }),
   ),
@@ -20,14 +20,14 @@ export const OptionSchema = Type.Object({
 export const QuestionSchema = Type.Object({
   question: Type.String({
     minLength: 1,
-    maxLength: 600,
+    maxLength: 2000,
     description: "Full question text displayed to the user",
   }),
   header: Type.String({
     minLength: 1,
-    maxLength: 12,
+    maxLength: 40,
     description:
-      "Short label used in the tab bar when multiple questions are shown. Max 12 characters.",
+      "Short label used in the tab bar when multiple questions are shown. Max 40 characters.",
   }),
   options: Type.Optional(
     Type.Array(OptionSchema, {

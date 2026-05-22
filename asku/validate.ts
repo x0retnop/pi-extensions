@@ -18,8 +18,8 @@ export function validateQuestions(questions: Question[]): string | null {
 
     if (!question) return "Question text must not be empty";
     if (!header) return `Header must not be empty for question "${question}"`;
-    if ([...header].length > 12) {
-      return `Header "${header}" is too long; max 12 characters`;
+    if ([...header].length > 40) {
+      return `Header "${header}" is too long; max 40 characters`;
     }
 
     const normalizedQuestion = normalize(question);
