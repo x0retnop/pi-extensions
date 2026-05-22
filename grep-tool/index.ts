@@ -1,38 +1,17 @@
-// @ts-nocheck
-
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { promisify } from "node:util";
+import type { ExtensionAPI, ExtensionContext, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 
 const execFileAsync = promisify(execFile);
 
-const POSSIBLE_RG_PATHS = [
-  "rg",
-  `${process.env.USERPROFILE}\\.pi\\agent\\bin\\rg.exe`,
-  `${process.env.USERPROFILE}\\AppData\\Local\\Microsoft\\WinGet\\Packages\\BurntSushi.ripgrep*\\ripgrep-*-x86_64-pc-windows-msvc\\rg.exe`,
-  `C:\\Program Files\\ripgrep\\rg.exe`,
-  `C:\\ProgramData\\chocolatey\\bin\\rg.exe`,
-  `${process.env.LOCALAPPDATA}\\Microsoft\\WinGet\\Packages\\BurntSushi.ripgrep*\\ripgrep-*-x86_64-pc-windows-msvc\\rg.exe`,
-];
-
 function findRg(): string | null {
-  for (const p of POSSIBLE_RG_PATHS) {
-    try {
-      // For plain "rg", try execFileSync with --version
-      if (p === "rg") {
-        const { execFileSync } = require("node:child_process");
-        execFileSync("rg", ["--version"], { stdio: "ignore", windowsHide: true });
-        return "rg";
-      }
-      // Check file existence for absolute paths
-      const fs = require("node:fs");
-      if (fs.existsSync(p)) {
-        return p;
-      }
-    } catch {
-      // continue
-    }
+  try {
+    execFileSync("rg", ["--version"], { stdio: "ignore", windowsHide: true });
+    return "rg";
+  } catch {
+    return null;
   }
-  return null;
 }
 
 interface GrepMatch {
@@ -42,13 +21,29 @@ interface GrepMatch {
   match?: string;
 }
 
-function resolvePath(raw: string): string {
+interface GrepParams {
+  pattern: string;
+  path?: string;
+  glob?: string;
+  type?: string;
+  output_mode?: "content" | "files_with_matches" | "count_matches";
+  multiline?: boolean;
+  "-i"?: boolean;
+  "-n"?: boolean;
+  "-C"?: number;
+  "-B"?: number;
+  "-A"?: number;
+  head_limit?: number;
+  include_ignored?: boolean;
+}
+
+function resolvePath(raw: string | undefined): string {
   if (!raw) return ".";
   const trimmed = raw.replace(/^["']|["']$/g, "");
   return trimmed;
 }
 
-export default function (pi: any) {
+export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "grep",
     label: "Grep",
@@ -119,7 +114,13 @@ export default function (pi: any) {
       },
       required: ["pattern"],
     },
-    execute: async (_toolCallId: string, params: any) => {
+    execute: async (
+      _toolCallId: string,
+      params: any,
+      _signal: AbortSignal | undefined,
+      _onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+      _ctx: ExtensionContext,
+    ) => {
       const cwd = process.cwd();
       const args: string[] = ["--json", "--color", "never"];
 
@@ -138,7 +139,7 @@ export default function (pi: any) {
       if (params.type) args.push("-t", params.type);
 
       if (params.include_ignored) {
-        args.push("-uu"); // disregard .gitignore and hidden files
+        args.push("-uu");
         args.push("-g", "!.env");
         args.push("-g", "!**/.env");
       }
@@ -154,7 +155,7 @@ export default function (pi: any) {
       const rgPath = findRg();
       if (!rgPath) {
         return {
-          content: [{ type: "text", text: "ripgrep (rg) not found in PATH or common install locations" }],
+          content: [{ type: "text", text: "ripgrep (rg) not found in PATH" }],
           details: { error: "rg not found" },
         };
       }
@@ -162,7 +163,7 @@ export default function (pi: any) {
       try {
         const { stdout } = await execFileAsync(rgPath, args, {
           cwd,
-          maxBuffer: 2 * 1024 * 1024, // 2 MB
+          maxBuffer: 2 * 1024 * 1024,
           timeout: 30000,
           windowsHide: true,
         });
@@ -222,7 +223,6 @@ export default function (pi: any) {
           };
         }
 
-        // content mode
         const limitedMatches = headLimit ? matches.slice(0, headLimit) : matches;
         const text = limitedMatches.length
           ? limitedMatches
@@ -241,7 +241,6 @@ export default function (pi: any) {
             details: { error: "rg not found" },
           };
         }
-        // rg exits 1 when no matches — treat as empty result
         if (err.status === 1 && !err.stderr) {
           return {
             content: [{ type: "text", text: "(no matches)" }],

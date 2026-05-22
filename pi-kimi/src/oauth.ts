@@ -7,8 +7,8 @@ import {
   OAUTH_REFRESH_GRANT,
   OAUTH_SCOPE,
   OAUTH_TOKEN_URL,
-} from "./constants.ts"
-import { kimiHeaders } from "./headers.ts"
+} from "./constants.js"
+import { kimiHeaders } from "./headers.js"
 
 const REQUEST_TIMEOUT_MS = 120_000
 

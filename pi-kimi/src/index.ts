@@ -3,8 +3,8 @@
 // Relies on Pi's built-in openai-completions streaming.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
-import { loginWithDeviceFlow, refreshKimiCredentials } from "./oauth.ts"
-import { kimiHeaders } from "./headers.ts"
+import { loginWithDeviceFlow, refreshKimiCredentials } from "./oauth.js"
+import { kimiHeaders } from "./headers.js"
 
 export default function (pi: ExtensionAPI) {
   const baseUrl = "https://api.kimi.com/coding/v1"
@@ -17,7 +17,6 @@ export default function (pi: ExtensionAPI) {
         id: "kimi-for-coding",
         name: "Kimi For Coding",
         api: "openai-completions",
-        provider: "kimi-for-coding",
         baseUrl,
         reasoning: true,
         input: ["text", "image"],
@@ -30,16 +29,16 @@ export default function (pi: ExtensionAPI) {
         contextWindow: 262_144,
         maxTokens: 32_768,
         headers: kimiHeaders(),
+        thinkingLevelMap: {
+          minimal: "low",
+          low: "low",
+          medium: "medium",
+          high: "high",
+          xhigh: "high",
+        },
         compat: {
           supportsDeveloperRole: false,
           supportsReasoningEffort: true,
-          thinkingLevelMap: {
-            minimal: "low",
-            low: "low",
-            medium: "medium",
-            high: "high",
-            xhigh: "high",
-          },
           thinkingFormat: "openai",
         },
       },

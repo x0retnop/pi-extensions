@@ -123,12 +123,28 @@ Recent performance update: session previews are loaded lazily in small batches.
 pi install git:github.com/x0retnop/pi-extension-sessions
 ```
 
+### Temperature / Model Utility
+
+Adds `/tm` to set LLM temperature at runtime, plus automatic temperature injection before provider requests. Detects Kimi provider and strips unsupported sampling parameters.
+
+```bash
+pi install ./tm
+```
+
 ### Todo
 
 Adds a model-callable todo checklist tool for larger tasks, plus `/todos` and `/todo-mode` commands.
 
 ```bash
 pi install git:github.com/x0retnop/pi-extension-todo
+```
+
+### Win Bash Sanitizer
+
+Sanitizes `bash` tool calls for Git Bash on Windows. Automatically fixes common Windows-to-Bash translation mistakes (`2>nul`, `dir`, backslash escapes, unbalanced quotes) before execution.
+
+```bash
+pi install ./win-bash-sanitizer
 ```
 
 ## AGENTS.md
@@ -154,4 +170,4 @@ cd pi-extensions
 pi install ./btw
 ```
 
-Replace `./btw` with any extension folder name, for example `./asku`, `./todo`, `./sessions`, or `./permission-gate`.
+Replace `./btw` with any extension folder name, for example `./asku`, `./grep-tool`, `./pi-kimi`, `./todo`, `./sessions`, `./tm`, `./win-bash-sanitizer`, or `./permission-gate`.

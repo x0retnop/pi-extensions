@@ -33,3 +33,7 @@ Follow the device authorization link. Credentials are stored by Pi in `auth.json
 ## Compatibility
 
 Tested with Pi v0.74.0 or newer.
+
+## Maintenance
+
+See [`AGENTS.md`](../AGENTS.md) for open tasks.

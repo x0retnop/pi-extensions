@@ -17,7 +17,7 @@ Only look at releases **newer** than the baseline.
 
 ### 1. Automated delta check
 
-Run `python _check_pi_sync.py` from the repository root. It prints:
+Run `python scripts/check-pi-sync.py` from the repository root. It prints:
 - Newer releases above the locally installed version.
 - Known obsolete patterns found in local extensions.
 

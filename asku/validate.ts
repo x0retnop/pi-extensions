@@ -1,4 +1,4 @@
-import type { Question } from "./schema.ts";
+import type { Question } from "./schema.js";
 
 const RESERVED_LABELS = new Set(["other", "type your own answer..."]);
 

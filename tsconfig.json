@@ -14,14 +14,20 @@
   },
   "include": [
     "a-rewind/**/*.ts",
+    "asku/**/*.ts",
     "btw/**/*.ts",
     "context/**/*.ts",
     "ctx-manager/**/*.ts",
+    "grep-tool/**/*.ts",
     "handoff/**/*.ts",
     "ollama-cloud-web/**/*.ts",
     "permission-gate/**/*.ts",
-    "protected-paths/**/*.ts",
+    "pi-docs-toggle/**/*.ts",
+    "pi-kimi/**/*.ts",
+    "role-sw/**/*.ts",
     "sessions/**/*.ts",
-    "todo/**/*.ts"
+    "tm/**/*.ts",
+    "todo/**/*.ts",
+    "win-bash-sanitizer/**/*.ts"
   ]
 }

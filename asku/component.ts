@@ -9,7 +9,7 @@ import {
   truncateToWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import type { Option, Question, Result } from "./schema.ts";
+import type { Option, Question, Result } from "./schema.js";
 
 // ── TUILike ───────────────────────────────────────────────────────────────────
 // Minimal interface satisfied by both the real TUI and a test stub.

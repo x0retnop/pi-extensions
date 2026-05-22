@@ -3,7 +3,7 @@ import crypto from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { KIMI_CLI_VERSION, USER_AGENT } from "./constants.ts"
+import { KIMI_CLI_VERSION, USER_AGENT } from "./constants.js"
 
 const DEVICE_ID_DIR = path.join(os.homedir(), ".kimi")
 const DEVICE_ID_PATH = path.join(DEVICE_ID_DIR, "device_id")
