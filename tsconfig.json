@@ -28,6 +28,7 @@
     "sessions/**/*.ts",
     "tm/**/*.ts",
     "todo/**/*.ts",
-    "win-bash-sanitizer/**/*.ts"
+    "win-bash-sanitizer/**/*.ts",
+    "simple-gate/**/*.ts"
   ]
 }
