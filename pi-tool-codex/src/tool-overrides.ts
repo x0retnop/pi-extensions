@@ -3,6 +3,7 @@ import type {
   EditToolDetails,
   ExtensionAPI,
   FindToolDetails,
+  GrepToolDetails,
   LsToolDetails,
   ReadToolDetails,
   ToolRenderResultOptions,
@@ -459,11 +460,19 @@ function getToolContentArg(value: unknown): string | undefined {
 
 function getEditLineCount(value: unknown): number {
   const record = toRecord(value);
-  const edits = Array.isArray(record.edits) ? record.edits : [];
-  if (edits.length > 0) {
-    return edits.reduce((total, edit) => {
+  const batch = Array.isArray(record.multi)
+    ? record.multi
+    : Array.isArray(record.edits)
+      ? record.edits
+      : [];
+  if (batch.length > 0) {
+    return batch.reduce((total, edit) => {
       return total + countTextLines(getStringField(edit, "newText"));
     }, 0);
+  }
+
+  if (typeof record.patch === "string" && record.patch.length > 0) {
+    return splitLines(record.patch).length;
   }
 
   return countTextLines(record.newText);
@@ -928,7 +937,7 @@ function buildReadStatusHeader(
 }
 
 function buildSearchStatusHeader(
-  toolName: "find" | "ls",
+  toolName: "find" | "ls" | "grep",
   details:
     | GrepToolDetails
     | FindToolDetails
@@ -938,7 +947,7 @@ function buildSearchStatusHeader(
   options?: { pluralLabel?: string; limitReached?: boolean; isError?: boolean },
 ): string {
   const meta = getToolStatusMeta<
-    FindToolDetails | LsToolDetails,
+    FindToolDetails | LsToolDetails | GrepToolDetails,
     Record<string, unknown>
   >(details);
   const subject =
@@ -1162,7 +1171,7 @@ function renderSearchResult(
   config: ToolDisplayConfig,
   theme: RenderTheme,
   unitLabel: string,
-  details: FindToolDetails | LsToolDetails | undefined,
+  details: FindToolDetails | LsToolDetails | GrepToolDetails | undefined,
   pluralLabel?: string,
 ): Text {
   if (options.isPartial) {
@@ -1386,6 +1395,26 @@ export function registerToolDisplayOverrides(
       register();
     }
   };
+
+  function getToolRecord(pi: ExtensionAPI, name: string): Record<string, unknown> | undefined {
+    try {
+      const all = pi.getAllTools();
+      for (const candidate of all) {
+        const record = toRecord(candidate);
+        if (record.name === name) {
+          return record;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
+  }
+
+  function isWrappedTool(record: Record<string, unknown>): boolean {
+    const exec = record.execute;
+    return typeof exec === "function" && (exec as any).__toolCodexWrapped === true;
+  }
 
   registerIfOwned("read", () => {
     pi.registerTool({
@@ -1620,196 +1649,288 @@ export function registerToolDisplayOverrides(
     });
   });
 
-  registerIfOwned("edit", () => {
-    pi.registerTool({
-      name: "edit",
-    label: "edit",
-    description: bootstrapTools.edit.description,
-    ...builtInPromptMetadata.edit,
-    renderShell: "self",
-    parameters: clonedParameters.edit,
-    prepareArguments: bootstrapTools.edit.prepareArguments,
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
+
+  const wrapEditWriteTools = (): void => {
+    if (getConfig().registerToolOverrides.edit) {
+      const toolRecord = getToolRecord(pi, "edit");
+      if (toolRecord && typeof toolRecord.execute === "function" && !isWrappedTool(toolRecord)) {
+        const originalExecute = toolRecord.execute as (...args: unknown[]) => Promise<unknown>;
+        const wrappedExecute = async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown, ctx: unknown) => {
+          const started = Date.now();
+          const result = await originalExecute(toolCallId, params, signal, onUpdate, ctx);
+          return {
+            ...toRecord(result),
+            details: withToolStatusMeta(
+              toRecord(result).details as EditToolDetails | undefined,
+              "edit",
+              params as Record<string, unknown>,
+              Date.now() - started,
+            ),
+          };
+        };
+        (wrappedExecute as any).__toolCodexWrapped = true;
+
+        pi.registerTool({
+          name: "edit",
+          label: (toolRecord.label as string) || "edit",
+          description: (toolRecord.description as string) || bootstrapTools.edit.description,
+          promptSnippet: toolRecord.promptSnippet as string | undefined,
+          promptGuidelines: Array.isArray(toolRecord.promptGuidelines)
+            ? (toolRecord.promptGuidelines as string[])
+            : undefined,
+          renderShell: "self",
+          parameters: toolRecord.parameters,
+          prepareArguments: typeof toolRecord.prepareArguments === "function"
+            ? (toolRecord.prepareArguments as (args: unknown) => unknown)
+            : undefined,
+          execute: wrappedExecute as any,
+          renderCall(args, theme, context) {
+            return renderBlinkingToolCall(() => {
+              const path = shortenPath(getToolPathArg(args));
+              const lineCount = getEditLineCount(args);
+              return `${renderToolLabel(theme, "edit")} ${renderToolAccent(path || "...")}${formatLineCountSuffix(lineCount, theme)}`;
+            }, theme, context, SHOW_PENDING_TOOL_STATUS);
+          },
+          renderResult(result, options, theme, context) {
+            const lineCount = getEditLineCount(context?.args);
+            if (options.isPartial) {
+              clearCompletedToolCallLine(context);
+              return new Text(
+                formatInProgressLineCount("editing", lineCount, theme),
+                0,
+                0,
+              );
+            }
+
+            const fallbackText = extractTextOutput(result);
+            if (isToolError(result, context)) {
+              const header = buildEditStatusHeader(
+                result.details as EditToolDetails | undefined,
+                fallbackText,
+                theme,
+                true,
+              );
+              syncCompletedToolCallLine(context, header);
+              const body = !isAbortOnlyErrorOutput(fallbackText) && fallbackText
+                ? buildErrorPreview(
+                  fallbackText,
+                  getConfig().previewLines,
+                  options.expanded,
+                  theme,
+                )
+                : "";
+              return new Text(body, 0, 0);
+            }
+
+            const config = getConfig();
+            const details = result.details as EditToolDetails | undefined;
+            const header = buildEditStatusHeader(details, fallbackText, theme, false);
+            syncCompletedToolCallLine(context, header);
+            return renderEditDiffResult(
+              details,
+              { expanded: options.expanded, filePath: getToolPathArg(context?.args) },
+              config,
+              theme,
+              fallbackText,
+            );
+          },
+        });
+      }
+    }
+
+    if (getConfig().registerToolOverrides.write) {
+      const toolRecord = getToolRecord(pi, "write");
+      if (toolRecord && typeof toolRecord.execute === "function" && !isWrappedTool(toolRecord)) {
+        const originalExecute = toolRecord.execute as (...args: unknown[]) => Promise<unknown>;
+        const wrappedExecute = async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown, ctx: any) => {
+          const started = Date.now();
+          const previous = captureExistingWriteContent(ctx.cwd, (params as Record<string, unknown>).path);
+          writeExecutionMetaByToolCallId.set(toolCallId, {
+            fileExistedBeforeWrite: previous.existed,
+            previousContent: previous.content,
+          });
+
+          const result = await originalExecute(toolCallId, params, signal, onUpdate, ctx);
+          return {
+            ...toRecord(result),
+            details: withToolStatusMeta(
+              toRecord(result).details as Record<string, unknown> | undefined,
+              "write",
+              params as Record<string, unknown>,
+              Date.now() - started,
+            ),
+          };
+        };
+        (wrappedExecute as any).__toolCodexWrapped = true;
+
+        pi.registerTool({
+          name: "write",
+          label: (toolRecord.label as string) || "write",
+          description: (toolRecord.description as string) || bootstrapTools.write.description,
+          promptSnippet: toolRecord.promptSnippet as string | undefined,
+          promptGuidelines: Array.isArray(toolRecord.promptGuidelines)
+            ? (toolRecord.promptGuidelines as string[])
+            : undefined,
+          renderShell: "self",
+          parameters: toolRecord.parameters,
+          prepareArguments: typeof toolRecord.prepareArguments === "function"
+            ? (toolRecord.prepareArguments as (args: unknown) => unknown)
+            : undefined,
+          execute: wrappedExecute as any,
+          renderCall(args, theme, context) {
+            return renderBlinkingToolCall(() => {
+              const content = getToolContentArg(args);
+              const lineCount = countWriteContentLines(content);
+              const sizeBytes = getWriteContentSizeBytes(content);
+              const path = shortenPath(getToolPathArg(args));
+              const suffix = shouldRenderWriteCallSummary({
+                hasContent: content !== undefined,
+                hasDetailedResultHeader: false,
+              })
+                ? formatWriteCallSuffix(lineCount, sizeBytes, theme)
+                : "";
+              return `${renderToolLabel(theme, "write")} ${renderToolAccent(path || "...")}${suffix}`;
+            }, theme, context, SHOW_PENDING_TOOL_STATUS);
+          },
+          renderResult(result, options, theme, context) {
+            const content = getToolContentArg(context?.args);
+            const lineCount = countWriteContentLines(content);
+            if (options.isPartial) {
+              clearCompletedToolCallLine(context);
+              return new Text(
+                formatInProgressLineCount("writing", lineCount, theme),
+                0,
+                0,
+              );
+            }
+
+            const fallbackText = extractTextOutput(result);
+            if (isToolError(result, context)) {
+              const header = buildWriteStatusHeader(
+                result.details as Record<string, unknown> | undefined,
+                content,
+                fallbackText,
+                theme,
+                true,
+              );
+              syncCompletedToolCallLine(context, header);
+              const body = !isAbortOnlyErrorOutput(fallbackText) && fallbackText
+                ? buildErrorPreview(
+                  fallbackText,
+                  getConfig().previewLines,
+                  options.expanded,
+                  theme,
+                )
+                : "";
+              return new Text(body, 0, 0);
+            }
+
+            const config = getConfig();
+            const executionMeta = getWriteExecutionMeta(
+              context,
+              writeExecutionMetaByToolCallId,
+            );
+            const header = buildWriteStatusHeader(
+              result.details as Record<string, unknown> | undefined,
+              content,
+              fallbackText,
+              theme,
+              false,
+              executionMeta,
+            );
+            syncCompletedToolCallLine(context, header);
+            return renderWriteDiffResult(
+              content,
+              {
+                expanded: options.expanded,
+                filePath: getToolPathArg(context?.args),
+                previousContent: executionMeta?.previousContent,
+                fileExistedBeforeWrite: executionMeta?.fileExistedBeforeWrite ?? false,
+              },
+              config,
+              theme,
+              fallbackText,
+            );
+          },
+        });
+      }
+    }
+  };
+
+  const wrapGrepTool = (): void => {
+    if (!getConfig().registerToolOverrides.grep) return;
+    const toolRecord = getToolRecord(pi, "grep");
+    if (!toolRecord || typeof toolRecord.execute !== "function" || isWrappedTool(toolRecord)) return;
+
+    const originalExecute = toolRecord.execute as (...args: unknown[]) => Promise<unknown>;
+    const wrappedExecute = async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: unknown, ctx: unknown) => {
       const started = Date.now();
-      const result = await getBuiltInTools(ctx.cwd).edit.execute(
-        toolCallId,
-        params,
-        signal,
-        onUpdate,
-      );
+      const result = await originalExecute(toolCallId, params, signal, onUpdate, ctx);
       return {
-        ...result,
+        ...toRecord(result),
         details: withToolStatusMeta(
-          result.details as EditToolDetails | undefined,
-          "edit",
+          toRecord(result).details as GrepToolDetails | undefined,
+          "grep",
           params as Record<string, unknown>,
           Date.now() - started,
         ),
       };
-    },
-    renderCall(args, theme, context) {
-      return renderBlinkingToolCall(() => {
-        const path = shortenPath(getToolPathArg(args));
-        const lineCount = getEditLineCount(args);
-        return `${renderToolLabel(theme, "edit")} ${renderToolAccent(path || "...")}${formatLineCountSuffix(lineCount, theme)}`;
-      }, theme, context, SHOW_PENDING_TOOL_STATUS);
-    },
-    renderResult(result, options, theme, context) {
-      const lineCount = getEditLineCount(context?.args);
-      if (options.isPartial) {
-        clearCompletedToolCallLine(context);
-        return new Text(
-          formatInProgressLineCount("editing", lineCount, theme),
-          0,
-          0,
-        );
-      }
+    };
+    (wrappedExecute as any).__toolCodexWrapped = true;
 
-      const fallbackText = extractTextOutput(result);
-      if (isToolError(result, context)) {
-        const header = buildEditStatusHeader(
-          result.details as EditToolDetails | undefined,
-          fallbackText,
-          theme,
-          true,
-        );
-        syncCompletedToolCallLine(context, header);
-        const body = !isAbortOnlyErrorOutput(fallbackText) && fallbackText
-          ? buildErrorPreview(
-            fallbackText,
-            getConfig().previewLines,
-            options.expanded,
-            theme,
-          )
-          : "";
-        return new Text(body, 0, 0);
-      }
-
-      const config = getConfig();
-      const details = result.details as EditToolDetails | undefined;
-      const header = buildEditStatusHeader(details, fallbackText, theme, false);
-      syncCompletedToolCallLine(context, header);
-      return renderEditDiffResult(
-        details,
-        { expanded: options.expanded, filePath: getToolPathArg(context?.args) },
-        config,
-        theme,
-        fallbackText,
-      );
-    },
-    });
-  });
-
-  registerIfOwned("write", () => {
     pi.registerTool({
-      name: "write",
-    label: "write",
-    description: bootstrapTools.write.description,
-    ...builtInPromptMetadata.write,
-    renderShell: "self",
-    parameters: clonedParameters.write,
-    prepareArguments: bootstrapTools.write.prepareArguments,
-    async execute(toolCallId, params, signal, onUpdate, ctx) {
-      const started = Date.now();
-      const previous = captureExistingWriteContent(ctx.cwd, params.path);
-      writeExecutionMetaByToolCallId.set(toolCallId, {
-        fileExistedBeforeWrite: previous.existed,
-        previousContent: previous.content,
-      });
-
-      const result = await getBuiltInTools(ctx.cwd).write.execute(
-        toolCallId,
-        params,
-        signal,
-        onUpdate,
-      );
-      return {
-        ...result,
-        details: withToolStatusMeta(
-          result.details as Record<string, unknown> | undefined,
-          "write",
-          params as Record<string, unknown>,
-          Date.now() - started,
-        ),
-      };
-    },
-    renderCall(args, theme, context) {
-      return renderBlinkingToolCall(() => {
-        const content = getToolContentArg(args);
-        const lineCount = countWriteContentLines(content);
-        const sizeBytes = getWriteContentSizeBytes(content);
-        const path = shortenPath(getToolPathArg(args));
-        const suffix = shouldRenderWriteCallSummary({
-          hasContent: content !== undefined,
-          hasDetailedResultHeader: false,
-        })
-          ? formatWriteCallSuffix(lineCount, sizeBytes, theme)
-          : "";
-        return `${renderToolLabel(theme, "write")} ${renderToolAccent(path || "...")}${suffix}`;
-      }, theme, context, SHOW_PENDING_TOOL_STATUS);
-    },
-    renderResult(result, options, theme, context) {
-      const content = getToolContentArg(context?.args);
-      const lineCount = countWriteContentLines(content);
-      if (options.isPartial) {
-        clearCompletedToolCallLine(context);
-        return new Text(
-          formatInProgressLineCount("writing", lineCount, theme),
-          0,
-          0,
-        );
-      }
-
-      const fallbackText = extractTextOutput(result);
-      if (isToolError(result, context)) {
-        const header = buildWriteStatusHeader(
-          result.details as Record<string, unknown> | undefined,
-          content,
-          fallbackText,
+      name: "grep",
+      label: (toolRecord.label as string) || "grep",
+      description: (toolRecord.description as string) || "",
+      promptSnippet: toolRecord.promptSnippet as string | undefined,
+      promptGuidelines: Array.isArray(toolRecord.promptGuidelines)
+        ? (toolRecord.promptGuidelines as string[])
+        : undefined,
+      renderShell: "self",
+      parameters: toolRecord.parameters,
+      prepareArguments: typeof toolRecord.prepareArguments === "function"
+        ? (toolRecord.prepareArguments as (args: unknown) => unknown)
+        : undefined,
+      execute: wrappedExecute as any,
+      renderCall(args, theme, context) {
+        return renderBlinkingToolCall(() => {
+          const pattern = String(getStringField(args, "pattern") ?? "");
+          const scope = shortenPath(getStringField(args, "path") || ".");
+          return `${renderToolLabel(theme, "grep")} ${renderToolAccent(pattern)}${theme.fg("muted", ` in ${scope}`)}`;
+        }, theme, context, SHOW_PENDING_TOOL_STATUS);
+      },
+      renderResult(result, options, theme, context) {
+        const config = getConfig();
+        const details = result.details as GrepToolDetails | undefined;
+        const header = buildSearchStatusHeader(
+          "grep",
+          details,
           theme,
-          true,
+          {
+            limitReached: details?.matchLimitReached !== undefined,
+            isError: isToolError(result, context),
+          },
         );
-        syncCompletedToolCallLine(context, header);
-        const body = !isAbortOnlyErrorOutput(fallbackText) && fallbackText
-          ? buildErrorPreview(
-            fallbackText,
-            getConfig().previewLines,
-            options.expanded,
-            theme,
-          )
-          : "";
-        return new Text(body, 0, 0);
-      }
-
-      const config = getConfig();
-      const executionMeta = getWriteExecutionMeta(
-        context,
-        writeExecutionMetaByToolCallId,
-      );
-      const header = buildWriteStatusHeader(
-        result.details as Record<string, unknown> | undefined,
-        content,
-        fallbackText,
-        theme,
-        false,
-        executionMeta,
-      );
-      syncCompletedToolCallLine(context, header);
-      return renderWriteDiffResult(
-        content,
-        {
-          expanded: options.expanded,
-          filePath: getToolPathArg(context?.args),
-          previousContent: executionMeta?.previousContent,
-          fileExistedBeforeWrite: executionMeta?.fileExistedBeforeWrite ?? false,
-        },
-        config,
-        theme,
-        fallbackText,
-      );
-    },
+        if (options.isPartial) {
+          clearCompletedToolCallLine(context);
+        } else {
+          syncCompletedToolCallLine(context, header);
+        }
+        return renderSearchResult(
+          result,
+          options,
+          config,
+          theme,
+          "match",
+          details,
+          "matches",
+        );
+      },
     });
-  });
+  };
+
+  wrapEditWriteTools();
+  wrapGrepTool();
 
   registerIfOwned("bash", () => {
     pi.registerTool({
@@ -2031,9 +2152,13 @@ export function registerToolDisplayOverrides(
   };
 
   pi.on("session_start", async () => {
+    wrapEditWriteTools();
+    wrapGrepTool();
     registerMcpToolOverrides();
   });
   pi.on("before_agent_start", async () => {
+    wrapEditWriteTools();
+    wrapGrepTool();
     registerMcpToolOverrides();
   });
 }

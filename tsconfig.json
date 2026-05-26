@@ -29,6 +29,7 @@
     "tm/**/*.ts",
     "todo/**/*.ts",
     "win-bash-sanitizer/**/*.ts",
-    "simple-gate/**/*.ts"
+    "simple-gate/**/*.ts",
+    "pi-multi-edit/**/*.ts"
   ]
 }

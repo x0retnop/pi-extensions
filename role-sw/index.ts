@@ -14,7 +14,7 @@ const ROLES: Record<string, string> = {
   project_keeper:    join(homedir(), ".pi", "agent", "roles", "project_keeper.md"),
 };
 
-const DEFAULT_ROLE = "coding_agent";
+const DEFAULT_ROLE = "kimi";
 
 interface CacheEntry {
   content: string;

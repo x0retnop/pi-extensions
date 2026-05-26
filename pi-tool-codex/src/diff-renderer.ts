@@ -418,6 +418,10 @@ function classifyMetaLine(raw: string): DiffMetaEntry["kind"] {
 		|| raw.startsWith("rename to ")
 		|| raw.startsWith("new file mode ")
 		|| raw.startsWith("deleted file mode ")
+		|| raw.startsWith("File:")
+		|| raw.startsWith("*** Update File:")
+		|| raw.startsWith("*** Add File:")
+		|| raw.startsWith("*** Delete File:")
 	) {
 		return "file";
 	}
@@ -483,6 +487,27 @@ function parseDiff(diffText: string): ParsedDiff {
 			oldLineCursor = null;
 			newLineCursor = null;
 			lineNumberDelta = 0;
+		}
+
+		if (
+			rawLine.startsWith("File:")
+			|| rawLine.startsWith("*** Update File:")
+			|| rawLine.startsWith("*** Add File:")
+			|| rawLine.startsWith("*** Delete File:")
+		) {
+			stats.files++;
+			oldLineCursor = null;
+			newLineCursor = null;
+			lineNumberDelta = 0;
+			entries.push({ kind: "file", raw: rawLine, hunkIndex });
+			continue;
+		}
+
+		if (/^\s+\.{3}$/.test(rawLine)) {
+			hunkIndex = ensureImplicitHunk(hunkIndex);
+			stats.hunks = Math.max(stats.hunks, hunkIndex);
+			entries.push({ kind: "hunk", raw: rawLine, hunkIndex });
+			continue;
 		}
 
 		const canonical = parseCanonicalDiffLine(rawLine);
@@ -1488,6 +1513,7 @@ function renderCodexUnified(
 
 	for (const entry of entries) {
 		if (entry.kind === "file") {
+			rows.push(...formatMetaEntryRows(entry, width, theme, wordWrap));
 			continue;
 		}
 

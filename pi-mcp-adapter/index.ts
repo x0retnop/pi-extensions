@@ -7,7 +7,7 @@ import { buildProxyDescription, createDirectToolExecutor, getMissingConfiguredDi
 import { flushMetadataCache, initializeMcp, updateStatusBar } from "./init.ts";
 import { loadMetadataCache } from "./metadata-cache.ts";
 import { executeCall, executeConnect, executeDescribe, executeList, executeSearch, executeStatus, executeUiMessages } from "./proxy-modes.ts";
-import { getConfigPathFromArgv, truncateAtWord } from "./utils.ts";
+import { getConfigPathFromArgv, truncateAtWord, loadToggleState, saveToggleState } from "./utils.ts";
 import { initializeOAuth, shutdownOAuth } from "./mcp-auth-flow.ts";
 import { createMcpDirectToolCallRenderer, renderMcpProxyToolCall, renderMcpToolResult } from "./tool-result-renderer.ts";
 
@@ -15,6 +15,40 @@ export default function mcpAdapter(pi: ExtensionAPI) {
   let state: McpExtensionState | null = null;
   let initPromise: Promise<McpExtensionState> | null = null;
   let lifecycleGeneration = 0;
+
+  const isEnabled = loadToggleState();
+
+  pi.registerCommand("mcp-toggle", {
+    description: "Toggle MCP adapter on/off (default: off)",
+    handler: async (args, ctx) => {
+      const arg = args?.trim()?.toLowerCase();
+      if (arg === "on") {
+        if (isEnabled) {
+          if (ctx.hasUI) ctx.ui.notify("MCP is already enabled", "info");
+          return;
+        }
+        saveToggleState(true);
+        if (ctx.hasUI) ctx.ui.notify("MCP enabled — reloading session...", "info");
+        await ctx.reload();
+        return;
+      }
+      if (arg === "off") {
+        if (!isEnabled) {
+          if (ctx.hasUI) ctx.ui.notify("MCP is already disabled", "info");
+          return;
+        }
+        saveToggleState(false);
+        if (ctx.hasUI) ctx.ui.notify("MCP disabled — reloading session...", "info");
+        await ctx.reload();
+        return;
+      }
+      if (ctx.hasUI) {
+        ctx.ui.notify(`MCP is currently ${isEnabled ? "enabled" : "disabled"}. Usage: /mcp-toggle on|off`, "info");
+      }
+    },
+  });
+
+  if (isEnabled) {
 
   async function shutdownState(currentState: McpExtensionState | null, reason: string): Promise<void> {
     if (!currentState) return;
@@ -332,5 +366,6 @@ export default function mcpAdapter(pi: ExtensionAPI) {
         return executeStatus(state);
       },
     });
+  }
   }
 }

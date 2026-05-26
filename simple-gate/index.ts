@@ -13,7 +13,7 @@ import {
 
 const SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
 
-type GateMode = "strict" | "relaxed" | "yolo";
+type GateMode = "strict" | "relaxed" | "yolo" | "off";
 
 interface Config {
   mode: GateMode;
@@ -51,6 +51,7 @@ function loadConfig(): Config {
 }
 
 function saveMode(mode: GateMode): void {
+  if (mode === "off") return;
   const settings = loadSettings();
   settings.simpleGate = { ...(settings.simpleGate || {}), mode };
   saveSettings(settings);
@@ -68,7 +69,8 @@ function normalizeCommand(command: string): string {
 
 function showStatus(ctx: any) {
   if (ctx?.ui?.setStatus) {
-    ctx.ui.setStatus("gate", `        gate-mode: ${CONFIG.mode.toUpperCase()}`);
+    const label = CONFIG.mode === "off" ? "OFF" : CONFIG.mode.toUpperCase();
+    ctx.ui.setStatus("gate", `        gate-mode: ${label}`);
   }
 }
 
@@ -172,7 +174,7 @@ function isWriteLikeCommand(command: string): boolean {
 const DESTRUCTIVE_PATTERNS = [
   /curl\s+.+\|\s*sh\b/,
   /\brm\s+-rf\s+\//,
-  /\bformat\s+\w/,
+  /\bformat\s+[A-Za-z]:/i,
   /\bdiskpart\b/,
   /\bdd\s+if=.+\s+of=\/dev\/(sd|hd|nvme)/,
 ];
@@ -304,7 +306,7 @@ export default function (pi: any) {
     sessionAllowedWriteRoots.clear();
   });
 
-  const MODES: GateMode[] = ["strict", "relaxed", "yolo"];
+  const MODES: GateMode[] = ["strict", "relaxed", "yolo", "off"];
 
   pi.registerCommand("gate-mode", {
     description: "Set or cycle permission gate mode: strict | relaxed | yolo",
@@ -319,7 +321,7 @@ export default function (pi: any) {
         return;
       }
       if (!MODES.includes(mode as GateMode)) {
-        ctx.ui.notify?.(`Invalid mode: ${mode}. Use: strict | relaxed | yolo`, "error");
+        ctx.ui.notify?.(`Invalid mode: ${mode}. Use: strict | relaxed | yolo | off`, "error");
         return;
       }
       CONFIG.mode = mode as GateMode;
@@ -333,6 +335,10 @@ export default function (pi: any) {
     const cwd = String(ctx?.cwd || process.cwd());
     const tool = String(event.toolName ?? "");
     const input = event.input ?? {};
+
+    if (CONFIG.mode === "off") {
+      return undefined;
+    }
 
     if (cwdIsTooBroad(cwd)) {
       return {

@@ -147,6 +147,43 @@ export default function aRewind(pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("a-rewind-step", {
+		description: "Rewind session one step back (undo the latest entry)",
+		handler: async (_args: string, ctx: any) => {
+			try {
+				if (typeof ctx?.waitForIdle === "function") {
+					await ctx.waitForIdle();
+				}
+
+				const leaf = ctx?.sessionManager?.getLeafEntry?.();
+				if (!leaf) {
+					notify(ctx, "no current leaf found in session.", "warning");
+					return;
+				}
+
+				const targetId = leaf.parentId;
+				if (!targetId) {
+					notify(ctx, "cannot step back before the first session entry.", "error");
+					return;
+				}
+
+				const result = await ctx.navigateTree(targetId, {
+					summarize: false,
+					label: EXT,
+				});
+
+				if (result?.cancelled) {
+					notify(ctx, "step back cancelled.", "warning");
+					return;
+				}
+
+				notify(ctx, "stepped back one entry.", "info");
+			} catch (err) {
+				notify(ctx, formatError(err), "error");
+			}
+		},
+	});
+
 	pi.registerCommand("a-rewind-last", {
 		description: "Rewind session to before the latest assistant message",
 		handler: async (_args: string, ctx: any) => {

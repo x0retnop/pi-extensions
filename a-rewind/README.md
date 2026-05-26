@@ -16,6 +16,7 @@ pi install git:github.com/x0retnop/pi-extension-a-rewind
 | `/a-rewind-auto off` | Disable automatic guard mode. |
 | `/a-rewind-auto status` | Show whether automatic guard mode is enabled. |
 | `/a-rewind-last` | Rewind the current session to before the latest assistant message. |
+| `/a-rewind-step` | Rewind the session one step back (undo the latest entry). |
 | `/a-rewind-tt on` | Enable task timer display in the status bar. |
 | `/a-rewind-tt off` | Disable task timer display. |
 | `/a-rewind-tt status` | Show whether task timer display is enabled. |

@@ -120,8 +120,10 @@ export function cwdIsTooBroad(cwd: string): boolean {
 export function looksLikePath(s: string): boolean {
   if (!s) return false;
   if (/^[A-Za-z]:[\\/]/.test(s)) return true;
+  if (s === "~") return true;
   if (/^~[\\/]/.test(s)) return true;
   if (/^[\\/]/.test(s)) return true;
   if (/^\.{1,2}[\\/]/.test(s)) return true;
+  if (!s.startsWith("-") && !/^[a-z][a-z0-9+.-]*:\/\//i.test(s) && /[\\/]/.test(s)) return true;
   return false;
 }

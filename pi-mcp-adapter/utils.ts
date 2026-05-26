@@ -1,7 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import type { McpConfig, ServerEntry } from "./types.ts";
+import { getAgentPath } from "./agent-dir.ts";
 
 async function execOpen(pi: ExtensionAPI, target: string, browser?: string) {
   const os = platform();
@@ -113,6 +115,22 @@ export function formatAuthRequiredMessage(
 ): string {
   const template = config.settings?.authRequiredMessage;
   return template ? template.replaceAll("${server}", serverName) : defaultMessage;
+}
+
+export function loadToggleState(): boolean {
+  const path = getAgentPath("mcp-adapter-toggle.json");
+  if (!existsSync(path)) return false;
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf-8"));
+    return raw?.enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+export function saveToggleState(enabled: boolean): void {
+  const path = getAgentPath("mcp-adapter-toggle.json");
+  writeFileSync(path, JSON.stringify({ enabled }, null, 2), "utf-8");
 }
 
 /**

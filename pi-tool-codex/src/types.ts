@@ -19,6 +19,7 @@ export const BUILT_IN_TOOL_OVERRIDE_NAMES = [
 	"bash",
 	"edit",
 	"write",
+	"grep",
 ] as const;
 
 export type BuiltInToolOverrideName = (typeof BUILT_IN_TOOL_OVERRIDE_NAMES)[number];
@@ -30,6 +31,7 @@ export interface ToolOverrideOwnership {
 	bash: boolean;
 	edit: boolean;
 	write: boolean;
+	grep: boolean;
 }
 
 export interface ToolDisplayConfig {
@@ -59,6 +61,7 @@ export const DEFAULT_TOOL_DISPLAY_CONFIG: ToolDisplayConfig = {
 		bash: true,
 		edit: true,
 		write: true,
+		grep: true,
 	},
 	enableNativeUserMessageBox: true,
 	readOutputMode: "hidden",
