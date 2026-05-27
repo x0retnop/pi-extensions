@@ -31,6 +31,8 @@ export default function (pi: ExtensionAPI) {
 			customType: "win-bash-rules",
 			content: [
 				"You are on Windows with Git Bash.",
+				"Paths: use '/c/...' notation, not 'C:\\'. Wrap spaced paths in SINGLE quotes.",
+				'Never end a quoted path with backslash: WRONG: "C:\\dir\\"  RIGHT: \'/c/dir\'.',
 				"Redirection: use '2>/dev/null', never '2>nul'.",
 				"Listing: use 'ls', never 'dir'. Do NOT use '|| dir ...' fallbacks.",
 				"Use bash commands (cp, mv, rm, cat) instead of Windows commands (copy, move, del, type).",
@@ -48,9 +50,9 @@ export default function (pi: ExtensionAPI) {
 		let modified = false;
 
 		// Rule A: strip cmd fallback "|| dir ..."
-		const fallbackMatch = cmd.match(/^(.*?)\s*\|\|\s*dir\b.*$/i);
-		if (fallbackMatch) {
-			cmd = fallbackMatch[1].trim();
+		const dirFallbackRegex = /\s*\|\|\s*dir(?:\s+\S+)*\s*/gi;
+		if (dirFallbackRegex.test(cmd)) {
+			cmd = cmd.replace(dirFallbackRegex, " ").trim();
 			modified = true;
 		}
 
@@ -119,6 +121,11 @@ function splitArgs(str: string): string[] {
 	return args;
 }
 
+/** Strip known Windows-style /flags from token list (e.g. /y, /s, /q). */
+function stripWindowsFlags(tokens: string[]): string[] {
+	return tokens.filter((t) => !/^\/[A-Za-z]+$/.test(t));
+}
+
 /** Process command chains (&&, ||, ;) applying mappings per segment. */
 function processCommandChain(cmd: string): string {
 	const parts = cmd.split(/(\s*&&\s*|\s*\|\|\s*|\s*;\s*)/);
@@ -164,7 +171,10 @@ function applyMapping(cmd: string): string {
 	if (first === "cls") return "clear";
 
 	// echo.
-	if (first === "echo.") return "echo" + cmd.trim().slice(5);
+	if (first === "echo.") {
+		const rest = cmd.trim().slice(5);
+		return "echo" + (rest ? " " + rest : "");
+	}
 
 	// dir
 	if (first === "dir") {
@@ -179,17 +189,17 @@ function applyMapping(cmd: string): string {
 
 	// copy
 	if (first === "copy") {
-		return "cp " + tokens.slice(1).map(toBashPath).join(" ");
+		return "cp " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
 	}
 
 	// move
 	if (first === "move") {
-		return "mv " + tokens.slice(1).map(toBashPath).join(" ");
+		return "mv " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
 	}
 
 	// del
 	if (first === "del") {
-		return "rm " + tokens.slice(1).map(toBashPath).join(" ");
+		return "rm " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
 	}
 
 	// ren -> mv with same-directory target
@@ -222,7 +232,7 @@ function applyMapping(cmd: string): string {
 
 	// xcopy
 	if (first === "xcopy") {
-		return "cp -r " + tokens.slice(1).map(toBashPath).join(" ");
+		return "cp -r " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
 	}
 
 	return cmd;
@@ -289,10 +299,12 @@ function fixWindowsPaths(cmd: string): string {
 	return result;
 }
 
-/** Remove backslash escapes before ordinary characters (not inside single quotes). */
+/** Remove backslash escapes before ordinary characters (not inside quotes, not after $VAR). */
 function fixBackslashes(cmd: string): string {
 	return cmd.replace(/\\([^\s"'\\])/g, (match, char, offset) => {
 		const before = cmd.slice(0, offset);
+		// Do not strip backslash after an env var: $VAR\path must stay intact
+		if (/\$[A-Za-z_][A-Za-z0-9_]*$/.test(before)) return match;
 		const sgl = before.match(/'/g);
 		if (sgl && sgl.length % 2 !== 0) return match; // inside single quotes
 		const dbl = before.match(/"/g);

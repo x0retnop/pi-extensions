@@ -266,48 +266,90 @@ function ensureTrailingNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
 }
 
+interface PatchSnapshot {
+  path: string;
+  existed: boolean;
+  content: string;
+}
+
+async function rollbackPatchSnapshots(
+  snapshots: Map<string, PatchSnapshot>,
+  workspace: Workspace,
+): Promise<void> {
+  await Promise.all(
+    Array.from(snapshots, ([absPath, snapshot]) => {
+      if (snapshot.existed) {
+        return workspace.writeText(absPath, snapshot.content).catch(() => {});
+      }
+      return workspace.deleteFile(absPath).catch(() => {});
+    }),
+  );
+}
+
 export async function applyPatchOperations(
   ops: PatchOperation[],
   workspace: Workspace,
   cwd: string,
   signal?: AbortSignal,
-  options?: { collectDiff?: boolean },
+  options?: { collectDiff?: boolean; rollbackOnError?: boolean },
 ): Promise<PatchOpResult[]> {
   const results: PatchOpResult[] = [];
   const collectDiff = options?.collectDiff ?? false;
+  const rollbackOnError = options?.rollbackOnError ?? false;
+  const snapshots = new Map<string, PatchSnapshot>();
 
   for (const op of ops) {
     if (signal?.aborted) {
+      if (rollbackOnError) {
+        await rollbackPatchSnapshots(snapshots, workspace);
+      }
       throw new Error("Operation aborted");
     }
 
-    switch (op.kind) {
-      case "add": {
-        const abs = resolvePatchPath(cwd, op.path);
-        const oldText = collectDiff && (await workspace.exists(abs)) ? await workspace.readText(abs) : "";
-        const newText = ensureTrailingNewline(op.contents);
-        await workspace.writeText(abs, newText);
-        results.push(buildOpResult(op.path, `Added file ${op.path}.`, oldText, newText, collectDiff));
-        break;
-      }
-      case "delete": {
-        const abs = resolvePatchPath(cwd, op.path);
-        if (!(await workspace.exists(abs))) {
-          throw new Error(`Failed to delete ${op.path}: file does not exist`);
+    try {
+      switch (op.kind) {
+        case "add": {
+          const abs = resolvePatchPath(cwd, op.path);
+          const existed = await workspace.exists(abs);
+          const oldText = collectDiff && existed ? await workspace.readText(abs) : "";
+          if (rollbackOnError) {
+            snapshots.set(abs, { path: abs, existed, content: oldText });
+          }
+          const newText = ensureTrailingNewline(op.contents);
+          await workspace.writeText(abs, newText);
+          results.push(buildOpResult(op.path, `Added file ${op.path}.`, oldText, newText, collectDiff));
+          break;
         }
-        const oldText = collectDiff ? await workspace.readText(abs) : "";
-        await workspace.deleteFile(abs);
-        results.push(buildOpResult(op.path, `Deleted file ${op.path}.`, oldText, "", collectDiff));
-        break;
+        case "delete": {
+          const abs = resolvePatchPath(cwd, op.path);
+          if (!(await workspace.exists(abs))) {
+            throw new Error(`Failed to delete ${op.path}: file does not exist`);
+          }
+          const oldText = collectDiff ? await workspace.readText(abs) : "";
+          if (rollbackOnError) {
+            snapshots.set(abs, { path: abs, existed: true, content: oldText });
+          }
+          await workspace.deleteFile(abs);
+          results.push(buildOpResult(op.path, `Deleted file ${op.path}.`, oldText, "", collectDiff));
+          break;
+        }
+        case "update": {
+          const abs = resolvePatchPath(cwd, op.path);
+          const sourceText = await workspace.readText(abs);
+          if (rollbackOnError) {
+            snapshots.set(abs, { path: abs, existed: true, content: sourceText });
+          }
+          const updated = applyHunks(op.path, sourceText, op.hunks);
+          await workspace.writeText(abs, updated);
+          results.push(buildOpResult(op.path, `Updated ${op.path}.`, sourceText, updated, collectDiff));
+          break;
+        }
       }
-      case "update": {
-        const abs = resolvePatchPath(cwd, op.path);
-        const sourceText = await workspace.readText(abs);
-        const updated = applyHunks(op.path, sourceText, op.hunks);
-        await workspace.writeText(abs, updated);
-        results.push(buildOpResult(op.path, `Updated ${op.path}.`, sourceText, updated, collectDiff));
-        break;
+    } catch (err) {
+      if (rollbackOnError) {
+        await rollbackPatchSnapshots(snapshots, workspace);
       }
+      throw err;
     }
   }
 

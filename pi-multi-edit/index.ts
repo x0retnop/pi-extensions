@@ -65,15 +65,16 @@ export default function (pi: ExtensionAPI) {
       2) Batch: pass a "multi" (or "edits") array of {path?, oldText, newText} edits. Use this automatically when more than one edit is needed — it reduces round-trips and pre-validates everything before writing.
       3) Patch: pass a "patch" string in Codex format for complex multi-file changes. Mutually exclusive with oldText/newText/multi/edits.
 
-      oldText must match exactly including whitespace. If any edit in a batch fails, no file is modified.`,
+      Batch and patch edits are atomic: if any individual edit fails, all changes are rolled back and no files are modified. oldText must match exactly including whitespace.`,
     promptSnippet:
       "Edit files with exact replacement. Use multi for any batch of edits and patch for Codex-style patches.",
     promptGuidelines: [
       "If you have more than one edit, always use the multi parameter instead of multiple separate edit calls",
       "When most edits target the same file, set a top-level path and omit path inside individual multi items",
       "The patch parameter is mutually exclusive with oldText/newText/multi/edits",
+      "The edits parameter is an alias for multi; either name works",
       "oldText must match exactly including whitespace, quotes, and trailing spaces",
-      "Patch format: wrap in *** Begin Patch ... *** End Patch. Use *** Update File:, *** Add File:, *** Delete File:. Hunks start with @@",
+      "Patch format: wrap in *** Begin Patch ... *** End Patch. Use *** Update File:, *** Add File:, *** Delete File:. Hunks start with @@ followed by a small snippet of surrounding code to locate the change",
     ],
     parameters: multiEditSchema,
 
@@ -113,7 +114,7 @@ export default function (pi: ExtensionAPI) {
           createRealWorkspace(),
           ctx.cwd,
           signal,
-          { collectDiff: true },
+          { collectDiff: true, rollbackOnError: true },
         );
         const summary = applied
           .map((r, i) => `${i + 1}. ${r.message}`)
@@ -204,7 +205,6 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
-      const isBatch = edits.length > 1;
       const results = await applyClassicEdits(
         edits,
         createRealWorkspace(),
@@ -213,7 +213,6 @@ export default function (pi: ExtensionAPI) {
         {
           collectDiff: true,
           rollbackOnError: true,
-          continueOnError: isBatch,
         },
       );
 

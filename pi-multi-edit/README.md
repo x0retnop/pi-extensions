@@ -8,7 +8,7 @@ Replaces the built-in `edit` tool with a batch-capable version.
 - **Batch (`multi`)** — apply many edits across one or more files in a single tool call.
 - **Patch mode** — Codex-style `*** Begin Patch … *** End Patch` payloads with `Add File`, `Delete File`, and `Update File` operations.
 
-All mutations run a **preflight pass** on an in-memory snapshot first. If any replacement fails, no real file is touched. Multi-file batches support **atomic rollback** on unexpected errors.
+All mutations run a **preflight pass** on an in-memory snapshot first. If any replacement fails, no real file is touched. Both batch and patch modes are **fully atomic**: if any edit or patch operation fails during real execution, all changes are rolled back automatically.
 
 ## Install
 
