@@ -74,89 +74,52 @@ function showStatus(ctx: any) {
   }
 }
 
-// ─── Path extraction for bash ───
+// ─── Helpers: path extraction (shell-only) ───
 
-function extractQuotedPaths(command: string): string[] {
+/** Everything before a heredoc (`<<`). Heredoc bodies are data, not shell syntax. */
+function shellOnly(command: string): string {
+  return command.split(/<<['"]?[A-Z_][A-Z0-9_]*['"]?/i)[0];
+}
+
+function extractQuotedPaths(text: string): string[] {
   const paths: string[] = [];
   const re = /"(.*?)"|'(.*?)'/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(command)) !== null) {
+  while ((m = re.exec(text)) !== null) {
     const content = m[1] ?? m[2];
     if (looksLikePath(content)) paths.push(content);
   }
   return paths;
 }
 
-function extractTokenPaths(command: string): string[] {
+function extractTokenPaths(text: string): string[] {
   const paths: string[] = [];
-  const tokens = command.split(/\s+/);
-  for (const tok of tokens) {
+  for (const tok of text.split(/\s+/)) {
     const clean = tok.replace(/^[\s&|;()]+|[\s&|;()]+$/g, "").replace(/^["']|["']$/g, "");
     if (looksLikePath(clean)) paths.push(clean);
   }
   return paths;
 }
 
-function extractRedirectTargets(command: string): string[] {
+function extractRedirectTargets(text: string): string[] {
   const targets: string[] = [];
   const re = /[12]?>[>]?\s*([^"'\s&|;|<>()]+|"[^"]*"|'[^']*')/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(command)) !== null) {
+  while ((m = re.exec(text)) !== null) {
     let t = m[1].trim().replace(/^["']|["']$/g, "");
-    if (t && !isNullTarget(t)) targets.push(t);
+    if (t && t.toLowerCase() !== "/dev/null" && t.toLowerCase() !== "nul") targets.push(t);
   }
   return targets;
 }
 
-function isNullTarget(t: string): boolean {
-  const lowered = t.toLowerCase();
-  return lowered === "/dev/null" || lowered === "nul";
-}
-
-function extractOrderedPathCandidates(command: string): string[] {
+function extractBashPaths(command: string): string[] {
+  const shell = shellOnly(command);
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const p of [...extractQuotedPaths(command), ...extractTokenPaths(command), ...extractRedirectTargets(command)]) {
-    if (!seen.has(p)) {
-      seen.add(p);
-      out.push(p);
-    }
+  for (const p of [...extractQuotedPaths(shell), ...extractTokenPaths(shell), ...extractRedirectTargets(shell)]) {
+    if (!seen.has(p)) { seen.add(p); out.push(p); }
   }
   return out;
-}
-
-// ─── Inline script helpers ───
-
-function extractInlineCode(command: string): string | null {
-  const cMatch = command.match(/(?:^|\s)-c\s+(.+)$/is);
-  if (cMatch) {
-    let code = cMatch[1].trim();
-    if ((code.startsWith('"') && code.endsWith('"')) || (code.startsWith("'") && code.endsWith("'"))) {
-      code = code.slice(1, -1);
-    }
-    return code;
-  }
-  const heredocMatch = command.match(/<<['"]?([A-Z_][A-Z0-9_]*)['"]?[\r\n]+([\s\S]*?)[\r\n]+\1\s*$/is);
-  if (heredocMatch) return heredocMatch[2];
-  return null;
-}
-
-function inlineHasDestructive(code: string): boolean {
-  return /\b(os\.remove|os\.unlink|shutil\.rmtree|shutil\.move|fs\.unlink|fs\.rm|fs\.rmdir|\.write\s*\(|open\s*\([^)]*['"][wax+]|pip\s+install|npm\s+install)\b/.test(code);
-}
-
-function extractPathsFromInline(command: string): string[] {
-  if (!/^\s*(?:python3?|py|node|sh|bash|zsh)\b/.test(command)) return [];
-  const code = extractInlineCode(command);
-  if (!code) return [];
-  const paths: string[] = [];
-  const re = /"(.*?)"|'(.*?)'/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(code)) !== null) {
-    const s = m[1] ?? m[2];
-    if (looksLikePath(s)) paths.push(s);
-  }
-  return paths;
 }
 
 // ─── Risk helpers ───
@@ -167,12 +130,11 @@ const WRITE_KEYWORDS = new Set([
 ]);
 
 function isWriteLikeCommand(command: string): boolean {
-  const first = command.trim().split(/\s+/)[0].toLowerCase();
-  return WRITE_KEYWORDS.has(first);
+  return WRITE_KEYWORDS.has(command.trim().split(/\s+/)[0].toLowerCase());
 }
 
 const DESTRUCTIVE_PATTERNS = [
-  /curl\s+.+\|\s*sh\b/,
+  /curl\s.+\|\s*sh\b/,
   /\brm\s+-rf\s+\//,
   /\bformat\s+[A-Za-z]:/i,
   /\bdiskpart\b/,
@@ -192,59 +154,25 @@ function decideBash(command: string, cwd: string): Decision {
   if (sessionAllowedCommands.has(norm)) return { action: "allow" };
 
   if (isDestructivePattern(command)) {
-    return { action: "block", reason: "matches a known destructive pattern (e.g., downloading and immediately executing a remote script)" };
+    if (CONFIG.mode === "yolo") return { action: "ask", reason: "matches a known destructive pattern" };
+    return { action: "block", reason: "matches a known destructive pattern" };
   }
 
-  const paths = extractOrderedPathCandidates(command);
-  const inlinePaths = extractPathsFromInline(command);
-  const allPaths = [...paths, ...inlinePaths];
-  const uniquePaths = Array.from(new Set(allPaths));
+  const paths = extractBashPaths(command);
+  const hasOutside = paths.some((p) => classifyPathAccess(p, cwd, CONFIG.workspaceRoots, CONFIG.protectedRoots).scope === "outside_project");
+  const hasProtected = paths.some((p) => classifyPathAccess(p, cwd, CONFIG.workspaceRoots, CONFIG.protectedRoots).scope === "protected");
 
-  let hasProtectedPath = false;
-  let hasOutsidePath = false;
-  let hasOutsideWrite = false;
-
-  for (const p of uniquePaths) {
-    const access = classifyPathAccess(p, cwd, CONFIG.workspaceRoots, CONFIG.protectedRoots);
-    if (access.scope === "protected") {
-      hasProtectedPath = true;
-    } else if (access.scope === "outside_project") {
-      hasOutsidePath = true;
-    }
-  }
-
-  const lastPath = allPaths.length > 0 ? allPaths[allPaths.length - 1] : null;
-  if (lastPath) {
-    const lastAccess = classifyPathAccess(lastPath, cwd, CONFIG.workspaceRoots, CONFIG.protectedRoots);
-    if (isWriteLikeCommand(command) && lastAccess.scope === "outside_project") {
-      hasOutsideWrite = true;
-    }
-  }
-
-  for (const t of extractRedirectTargets(command)) {
-    const access = classifyPathAccess(t, cwd, CONFIG.workspaceRoots, CONFIG.protectedRoots);
-    if (access.scope === "protected") hasProtectedPath = true;
-    if (access.scope === "outside_project") hasOutsideWrite = true;
-  }
-
-  if (inlinePaths.length === 0 && /^\s*(?:python3?|py|node|sh|bash|zsh)\b/.test(command)) {
-    const code = extractInlineCode(command);
-    if (code && inlineHasDestructive(code)) {
-      if (CONFIG.mode === "strict") return { action: "block", reason: "inline script contains destructive operations (blocked in strict mode)" };
-      if (CONFIG.mode === "relaxed") return { action: "ask", reason: "inline script contains destructive operations" };
-    }
-  }
-
-  if (hasProtectedPath) {
+  if (hasProtected) {
+    if (CONFIG.mode === "yolo") return { action: "ask", reason: "touches a protected system path" };
     return { action: "block", reason: "touches a protected system path" };
   }
 
-  if (hasOutsideWrite) {
+  if (isWriteLikeCommand(command) && hasOutside) {
     if (CONFIG.mode === "strict") return { action: "block", reason: "would write outside the active project (blocked in strict mode)" };
     return { action: "ask", reason: "may write outside the active project" };
   }
 
-  if (hasOutsidePath && CONFIG.mode === "strict") {
+  if (hasOutside && CONFIG.mode === "strict") {
     return { action: "ask", reason: "accesses paths outside the active project (strict mode)" };
   }
 
@@ -313,8 +241,7 @@ export default function (pi: any) {
     handler: async (args: string, ctx: any) => {
       const mode = args.trim().toLowerCase();
       if (!mode) {
-        const currentIndex = MODES.indexOf(CONFIG.mode);
-        CONFIG.mode = MODES[(currentIndex + 1) % MODES.length];
+        CONFIG.mode = MODES[(MODES.indexOf(CONFIG.mode) + 1) % MODES.length];
         saveMode(CONFIG.mode);
         showStatus(ctx);
         ctx.ui.notify?.(`Gate mode cycled to: ${CONFIG.mode.toUpperCase()}`, "success");
@@ -336,9 +263,7 @@ export default function (pi: any) {
     const tool = String(event.toolName ?? "");
     const input = event.input ?? {};
 
-    if (CONFIG.mode === "off") {
-      return undefined;
-    }
+    if (CONFIG.mode === "off") return undefined;
 
     if (cwdIsTooBroad(cwd)) {
       return {
@@ -364,19 +289,26 @@ export default function (pi: any) {
       }
 
       if (access.scope === "protected") {
+        if (CONFIG.mode === "yolo") {
+          const decision = await askReadAccess(ctx, formatReadPrompt(filePath, access.reason));
+          if (decision === "directory") {
+            sessionAllowedReadRoots.add(dirname(normalizedPath));
+            return undefined;
+          }
+          if (decision !== "once") {
+            return { block: true, reason: `Declined reading protected path: ${filePath}` };
+          }
+          return undefined;
+        }
         return {
           block: true,
           reason:
             `The user has blocked access to a protected path: ${filePath}\n\n` +
-            `This is an intentional safety setting, not a random obstacle. ` +
-            `Do NOT try to access this location through another tool or script. ` +
-            `If you genuinely need something here, explain why to the user and wait for instructions.`,
+            `Do NOT try to access this location through another tool or script.`,
         };
       }
 
-      if (CONFIG.mode !== "strict") {
-        return undefined;
-      }
+      if (CONFIG.mode !== "strict") return undefined;
 
       const decision = await askReadAccess(ctx, formatReadPrompt(filePath, access.reason));
       if (decision === "directory") {
@@ -386,10 +318,7 @@ export default function (pi: any) {
       if (decision !== "once") {
         return {
           block: true,
-          reason:
-            `The user declined reading a file outside the current project: ${filePath}\n\n` +
-            `Respect this decision. Do NOT attempt to read it via another command, tool, or script. ` +
-            `If this file is essential, explain why to the user and ask for direction.`,
+          reason: `The user declined reading a file outside the current project: ${filePath}`,
         };
       }
       return undefined;
@@ -409,24 +338,29 @@ export default function (pi: any) {
       }
 
       if (access.scope === "protected") {
+        if (CONFIG.mode === "yolo") {
+          const decision = await askReadAccess(ctx, formatWritePrompt(tool, filePath, access.reason));
+          if (decision === "directory") {
+            sessionAllowedWriteRoots.add(dirname(normalizedPath));
+            return undefined;
+          }
+          if (decision !== "once") {
+            return { block: true, reason: `Declined ${tool} to protected path: ${filePath}` };
+          }
+          return undefined;
+        }
         return {
           block: true,
           reason:
             `The user has blocked ${tool} to a protected path: ${filePath}\n\n` +
-            `This is an intentional safety setting. ` +
-            `Do NOT attempt workarounds (python shutil, node fs, PowerShell, registry edits, etc.). ` +
-            `Explain to the user why this change is needed and wait for their guidance.`,
+            `Do NOT attempt workarounds.`,
         };
       }
 
       if (CONFIG.mode === "strict") {
         return {
           block: true,
-          reason:
-            `The user has blocked ${tool} outside the active project in strict mode: ${filePath}\n\n` +
-            `This restriction is intentional. ` +
-            `Do NOT try to write elsewhere using a different approach or language. ` +
-            `If the file truly belongs outside the project, ask the user explicitly.`,
+          reason: `The user has blocked ${tool} outside the active project in strict mode: ${filePath}`,
         };
       }
 
@@ -438,10 +372,7 @@ export default function (pi: any) {
       if (decision !== "once") {
         return {
           block: true,
-          reason:
-            `The user declined ${tool} outside the current project: ${filePath}\n\n` +
-            `Respect this decision. Do NOT try to write or modify this file through alternative methods. ` +
-            `Explain why this change is needed and wait for the user's guidance.`,
+          reason: `The user declined ${tool} outside the current project: ${filePath}`,
         };
       }
       return undefined;
@@ -460,30 +391,23 @@ export default function (pi: any) {
             `This command was blocked by the user's permission settings — not by accident.\n\n` +
             `Command:\n  ${command}\n\n` +
             `Why: ${decision.reason}\n\n` +
-            `Do NOT attempt a workaround with a different command, script, or interpreter (python, node, PowerShell, etc.). ` +
-            `The user will be very unhappy if you try to bypass this. ` +
-            `Instead, explain why you need this and wait for the user's guidance.`,
+            `Do NOT attempt a workaround.`,
         };
       }
-      if (decision.action === "allow") {
-        return undefined;
-      }
+      if (decision.action === "allow") return undefined;
 
       const choice = await askAllowOnceOrSession(ctx, formatBashPrompt(command, decision.reason || ""));
       if (choice === "command") {
         sessionAllowedCommands.add(normalizeCommand(command));
         return undefined;
       }
-      if (choice === "once") {
-        return undefined;
-      }
+      if (choice === "once") return undefined;
       return {
         block: true,
         reason:
           `The user declined this command:\n  ${command}\n\n` +
           `Reason: ${decision.reason}\n\n` +
-          `Do NOT attempt workarounds using other commands, scripts, or interpreters. ` +
-          `The user explicitly said no. Explain why you needed this and wait for their instructions.`,
+          `Do NOT attempt workarounds.`,
       };
     }
 

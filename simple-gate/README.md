@@ -4,12 +4,13 @@ Minimal path-based permission gate for **bash**, **read**, **write**, and **edit
 
 ## What it does
 
-- **Protected paths** — always block read/write/bash access (e.g. `C:\Windows`, `~/.ssh`, `~/.pi`). You can add your own in config.
+- **Protected paths** (`C:\Windows`, `~/.ssh`, `~/.pi`, etc.) — block in `strict`/`relaxed`, **ask** in `yolo`. You can add your own in config.
 - **Read tool** — allow inside project/workspace. Outside: allow in `relaxed`/`yolo`, ask in `strict`.
-- **Write / Edit tool** — allow inside project/workspace. Outside: block in `strict`, ask in `relaxed`/`yolo`. Protected always block.
-- **Bash** — extracts paths from the command string. If any path touches protected → block. If write-like command (cp, mv, rm, mkdir, redirect `>`) targets outside project → block in `strict`, ask otherwise. In `strict`, any access outside project asks.
-- **Inline scripts** (`python -c`, `node -e`, shell heredocs) — if destructive keywords are detected (remove, rmtree, write, pip install, etc.) and paths point outside project → block/ask depending on mode.
-- **Destructive deny-list** — hard-blocks `curl ... | sh`, `rm -rf /`, `format`, `diskpart`, `dd to /dev/sd*`.
+- **Write / Edit tool** — allow inside project/workspace. Outside: block in `strict`, ask in `relaxed`/`yolo`. Protected: block in `strict`/`relaxed`, ask in `yolo`.
+- **Bash** — extracts paths from the shell command. If any path is protected → block in `strict`/`relaxed`, **ask** in `yolo`. If write-like command (cp, mv, rm, mkdir, redirect `>`) targets outside project → block in `strict`, ask otherwise. In `strict`, any access outside project asks.
+- **Destructive deny-list** (`curl ... | sh`, `rm -rf /`, `format`, `diskpart`, `dd to /dev/sd*`) — block in `strict`/`relaxed`, **ask** in `yolo`.
+- **Heredocs** (`python <<EOF`, `cat <<EOF`) — bodies are treated as data, not shell syntax. String literals inside them (e.g. `'\\'`) do not trigger false blocks.
+- **Git Bash paths** — `/c/...` notation is resolved correctly to `C:\...` on Windows.
 
 ## Install
 
@@ -45,13 +46,11 @@ pi install ./simple-gate
 
 ## Modes
 
-| Mode | Read outside | Write outside | Bash write outside | Bash read outside |
-|------|--------------|---------------|--------------------|-------------------|
-| `strict` | ask | block | block | ask |
-| `relaxed` | allow | ask | ask | allow |
-| `yolo` | allow | ask | ask | allow |
-
-Protected paths are always blocked.
+| Mode | Read outside | Write outside | Bash write outside | Bash read outside | Protected | Destructive patterns |
+|------|--------------|---------------|--------------------|-------------------|-----------|---------------------|
+| `strict` | ask | block | block | ask | **block** | **block** |
+| `relaxed` | allow | ask | ask | allow | **block** | **block** |
+| `yolo` | allow | ask | ask | allow | **ask** | **ask** |
 
 ## Commands
 

@@ -37,7 +37,9 @@ function expandHome(input: string): string {
 
 export function normalizePath(input: string, cwd: string): string {
   if (!input) return "";
-  const cleaned = expandHome(input.replace(/^["']|["']$/g, ""));
+  let cleaned = expandHome(input.replace(/^["']|["']$/g, ""));
+  // Convert Git Bash /c/... notation to C:/... so Node path.resolve works correctly on Windows.
+  cleaned = cleaned.replace(/^\/([a-z])\//i, "$1:/");
   return path.resolve(path.isAbsolute(cleaned) ? cleaned : path.join(cwd, cleaned));
 }
 
@@ -119,6 +121,9 @@ export function cwdIsTooBroad(cwd: string): boolean {
 
 export function looksLikePath(s: string): boolean {
   if (!s) return false;
+  // Reject pure-slash strings — these are almost always escape sequences
+  // (e.g. '\\' inside Python/heredoc), not file paths.
+  if (/^[\\/]{1,3}$/.test(s)) return false;
   if (/^[A-Za-z]:[\\/]/.test(s)) return true;
   if (s === "~") return true;
   if (/^~[\\/]/.test(s)) return true;

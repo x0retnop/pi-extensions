@@ -71,6 +71,13 @@ See `docs/pi-version-sync.md`. The short version:
 - `pi-tool-codex` is an external package originally written for the old `@mariozechner/` scope. It has been migrated to `@earendil-works/` in this repo. If Pi ever drops the backward-compat alias, this extension is already safe.
 - `pi-kimi` previously used `compat.reasoningEffortMap` (deprecated in Pi 0.72.0). It now uses `thinkingLevelMap`.
 
+## Runtime specifics
+
+- `~/.pi/agent/SYSTEM.md` is intentionally **empty**. The active system prompt comes from **`role-sw`**, which loads role files from `~/.pi/agent/roles/`.
+- Pi auto-loads `AGENTS.md` from the **current working directory**. When the user launches Pi from `C:/10x001/pi extensions/`, this repo's `AGENTS.md` is injected into context.
+- Extensions in `~/.pi/agent/extensions/` are loaded **once at startup**. After syncing dev → runtime, the user must **restart Pi** for changes to take effect.
+- To inspect currently active extensions or gate/workspace settings, read `~/.pi/agent/settings.json` and list `~/.pi/agent/extensions/`. Do not edit these files directly unless asked.
+
 ## Golden rules
 
 - One extension = one folder.

@@ -5,8 +5,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
 
-// Windows utilities we do NOT remap — leave arguments untouched
-// (except nul redirects and env vars, which are fixed globally).
 const WINDOWS_UTILS = new Set([
 	"findstr", "ping", "tasklist", "ipconfig", "systeminfo", "net", "sc",
 	"reg", "wmic", "schtasks", "certutil", "cipher", "compact", "diskpart",
@@ -17,7 +15,6 @@ const WINDOWS_UTILS = new Set([
 	"cmd", "cmd.exe", "start",
 ]);
 
-// Commands we actively map to bash equivalents.
 const MAPPED_CMDS = new Set([
 	"dir", "copy", "move", "del", "ren", "type", "cls", "more", "xcopy", "echo.", "cd",
 ]);
@@ -25,14 +22,11 @@ const MAPPED_CMDS = new Set([
 export default function (pi: ExtensionAPI) {
 	if (process.platform !== "win32") return;
 
-	// Lightweight ephemeral hint for the LLM (does not bloat the system prompt)
 	pi.on("before_agent_start", async () => ({
 		message: {
 			customType: "win-bash-rules",
 			content: [
 				"You are on Windows with Git Bash.",
-				"Paths: use '/c/...' notation, not 'C:\\'. Wrap spaced paths in SINGLE quotes.",
-				'Never end a quoted path with backslash: WRONG: "C:\\dir\\"  RIGHT: \'/c/dir\'.',
 				"Redirection: use '2>/dev/null', never '2>nul'.",
 				"Listing: use 'ls', never 'dir'. Do NOT use '|| dir ...' fallbacks.",
 				"Use bash commands (cp, mv, rm, cat) instead of Windows commands (copy, move, del, type).",
@@ -41,49 +35,62 @@ export default function (pi: ExtensionAPI) {
 		},
 	}));
 
-	// Intercept and sanitize bash commands
 	pi.on("tool_call", async (event, ctx) => {
+		if (event.input && typeof event.input.path === "string") {
+			const fixedPath = fixBashPathToWindows(event.input.path);
+			if (fixedPath !== event.input.path) {
+				event.input.path = fixedPath;
+				ctx.ui?.notify?.(`Path fix: ${event.input.path} → ${fixedPath}`, "info");
+			}
+		}
+
 		if (!isToolCallEventType("bash", event)) return;
 
 		const original: string = event.input.command;
-		let cmd = original;
 		let modified = false;
+
+		// Isolate heredoc body — never touch data inside it.
+		const heredocIdx = original.search(/<<['"]?[A-Z_][A-Z0-9_]*['"]?/i);
+		const shell = heredocIdx >= 0 ? original.slice(0, heredocIdx) : original;
+		const body = heredocIdx >= 0 ? original.slice(heredocIdx) : "";
+		let working = shell;
 
 		// Rule A: strip cmd fallback "|| dir ..."
 		const dirFallbackRegex = /\s*\|\|\s*dir(?:\s+\S+)*\s*/gi;
-		if (dirFallbackRegex.test(cmd)) {
-			cmd = cmd.replace(dirFallbackRegex, " ").trim();
+		if (dirFallbackRegex.test(working)) {
+			working = working.replace(dirFallbackRegex, " ").trim();
 			modified = true;
 		}
 
-		// Rule B: replace nul redirects (always — safe because we anchor on the > operator)
+		// Rule B: replace nul redirects
 		const nulRedirectRegex = /(\d*>>?)\s*nul\b/gi;
-		if (nulRedirectRegex.test(cmd)) {
-			cmd = cmd.replace(nulRedirectRegex, "$1/dev/null");
+		if (nulRedirectRegex.test(working)) {
+			working = working.replace(nulRedirectRegex, "$1/dev/null");
 			modified = true;
 		}
 
-		// Rule C: replace env vars %VAR% -> $VAR (always)
-		const envFixed = fixEnvVars(cmd);
-		if (envFixed !== cmd) {
-			cmd = envFixed;
+		// Rule C: replace env vars %VAR% -> $VAR
+		const envFixed = fixEnvVars(working);
+		if (envFixed !== working) {
+			working = envFixed;
 			modified = true;
 		}
 
 		// Rule D: process compound commands (&&, ||, ;)
-		const chainFixed = processCommandChain(cmd);
-		if (chainFixed !== cmd) {
-			cmd = chainFixed;
+		const chainFixed = processCommandChain(working);
+		if (chainFixed !== working) {
+			working = chainFixed;
 			modified = true;
 		}
 
+		const cmd = working + body;
 		if (modified) {
 			event.input.command = cmd;
 			ctx.ui?.notify?.(`Git Bash fix: ${original} → ${cmd}`, "info");
 		}
 
-		// Rule E: quote balance check (blocks only genuinely broken commands)
-		if (hasUnbalancedQuotes(cmd)) {
+		// Rule E: quote balance check (shell syntax only)
+		if (hasUnbalancedQuotes(working)) {
 			return {
 				block: true,
 				reason: `Quote mismatch after sanitization. Command: ${cmd}\nPlease rewrite using single quotes for Windows paths.`,
@@ -92,9 +99,10 @@ export default function (pi: ExtensionAPI) {
 	});
 }
 
-// ── Helpers ──
+function fixBashPathToWindows(p: string): string {
+	return p.replace(/^\/([a-z])\//i, "$1:/");
+}
 
-/** Split a string into shell-like arguments respecting single/double quotes. */
 function splitArgs(str: string): string[] {
 	const args: string[] = [];
 	let current = "";
@@ -109,10 +117,7 @@ function splitArgs(str: string): string[] {
 			inDouble = !inDouble;
 			current += c;
 		} else if (/\s/.test(c) && !inSingle && !inDouble) {
-			if (current) {
-				args.push(current);
-				current = "";
-			}
+			if (current) { args.push(current); current = ""; }
 		} else {
 			current += c;
 		}
@@ -121,12 +126,10 @@ function splitArgs(str: string): string[] {
 	return args;
 }
 
-/** Strip known Windows-style /flags from token list (e.g. /y, /s, /q). */
 function stripWindowsFlags(tokens: string[]): string[] {
 	return tokens.filter((t) => !/^\/[A-Za-z]+$/.test(t));
 }
 
-/** Process command chains (&&, ||, ;) applying mappings per segment. */
 function processCommandChain(cmd: string): string {
 	const parts = cmd.split(/(\s*&&\s*|\s*\|\|\s*|\s*;\s*)/);
 	return parts
@@ -135,48 +138,32 @@ function processCommandChain(cmd: string): string {
 			if (!trimmed || /^(&&|\|\||;)$/.test(trimmed)) return part;
 
 			const firstToken = trimmed.split(/\s+/)[0].toLowerCase();
-			if (WINDOWS_UTILS.has(firstToken)) {
-				return part;
-			}
+			if (WINDOWS_UTILS.has(firstToken)) return part;
 
-			// Fix paths BEFORE mapping so applyMapping sees quoted/clean paths
 			let fixed = fixWindowsPaths(trimmed);
 			fixed = fixBackslashes(fixed);
 			const working = fixed !== trimmed ? fixed : trimmed;
 
 			const mapped = applyMapping(working);
-			if (mapped !== working) {
-				return part.replace(trimmed, mapped);
-			}
-
-			if (fixed !== trimmed) {
-				return part.replace(trimmed, fixed);
-			}
+			if (mapped !== working) return part.replace(trimmed, mapped);
+			if (fixed !== trimmed) return part.replace(trimmed, fixed);
 			return part;
 		})
 		.join("");
 }
 
-/** Map known cmd commands to bash equivalents. Only touches the start of the command. */
 function applyMapping(cmd: string): string {
 	const tokens = splitArgs(cmd);
 	const first = tokens[0].toLowerCase();
 
-	// cd /d
 	if (first === "cd" && tokens[1]?.toLowerCase() === "/d") {
 		return "cd " + tokens.slice(2).map(toBashPath).join(" ");
 	}
-
-	// cls
 	if (first === "cls") return "clear";
-
-	// echo.
 	if (first === "echo.") {
 		const rest = cmd.trim().slice(5);
 		return "echo" + (rest ? " " + rest : "");
 	}
-
-	// dir
 	if (first === "dir") {
 		const rest = tokens.slice(1);
 		const bIndex = rest.findIndex((a) => a.toLowerCase() === "/b");
@@ -186,23 +173,9 @@ function applyMapping(cmd: string): string {
 		if (hasB) return paths ? `ls -1 ${paths}` : "ls -1";
 		return paths ? `ls ${paths}` : "ls";
 	}
-
-	// copy
-	if (first === "copy") {
-		return "cp " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
-	}
-
-	// move
-	if (first === "move") {
-		return "mv " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
-	}
-
-	// del
-	if (first === "del") {
-		return "rm " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
-	}
-
-	// ren -> mv with same-directory target
+	if (first === "copy") return "cp " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
+	if (first === "move") return "mv " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
+	if (first === "del") return "rm " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
 	if (first === "ren") {
 		const args = tokens.slice(1).map(toBashPath);
 		if (args.length >= 2) {
@@ -219,34 +192,17 @@ function applyMapping(cmd: string): string {
 		}
 		return "mv " + args.join(" ");
 	}
-
-	// type
-	if (first === "type") {
-		return "cat " + tokens.slice(1).map(toBashPath).join(" ");
-	}
-
-	// more
-	if (first === "more") {
-		return "less " + tokens.slice(1).map(toBashPath).join(" ");
-	}
-
-	// xcopy
-	if (first === "xcopy") {
-		return "cp -r " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
-	}
-
+	if (first === "type") return "cat " + tokens.slice(1).map(toBashPath).join(" ");
+	if (first === "more") return "less " + tokens.slice(1).map(toBashPath).join(" ");
+	if (first === "xcopy") return "cp -r " + stripWindowsFlags(tokens.slice(1)).map(toBashPath).join(" ");
 	return cmd;
 }
 
-/** Convert %VAR% to $VAR. */
 function fixEnvVars(cmd: string): string {
 	return cmd.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_, name) => `$${name}`);
 }
 
-/** Convert C:\ style paths to /c/ style. Handles quoted and unquoted forms,
- *  including unquoted paths with spaces (greedily consumes until operator). */
 function fixWindowsPaths(cmd: string): string {
-	// Helper: convert C:\c\… mistaken paths and normal drive prefixes
 	const fixDrive = (p: string) =>
 		p
 			.replace(/([A-Za-z]):\\([a-z])\\/g, (_m, drive, letter) =>
@@ -254,39 +210,28 @@ function fixWindowsPaths(cmd: string): string {
 			)
 			.replace(/^([A-Za-z]):[/\\]/, (_m: string, drive: string) => `/${drive.toLowerCase()}/`);
 
-	// 1. Double-quoted paths: "C:\foo\bar" or "C:\foo bar\baz"
 	cmd = cmd.replace(/"([A-Za-z]:\\(?:[^"]|\\.)*)"/g, (_match, inner) => {
-		let p = inner
-			.replace(/\\"/g, '"')
-			.replace(/\/$/, ""); // strip trailing /
-		p = fixDrive(p)
-			.replace(/\\/g, "/");
+		let p = inner.replace(/\\"/g, '"').replace(/\/$/, "");
+		p = fixDrive(p).replace(/\\/g, "/");
 		if (p.includes(" ")) return `'${p}'`;
 		return p;
 	});
 
-	// 2. Unquoted paths: tokens starting with C:\ (greedily consumes spaces until operator)
 	let result = "";
 	let i = 0;
 	while (i < cmd.length) {
 		const m = cmd.slice(i).match(/^([A-Za-z]):\\((?:[^"']|\\.)+)/);
 		if (m) {
 			let pathEnd = i + m[0].length;
-			// Greedily consume space-separated fragments that look like path parts
 			while (true) {
 				const rest = cmd.slice(pathEnd);
-				// Stop at bash operators
 				if (/^\s*(&&|\|\||;|\|>|>>|>|<|2>|2>>)\s*/.test(rest)) break;
-				// Consume space + path fragment
 				const frag = rest.match(/^(\s+)([A-Za-z0-9_\-\\.\(\)\[\]{}%@!^+,=~`]+)/);
 				if (!frag) break;
 				pathEnd += frag[0].length;
 			}
 			const fullPath = cmd.slice(i, pathEnd);
-			let p = fullPath
-				.replace(/\\([ \t\n\r"'])/g, "$1")
-				.replace(/\\/g, "/")
-				.replace(/\/$/, "");
+			let p = fullPath.replace(/\\([ \t\n\r"'])/g, "$1").replace(/\\/g, "/").replace(/\/$/, "");
 			p = fixDrive(p);
 			if (p.includes(" ")) result += `'${p}'`;
 			else result += p;
@@ -299,21 +244,18 @@ function fixWindowsPaths(cmd: string): string {
 	return result;
 }
 
-/** Remove backslash escapes before ordinary characters (not inside quotes, not after $VAR). */
 function fixBackslashes(cmd: string): string {
 	return cmd.replace(/\\([^\s"'\\])/g, (match, char, offset) => {
 		const before = cmd.slice(0, offset);
-		// Do not strip backslash after an env var: $VAR\path must stay intact
 		if (/\$[A-Za-z_][A-Za-z0-9_]*$/.test(before)) return match;
 		const sgl = before.match(/'/g);
-		if (sgl && sgl.length % 2 !== 0) return match; // inside single quotes
+		if (sgl && sgl.length % 2 !== 0) return match;
 		const dbl = before.match(/"/g);
-		if (dbl && dbl.length % 2 !== 0) return match; // inside double quotes
+		if (dbl && dbl.length % 2 !== 0) return match;
 		return char;
 	});
 }
 
-/** Strip surrounding quotes from a path expression. */
 function extractRawPath(expr: string): string {
 	let p = expr.trim();
 	if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) {
@@ -322,35 +264,24 @@ function extractRawPath(expr: string): string {
 	return p;
 }
 
-/** Normalize a path expression for bash: lowercase drive, forward slashes, single quotes if needed. */
 function toBashPath(expr: string): string {
 	let p = expr.trim();
 	if ((p.startsWith('"') && p.endsWith('"')) || (p.startsWith("'") && p.endsWith("'"))) {
 		p = p.slice(1, -1);
 	}
-	p = p
-		.replace(/\\/g, "/")
-		.replace(/^([A-Za-z]):\//, (_m, drive) => `/${drive.toLowerCase()}/`)
-		.replace(/\/$/, "");
+	p = p.replace(/\\/g, "/").replace(/^([A-Za-z]):\//, (_m, drive) => `/${drive.toLowerCase()}/`).replace(/\/$/, "");
 	if (p.includes(" ")) return `'${p}'`;
 	return p;
 }
 
-/** Check for unbalanced quotes, respecting backslash escapes. */
 function hasUnbalancedQuotes(cmd: string): boolean {
 	let dbl = 0;
 	let sgl = 0;
 	let escaped = false;
 	for (let i = 0; i < cmd.length; i++) {
 		const c = cmd[i];
-		if (escaped) {
-			escaped = false;
-			continue;
-		}
-		if (c === "\\") {
-			escaped = true;
-			continue;
-		}
+		if (escaped) { escaped = false; continue; }
+		if (c === "\\") { escaped = true; continue; }
 		if (c === '"') dbl++;
 		if (c === "'") sgl++;
 	}

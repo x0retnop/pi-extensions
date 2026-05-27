@@ -16,6 +16,8 @@ export interface Hunk {
   contextPrefix?: string;
   oldBlock: string;
   newBlock: string;
+  oldLineCount: number;
+  newLineCount: number;
 }
 
 export type PatchOperation =

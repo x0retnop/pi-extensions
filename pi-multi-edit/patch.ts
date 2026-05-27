@@ -177,6 +177,8 @@ function parseHunk(path: string, cursor: LineCursor): Hunk {
     contextPrefix,
     oldBlock: oldLines.join("\n"),
     newBlock: newLines.join("\n"),
+    oldLineCount: oldLines.length,
+    newLineCount: newLines.length,
   };
 }
 
@@ -229,7 +231,7 @@ function applyHunks(filePath: string, content: string, hunks: Hunk[]): string {
       searchFrom = ctxMatch.pos + ctxMatch.matchLength;
     }
 
-    if (hunk.oldBlock === "") {
+    if (hunk.oldLineCount === 0) {
       const insertAt = hunk.contextPrefix !== undefined ? searchFrom : result.length;
       const needsNewline = insertAt > 0 && result[insertAt - 1] !== "\n";
       const prefix = needsNewline ? "\n" : "";

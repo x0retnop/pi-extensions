@@ -71,10 +71,13 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "If you have more than one edit, always use the multi parameter instead of multiple separate edit calls",
       "When most edits target the same file, set a top-level path and omit path inside individual multi items",
-      "The patch parameter is mutually exclusive with oldText/newText/multi/edits",
-      "The edits parameter is an alias for multi; either name works",
+      "The patch parameter is mutually exclusive with oldText/newText/multi/edits; edits is an alias for multi",
       "oldText must match exactly including whitespace, quotes, and trailing spaces",
-      "Patch format: wrap in *** Begin Patch ... *** End Patch. Use *** Update File:, *** Add File:, *** Delete File:. Hunks start with @@ followed by a small snippet of surrounding code to locate the change",
+      "Patch: wrap in *** Begin Patch ... *** End Patch. Use *** Update File:, *** Add File:, *** Delete File:",
+      "Patch @@ marker must contain a line of CONTEXT that appears BEFORE the change, never the changed line itself",
+      "Patch lines: '-' removes the exact file line, '+' adds a new line, ' ' is optional unchanged context",
+      "To insert new code without removing old lines, use @@ with context followed by only '+' lines",
+      "Correct: @@ function setup() {\\n-    const x = 1;\\n+    const x = 2; | Wrong: @@ -    const x = 1;\\n-    const x = 1;",
     ],
     parameters: multiEditSchema,
 
