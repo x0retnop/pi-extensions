@@ -1,5 +1,4 @@
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 
@@ -28,6 +27,8 @@ interface GrepParams {
   type?: string;
   output_mode?: "content" | "files_with_matches" | "count_matches";
   multiline?: boolean;
+  fixed_strings?: boolean;
+  word_match?: boolean;
   "-i"?: boolean;
   "-n"?: boolean;
   "-C"?: number;
@@ -43,20 +44,45 @@ function resolvePath(raw: string | undefined): string {
   return trimmed;
 }
 
+function isRegexError(stderr: string): boolean {
+  const lower = stderr.toLowerCase();
+  return (
+    lower.includes("regex parse error") ||
+    lower.includes("error parsing regex") ||
+    lower.includes("unrecognized escape") ||
+    lower.includes("invalid regex") ||
+    lower.includes("regex syntax error")
+  );
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "grep",
     label: "Grep",
     description:
-      "Fast structured search via ripgrep. Respects .gitignore, skips hidden files, " +
-      "supports filters by glob/type, context lines, case-insensitive search, and multiple output modes. " +
-      "Safer and easier to parse than raw shell grep.",
+      "Fast structured search via ripgrep. Respects .gitignore, supports glob/type filters, " +
+      "context lines, case-insensitive search, and multiple output modes.\n\n" +
+      "CRITICAL: `pattern` is a REGEX by default. " +
+      "If searching for literal code/text that contains regex metacharacters — `().[]{}*+?^$\\|` — " +
+      "set `fixed_strings: true` to avoid parse errors and unexpected matches.\n\n" +
+      "Whitespace: source files may use tabs instead of spaces. " +
+      "If an indented search returns nothing, try `fixed_strings: true` with the exact text copied from the file, " +
+      "or use a regex like `^\\s+foo` instead of literal spaces/tabs.\n\n" +
+      "Use `word_match: true` to match whole words only (e.g. `name` will not match `namespace`).\n\n" +
+      "Examples:\n" +
+      "- Find all TODOs: { pattern: 'TODO', output_mode: 'files_with_matches' }\n" +
+      "- Exact code snippet: { pattern: 'function foo(', fixed_strings: true }\n" +
+      "- Regex + file type: { pattern: 'class\\s+User', type: 'ts' }\n" +
+      "- Whole word case-insensitive: { pattern: 'getUser', word_match: true, '-i': true }",
     parameters: {
       type: "object",
       properties: {
         pattern: {
           type: "string",
-          description: "Regular expression to search for",
+          description:
+            "Regular expression to search for (treated as regex by default). " +
+            "If the value contains regex metacharacters such as . ( ) [ ] { } * + ? ^ $ \\ | and you want an exact literal match, " +
+            "set `fixed_strings: true`.",
         },
         path: {
           type: "string",
@@ -81,6 +107,17 @@ export default function (pi: ExtensionAPI) {
         multiline: {
           type: "boolean",
           description: "Enable multiline matching (rg --multiline). Default false.",
+        },
+        fixed_strings: {
+          type: "boolean",
+          description:
+            "Treat pattern as a literal string, not a regex (rg -F). " +
+            "Use this when searching for exact code snippets or text that contains regex special characters.",
+        },
+        word_match: {
+          type: "boolean",
+          description:
+            "Match only whole words (rg -w). Useful to avoid false positives, e.g. searching for 'name' won't match 'namespace'.",
         },
         "-i": {
           type: "boolean",
@@ -124,6 +161,8 @@ export default function (pi: ExtensionAPI) {
       const cwd = process.cwd();
       const args: string[] = ["--json", "--color", "never"];
 
+      if (params.fixed_strings) args.push("-F");
+      if (params.word_match) args.push("-w");
       if (params.multiline) args.push("--multiline");
       if (params["-i"]) args.push("-i");
       if (params["-n"] !== false) args.push("--line-number");
@@ -247,11 +286,28 @@ export default function (pi: ExtensionAPI) {
             details: { count: 0 },
           };
         }
+
+        const stderr = err.stderr || "";
+        if (isRegexError(stderr) && !params.fixed_strings) {
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Grep regex error: ${stderr}\n\n` +
+                  `Hint: Your pattern contains characters that are invalid or special in regex. ` +
+                  `If you are searching for literal text/code, retry with "fixed_strings: true".`,
+              },
+            ],
+            details: { error: stderr, hint: "try fixed_strings: true" },
+          };
+        }
+
         return {
           content: [
-            { type: "text", text: `Grep error: ${err.stderr || err.message}` },
+            { type: "text", text: `Grep error: ${stderr || err.message}` },
           ],
-          details: { error: err.stderr || err.message },
+          details: { error: stderr || err.message },
         };
       }
     },

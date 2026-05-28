@@ -9,6 +9,8 @@ interface ChangePart {
   value: string;
 }
 
+const MAX_FILE_LINES_FOR_DIFF = 300;
+
 function diffLines(oldArr: string[], newArr: string[]): ChangePart[] {
   const m = oldArr.length;
   const n = newArr.length;
@@ -23,10 +25,7 @@ function diffLines(oldArr: string[], newArr: string[]): ChangePart[] {
 
   const MAX_CELLS = 500_000;
   if (m * n > MAX_CELLS) {
-    return [
-      { removed: true, value: oldArr.map((l) => l + "\n").join("") },
-      { added: true, value: newArr.map((l) => l + "\n").join("") },
-    ];
+    return [];
   }
 
   const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
@@ -167,6 +166,12 @@ export function generateDiffString(
 ): { diff: string; firstChangedLine: number | undefined } {
   const oldLines = oldContent.split("\n");
   const newLines = newContent.split("\n");
+  const m = oldLines.length;
+  const n = newLines.length;
+
+  if (m > MAX_FILE_LINES_FOR_DIFF || n > MAX_FILE_LINES_FOR_DIFF) {
+    return { diff: `--- old (${m} lines)\n+++ new (${n} lines)`, firstChangedLine: undefined };
+  }
 
   const parts = diffLines(oldLines, newLines);
   const { entries, firstChangedLine } = expand(parts);

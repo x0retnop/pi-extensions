@@ -55,6 +55,13 @@ const multiEditSchema = Type.Object({
   ),
 });
 
+function clampDiff(diff: string | undefined, maxLines = 200): string {
+  if (!diff) return "";
+  const lines = diff.split("\n");
+  if (lines.length <= maxLines) return diff;
+  return lines.slice(0, maxLines).join("\n") + "\n... (diff truncated)";
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "edit",
@@ -122,10 +129,12 @@ export default function (pi: ExtensionAPI) {
         const summary = applied
           .map((r, i) => `${i + 1}. ${r.message}`)
           .join("\n");
-        const combinedDiff = applied
-          .filter((r) => r.diff)
-          .map((r) => `File: ${r.path}\n${r.diff}`)
-          .join("\n\n");
+        const combinedDiff = clampDiff(
+          applied
+            .filter((r) => r.diff)
+            .map((r) => `File: ${r.path}\n${r.diff}`)
+            .join("\n\n"),
+        );
         const firstChangedLine = applied.find(
           (r) => r.firstChangedLine !== undefined,
         )?.firstChangedLine;
@@ -227,16 +236,18 @@ export default function (pi: ExtensionAPI) {
         return {
           content: [{ type: "text" as const, text: r.message }],
           details: {
-            diff: r.diff ?? "",
+            diff: clampDiff(r.diff ?? ""),
             firstChangedLine: r.firstChangedLine,
           },
         };
       }
 
-      const combinedDiff = results
-        .filter((r) => r?.diff)
-        .map((r) => `File: ${r.path}\n${r.diff}`)
-        .join("\n\n");
+      const combinedDiff = clampDiff(
+        results
+          .filter((r) => r?.diff)
+          .map((r) => `File: ${r.path}\n${r.diff}`)
+          .join("\n\n"),
+      );
 
       const firstChanged = results.find(
         (r) => r?.firstChangedLine !== undefined,
