@@ -36,11 +36,17 @@ export default function (pi: ExtensionAPI) {
 	}));
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (event.input && typeof event.input.path === "string") {
-			const fixedPath = fixBashPathToWindows(event.input.path);
-			if (fixedPath !== event.input.path) {
-				event.input.path = fixedPath;
-				ctx.ui?.notify?.(`Path fix: ${event.input.path} → ${fixedPath}`, "info");
+		// Fix bash-style /c/... paths in read/write/edit tools.
+		// Pi tools use various property names for the file path.
+		const pathKeys = ["path", "filePath", "filepath", "targetPath", "file", "target", "filename"] as const;
+		for (const key of pathKeys) {
+			if (event.input && typeof event.input[key] === "string") {
+				const originalPath = event.input[key];
+				const fixedPath = fixBashPathToWindows(originalPath);
+				if (fixedPath !== originalPath) {
+					event.input[key] = fixedPath;
+					ctx.ui?.notify?.(`Path fix: ${originalPath} → ${fixedPath}`, "info");
+				}
 			}
 		}
 
@@ -130,6 +136,13 @@ function stripWindowsFlags(tokens: string[]): string[] {
 	return tokens.filter((t) => !/^\/[A-Za-z]+$/.test(t));
 }
 
+/** Commands whose quoted arguments contain inline code, not bash paths. */
+const INLINE_INTERPRETERS = new Set(["python", "python3", "py", "node", "nodejs"]);
+
+function hasInlineFlag(tokens: string[]): boolean {
+	return tokens.some((t) => t === "-c" || t === "-e" || t === "--eval" || t === "-exec");
+}
+
 function processCommandChain(cmd: string): string {
 	const parts = cmd.split(/(\s*&&\s*|\s*\|\|\s*|\s*;\s*)/);
 	return parts
@@ -137,10 +150,15 @@ function processCommandChain(cmd: string): string {
 			const trimmed = part.trim();
 			if (!trimmed || /^(&&|\|\||;)$/.test(trimmed)) return part;
 
-			const firstToken = trimmed.split(/\s+/)[0].toLowerCase();
+			const tokens = splitArgs(trimmed);
+			const firstToken = tokens[0].toLowerCase();
 			if (WINDOWS_UTILS.has(firstToken)) return part;
 
-			let fixed = fixWindowsPaths(trimmed);
+			// Do not convert Windows paths inside inline script arguments
+			// (e.g. python -c "p = r'C:\foo'" → Python needs C:\, not /c/).
+			const isInlineScript = INLINE_INTERPRETERS.has(firstToken) && hasInlineFlag(tokens);
+
+			let fixed = isInlineScript ? trimmed : fixWindowsPaths(trimmed);
 			fixed = fixBackslashes(fixed);
 			const working = fixed !== trimmed ? fixed : trimmed;
 

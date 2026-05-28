@@ -76,7 +76,7 @@ export default function toolDisplayExtension(pi: ExtensionAPI): void {
     }
   };
 
-  registerToolDisplayOverrides(pi, getEffectiveConfig);
+  const refreshToolOverrides = registerToolDisplayOverrides(pi, getEffectiveConfig);
   registerAssistantMessageStyling(pi);
   registerNativeUserMessageBox(pi, getConfig);
   registerToolDisplayCommand(pi, { getConfig, setConfig, getCapabilities });
@@ -85,6 +85,7 @@ export default function toolDisplayExtension(pi: ExtensionAPI): void {
 
   pi.on("session_start", async (_event, ctx) => {
     refreshCapabilities();
+    refreshToolOverrides();
     if (pendingLoadError) {
       ctx.ui.notify(pendingLoadError, "warning");
       pendingLoadError = undefined;
@@ -93,5 +94,6 @@ export default function toolDisplayExtension(pi: ExtensionAPI): void {
 
   pi.on("before_agent_start", async () => {
     refreshCapabilities();
+    refreshToolOverrides();
   });
 }

@@ -1,0 +1,16 @@
+{
+  "name": "pi-session-memory",
+  "version": "0.1.0",
+  "description": "Semantic search over past Pi agent sessions via 0x010 Session Vector Index",
+  "type": "module",
+  "keywords": ["pi-package", "pi", "extension", "session-memory", "vector-search"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}

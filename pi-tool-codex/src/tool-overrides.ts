@@ -1367,7 +1367,7 @@ function renderMcpResult(
 export function registerToolDisplayOverrides(
   pi: ExtensionAPI,
   getConfig: ConfigGetter,
-): void {
+): () => void {
   const bootstrapTools = getBuiltInTools(process.cwd());
   const builtInPromptMetadata = {
     read: extractPromptMetadata(bootstrapTools.read),
@@ -1399,12 +1399,14 @@ export function registerToolDisplayOverrides(
   function getToolRecord(pi: ExtensionAPI, name: string): Record<string, unknown> | undefined {
     try {
       const all = pi.getAllTools();
+      let lastMatch: Record<string, unknown> | undefined;
       for (const candidate of all) {
         const record = toRecord(candidate);
         if (record.name === name) {
-          return record;
+          lastMatch = record;
         }
       }
+      return lastMatch;
     } catch {
       // ignore
     }
@@ -2161,4 +2163,6 @@ export function registerToolDisplayOverrides(
     wrapGrepTool();
     registerMcpToolOverrides();
   });
+
+  return wrapEditWriteTools;
 }

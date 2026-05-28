@@ -17,9 +17,10 @@ When the agent emits a `bash` tool call on Windows, this extension intercepts an
 | Strips `cmd` fallbacks | `ls ... 2>nul \|\| dir ...` → `ls ...` |
 | Replaces `cmd` redirects | `2>nul` → `2>/dev/null` |
 | Replaces `dir` with `ls` | `dir "path" /b` → `ls -1 'path'` |
-| Converts Windows paths | `"C:\\Users\\name"` → `/c/Users/name` |
+| Converts Windows paths in bash args | `"C:\\Users\\name"` → `/c/Users/name` |
 | Removes bad backslash escapes | `C:\\foo` → `C:/foo` |
 | Preserves heredoc bodies | `python <<'EOF' ... EOF` — data inside heredoc is left untouched |
+| Preserves inline script paths | `python -c "p = r'C:\\foo'"` — `C:\` inside code is not converted to `/c/` |
 | Blocks unbalanced quotes | Returns a block with guidance if quotes are still mismatched |
 
 It also injects a lightweight ephemeral hint at `before_agent_start` to remind the model of Git Bash conventions without bloating the system prompt.
@@ -28,6 +29,8 @@ It also injects a lightweight ephemeral hint at `before_agent_start` to remind t
 
 - No-op on non-Windows platforms (`process.platform !== "win32"`).
 - **Heredoc isolation** — anything after `<<` (e.g. `python <<EOF`, `cat <<'PYEOF'`) is treated as data and is never modified by sanitizers or quote-balance checks.
+- **Inline script isolation** — arguments to `python -c`, `node -e`, etc. are not treated as bash paths, so Windows paths inside code strings are preserved.
+- **read/write/edit path fix** — converts `/c/...` to `c:/...` in **all** path properties (`path`, `filePath`, `filepath`, `targetPath`, `file`, `target`, `filename`) so Pi's built-in tools work correctly on Windows.
 - Changes are notified via `ctx.ui.notify` so you can see what was rewritten.
 - If quotes remain unbalanced in the **shell portion** after sanitization, the command is blocked and the model is asked to rewrite it.
 

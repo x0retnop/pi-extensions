@@ -504,7 +504,7 @@ function parseDiff(diffText: string): ParsedDiff {
 		}
 
 		if (/^\s+\.{3}$/.test(rawLine)) {
-			hunkIndex = ensureImplicitHunk(hunkIndex);
+			hunkIndex = ensureImplicitHunk(hunkIndex) + 1;
 			stats.hunks = Math.max(stats.hunks, hunkIndex);
 			entries.push({ kind: "hunk", raw: rawLine, hunkIndex });
 			continue;
@@ -2100,6 +2100,36 @@ export function renderEditDiffResult(
 
 	if (parsed.entries.length === 0) {
 		return new Text(theme.fg("muted", `${TOOL_RESULT_INDENT}└ no diff data`), 0, 0);
+	}
+
+	const MAX_EDIT_DIFF_LINES = 4000;
+	const diffLineCount = diffText.split("\n").length;
+	if (diffLineCount > MAX_EDIT_DIFF_LINES) {
+		return {
+			render(width: number): string[] {
+				const safeWidth = normalizeDiffRenderWidth(width);
+				const candidates = [
+					`${TOOL_RESULT_INDENT}└ edit diff omitted (${diffLineCount} lines)`,
+					`${TOOL_RESULT_INDENT}└ edit diff omitted`,
+					"diff omitted",
+					"…",
+				];
+				let text = candidates[candidates.length - 1] ?? "";
+				for (const candidate of candidates) {
+					if (visibleWidth(candidate) <= safeWidth) {
+						text = candidate;
+						break;
+					}
+				}
+				return [
+					clampDiffLineToWidth(
+						stabilizeBackgroundResets(theme.fg("warning", text)),
+						safeWidth,
+					),
+				];
+			},
+			invalidate() {},
+		};
 	}
 
 	const splitRows = buildSplitRows(parsed.entries);
