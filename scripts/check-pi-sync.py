@@ -5,9 +5,9 @@ Mini-utility for the coding agent. Run this after a Pi CLI update to decide
 whether local extensions need code changes.
 
 What it does:
-- Detects the locally installed Pi version (via node_modules or package.json).
+- Detects the installed Pi version (global npm/pnpm > local node_modules > package.json).
 - Fetches the upstream CHANGELOG from the Pi mono-repo.
-- Lists releases newer than your local version.
+- Lists releases newer than your installed version.
 - Scans local *.ts / *.json for known obsolete patterns (renamed packages,
   deprecated API keys, etc.).
 - Flags CHANGELOG red-flag terms that may affect extensions.
@@ -23,6 +23,7 @@ Usage:
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -58,14 +59,58 @@ RED_FLAG_TERMS = [
     "renderShell",
 ]
 
+EXCLUDED_SCAN_PATHS = {
+    "node_modules",
+    ".git",
+    "dist",
+    ".agents",
+    "package-lock.json",
+    ".package-lock.json",
+}
+
+
+def _parse_npm_json(stdout: str) -> str | None:
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    deps = data.get("dependencies", {})
+    pkg = deps.get("@earendil-works/pi-coding-agent")
+    if isinstance(pkg, dict):
+        return pkg.get("version")
+    return None
+
 
 def get_local_pi_version():
-    # Try node_modules first
+    # 1. Try globally installed npm/pnpm/bun package
+    #    Use shutil.which so Windows finds .cmd shims (npm.CMD etc.).
+    for pkg_mgr, raw_cmd in (
+        ("npm", ["npm", "list", "-g", "@earendil-works/pi-coding-agent", "--depth=0", "--json"]),
+        ("pnpm", ["pnpm", "list", "-g", "@earendil-works/pi-coding-agent", "--json", "--depth", "0"]),
+        ("bun", ["bun", "pm", "ls", "-g", "@earendil-works/pi-coding-agent", "--json"]),
+    ):
+        try:
+            exe = shutil.which(raw_cmd[0])
+            if not exe:
+                continue
+            list_cmd = [exe] + raw_cmd[1:]
+            cp = subprocess.run(list_cmd, capture_output=True, text=True, timeout=15)
+            if cp.returncode in (0, 1):
+                ver = _parse_npm_json(cp.stdout)
+                if ver:
+                    return ver, f"global {pkg_mgr}"
+        except Exception:
+            pass
+
+    # 2. Try local node_modules (dev checkout)
     nm = Path("node_modules/@earendil-works/pi-coding-agent/package.json")
     if nm.exists():
         data = json.loads(nm.read_text(encoding="utf-8"))
-        return data.get("version")
-    # Fallback to root package.json peerDependencies
+        ver = data.get("version")
+        if ver:
+            return ver, "local node_modules"
+
+    # 3. Fallback to root package.json peerDependencies
     root = Path("package.json")
     if root.exists():
         data = json.loads(root.read_text(encoding="utf-8"))
@@ -73,9 +118,9 @@ def get_local_pi_version():
         for key in ("@earendil-works/pi-coding-agent", "@mariozechner/pi-coding-agent"):
             if key in peer:
                 ver = peer[key]
-                if ver != "*":
-                    return ver
-    return None
+                if ver and ver != "*":
+                    return ver, "package.json peerDependencies"
+    return None, None
 
 
 def fetch_changelog():
@@ -101,12 +146,20 @@ def parse_versions(changelog):
     return versions
 
 
+def _should_scan_file(path: Path) -> bool:
+    for part in path.parts:
+        if part in EXCLUDED_SCAN_PATHS:
+            return False
+    if path.name in EXCLUDED_SCAN_PATHS:
+        return False
+    return True
+
+
 def scan_local_obsoletes():
     results = {}
     base = Path(".")
     ts_files = list(base.rglob("*.ts")) + list(base.rglob("*.json"))
-    # Exclude node_modules
-    ts_files = [f for f in ts_files if "node_modules" not in f.parts]
+    ts_files = [f for f in ts_files if _should_scan_file(f)]
     for pat, desc in OBSOLETE_PATTERNS.items():
         hits = []
         for f in ts_files:
@@ -137,7 +190,7 @@ def rg_local(pattern):
     # Fallback
     hits = []
     for f in Path(".").rglob("*.ts"):
-        if "node_modules" in f.parts:
+        if not _should_scan_file(f):
             continue
         try:
             if pattern in f.read_text(encoding="utf-8"):
@@ -152,11 +205,11 @@ def main():
     print("Pi CLI / Extensions Sync Check")
     print("=" * 60)
 
-    local_ver = get_local_pi_version()
+    local_ver, local_source = get_local_pi_version()
     if not local_ver:
         print("ERROR: Could not determine local Pi version.")
         sys.exit(1)
-    print(f"Local Pi version: {local_ver}")
+    print(f"Installed Pi version: {local_ver}  (source: {local_source})")
 
     print("\nFetching CHANGELOG...")
     try:
@@ -178,7 +231,7 @@ def main():
 
     newer = [(v, s, t) for v, s, t in versions if v > local_tuple]
     if not newer:
-        print("Local version matches or exceeds latest in CHANGELOG. Nothing to do.")
+        print("Installed version matches or exceeds latest in CHANGELOG. Nothing to do.")
         return
 
     print(f"\nFound {len(newer)} newer release(s) in CHANGELOG:")

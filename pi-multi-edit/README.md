@@ -5,7 +5,8 @@ Replaces the built-in `edit` tool with a batch-capable version.
 ## What it does
 
 - **Single edit** — classic `path` + `oldText` + `newText`, fully backward-compatible.
-- **Batch (`multi`)** — apply many edits across one or more files in a single tool call.
+- **Single-file batch (`edits`)** — apply many edits to one file using a top-level `path`.
+- **Multi-file batch (`multi`)** — apply edits across one or more files in a single tool call; each item carries its own `path`.
 - **Patch mode** — Codex-style `*** Begin Patch … *** End Patch` payloads with `Add File`, `Delete File`, and `Update File` operations.
 
 All mutations run a **preflight pass** on an in-memory snapshot first. If any replacement fails, no real file is touched. Both batch and patch modes are **fully atomic**: if any edit or patch operation fails during real execution, all changes are rolled back automatically.
@@ -22,10 +23,11 @@ Or copy the folder into your Pi extensions directory and `/reload`.
 
 | Param | Type | Description |
 |-------|------|-------------|
-| `path` | `string?` | Target file, or default for `multi` items |
-| `oldText` | `string?` | Exact text to replace |
-| `newText` | `string?` | Replacement text |
-| `multi` | `array?` | List of `{ path?, oldText, newText }` |
+| `path` | `string?` | Target file for classic mode or `edits` batch |
+| `oldText` | `string?` | Exact text to replace (classic mode) |
+| `newText` | `string?` | Replacement text (classic mode) |
+| `edits` | `array?` | Batch edits `{ oldText, newText }` within a single file (requires top-level `path`) |
+| `multi` | `array?` | Multi-file edits `{ path, oldText, newText }` (each item needs its own `path`) |
 | `patch` | `string?` | Codex-style patch (mutually exclusive with the rest) |
 
 ## Examples
@@ -35,12 +37,22 @@ Single:
 { "path": "src/index.ts", "oldText": "const foo = 1;", "newText": "const foo = 2;" }
 ```
 
-Batch:
+Single-file batch:
 ```json
 {
   "path": "src/utils.ts",
-  "multi": [
+  "edits": [
     { "oldText": "import a from 'a';", "newText": "import a from '@scope/a';" },
+    { "oldText": "const x = 0;", "newText": "const x = 42;" }
+  ]
+}
+```
+
+Multi-file batch:
+```json
+{
+  "multi": [
+    { "path": "src/utils.ts", "oldText": "import a from 'a';", "newText": "import a from '@scope/a';" },
     { "path": "src/other.ts", "oldText": "const x = 0;", "newText": "const x = 42;" }
   ]
 }

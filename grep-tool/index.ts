@@ -4,6 +4,8 @@ import type { ExtensionAPI, ExtensionContext, AgentToolUpdateCallback } from "@e
 
 const execFileAsync = promisify(execFile);
 
+const DEFAULT_HEAD_LIMIT = 200;
+
 function findRg(): string | null {
   try {
     execFileSync("rg", ["--version"], { stdio: "ignore", windowsHide: true });
@@ -142,7 +144,7 @@ export default function (pi: ExtensionAPI) {
         },
         head_limit: {
           type: "integer",
-          description: "Limit total results to first N matches",
+          description: "Limit total results to first N matches. If omitted, defaults to 200 to avoid flooding the context window.",
         },
         include_ignored: {
           type: "boolean",
@@ -241,16 +243,25 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        const headLimit = params.head_limit;
+        const userLimit = params.head_limit;
+        const effectiveLimit = userLimit ?? DEFAULT_HEAD_LIMIT;
         const mode = params.output_mode || "content";
+
+        function makeHint(count: number): string {
+          if (userLimit !== undefined || count <= effectiveLimit) return "";
+          return (
+            `\n\n[Hint: Results limited to ${DEFAULT_HEAD_LIMIT} matches. ` +
+            `The pattern may be too broad. Consider: a more specific regex, ` +
+            `a glob filter (e.g. "*.ts"), a narrower path, or word_match: true.]`
+          );
+        }
 
         if (mode === "files_with_matches") {
           const fileList = Array.from(files);
-          const limited = headLimit ? fileList.slice(0, headLimit) : fileList;
+          const limited = fileList.slice(0, effectiveLimit);
+          const text = limited.join("\n") || "(no matches)";
           return {
-            content: [
-              { type: "text", text: limited.join("\n") || "(no matches)" },
-            ],
+            content: [{ type: "text", text: text + makeHint(files.size) }],
             details: { files: limited, count: limited.length },
           };
         }
@@ -262,7 +273,7 @@ export default function (pi: ExtensionAPI) {
           };
         }
 
-        const limitedMatches = headLimit ? matches.slice(0, headLimit) : matches;
+        const limitedMatches = matches.slice(0, effectiveLimit);
         const text = limitedMatches.length
           ? limitedMatches
               .map((m) => `${m.file}:${m.line_number}: ${m.content}`)
@@ -270,7 +281,7 @@ export default function (pi: ExtensionAPI) {
           : "(no matches)";
 
         return {
-          content: [{ type: "text", text }],
+          content: [{ type: "text", text: text + makeHint(matches.length) }],
           details: { matches: limitedMatches, count: limitedMatches.length },
         };
       } catch (err: any) {

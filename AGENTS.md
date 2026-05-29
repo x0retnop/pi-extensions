@@ -28,6 +28,7 @@ Dev collection of **Pi Coding Agent** extensions. Each top-level folder with `pa
 | API types, events, UI | `docs/pi-quickref.md` |
 | Where Pi types live locally | `docs/pi-local-map.md` |
 | What to check after Pi CLI update | `docs/pi-version-sync.md` |
+| Pi changelog / release notes | `https://pi.dev/changelog` |
 | Create a new extension | `docs/creating-extensions.md` |
 | Copy-paste snippets | `docs/patterns.md` |
 | Current active extensions / settings | `~/.pi/agent/extensions/`, `~/.pi/agent/settings.json` |

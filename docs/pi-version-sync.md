@@ -2,11 +2,15 @@
 
 How to check if extensions need updates after a Pi CLI release, without burning tokens.
 
-<!-- BASELINE: 0.74.0 — collection tested and working with this version. Do not analyze versions at or below this baseline. -->
+<!-- BASELINE: 0.76.0 — collection tested and working with this version. Do not analyze versions at or below this baseline. -->
 
 ## When to run this
 
 Only when the user explicitly says Pi was updated, or asks whether to upgrade.
+
+## Why both a script and a web check?
+
+The script is a **fast local linter** (≤ 2 s): it finds version delta and obsolete code patterns in your extensions automatically. The agent's web check is a **judgement layer**: it reads the CHANGELOG to decide whether those deltas actually matter for this collection. They complement each other — don't drop the script just because the agent can browse the web.
 
 ## Core rule
 
@@ -17,15 +21,15 @@ Only look at releases **newer** than the baseline.
 
 ### 1. Automated delta check
 
-Run `python scripts/check-pi-sync.py` from the repository root. It prints:
-- Newer releases above the locally installed version.
+Run `python scripts/check-pi-sync.py` from the repository root. It detects the **globally installed** Pi version (npm/pnpm/bun → local `node_modules` → `package.json` fallback) and prints:
+- Newer releases above the installed version.
 - Known obsolete patterns found in local extensions.
 
-Use this output as the starting point.
+Use this output as the starting point. The script is a fast local linter; the agent still reads the CHANGELOG delta to judge red flags.
 
 ### 2. Is the upgrade worth it? (Agent assessment)
 
-Read the CHANGELOG delta **above baseline**. Give the user a one-line verdict per flagged area:
+Read the CHANGELOG delta **above baseline** at **`https://pi.dev/changelog`**. Use the version entry summaries (and the linked full release notes if needed) to assess red flags. Give the user a one-line verdict per flagged area:
 
 | Verdict | When to say it |
 |---|---|
