@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { applyClassicEdits, formatResults } from "./classic.js";
@@ -76,6 +77,37 @@ function clampDiff(diff: string | undefined, maxLines = 200): string {
   return lines.slice(0, maxLines).join("\n") + "\n... (diff truncated)";
 }
 
+function shortenPath(p: string | undefined): string {
+  if (!p) return "...";
+  const home = typeof process !== "undefined" ? process.env.HOME || process.env.USERPROFILE : "";
+  if (home && p.startsWith(home)) return `~${p.slice(home.length)}`;
+  return p;
+}
+
+interface RenderCtx {
+  isPartial: boolean;
+  executionStarted: boolean;
+  isError: boolean;
+}
+
+function makePlainText(text: string) {
+  return {
+    render(width: number): string[] {
+      return text ? [truncateToWidth(text, width, "...")] : [];
+    },
+    invalidate() {},
+  };
+}
+
+function makeWrappedText(lines: string[]) {
+  return {
+    render(width: number): string[] {
+      return lines.map((line) => truncateToWidth(line, width, "..."));
+    },
+    invalidate() {},
+  };
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "edit",
@@ -104,11 +136,42 @@ export default function (pi: ExtensionAPI) {
       "Correct: @@ function setup() {\\n-    const x = 1;\\n+    const x = 2; | Wrong: @@ -    const x = 1;\\n-    const x = 1;",
     ],
     parameters: multiEditSchema,
+    renderShell: "self",
+
+    renderCall(args: any, theme: any, context: RenderCtx) {
+      const count =
+        args.patch ? "patch" :
+        Array.isArray(args.multi) ? `${args.multi.length} file${args.multi.length === 1 ? "" : "s"}` :
+        Array.isArray(args.edits) ? `${args.edits.length} change${args.edits.length === 1 ? "" : "s"}` :
+        "1 change";
+      const target = shortenPath(args.path || (Array.isArray(args.multi) && args.multi[0]?.path) || undefined);
+      const label = `${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
+      return makePlainText(label);
+    },
+
+    renderResult(result: any, options: any, _theme: any, _context: any) {
+      if (options.isPartial) {
+        return makePlainText("");
+      }
+
+      // Prefer diff from details; fall back to content text
+      const diff = result.details?.diff;
+      if (typeof diff === "string" && diff.trim()) {
+        const lines = clampDiff(diff).split("\n");
+        return makeWrappedText(lines);
+      }
+
+      const text = result.content?.[0]?.text;
+      if (typeof text === "string" && text.trim()) {
+        return makeWrappedText(text.split("\n"));
+      }
+
+      return makePlainText("");
+    },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const { path, oldText, newText, multi, edits: rawEdits, patch } = params;
 
-      // Defensive: treat both null and undefined as absent.
       const p = path ?? undefined;
       const o = oldText ?? undefined;
       const n = newText ?? undefined;
@@ -150,6 +213,15 @@ export default function (pi: ExtensionAPI) {
         const summary = applied
           .map((r, i) => `${i + 1}. ${r.message}`)
           .join("\n");
+        const combinedDiff = clampDiff(
+          applied
+            .filter((r) => r.diff)
+            .map((r) => `File: ${r.path}\n${r.diff}`)
+            .join("\n\n"),
+        );
+        const firstChangedLine = applied.find(
+          (r) => r.firstChangedLine !== undefined,
+        )?.firstChangedLine;
         return {
           content: [
             {
@@ -157,7 +229,10 @@ export default function (pi: ExtensionAPI) {
               text: `Applied patch with ${applied.length} operation(s).\n${summary}`,
             },
           ],
-          details: {},
+          details: {
+            diff: combinedDiff,
+            firstChangedLine,
+          },
         };
       }
 
@@ -255,10 +330,23 @@ export default function (pi: ExtensionAPI) {
         const r = results[0];
         return {
           content: [{ type: "text" as const, text: r.message }],
-          details: {},
+          details: {
+            diff: clampDiff(r.diff ?? ""),
+            firstChangedLine: r.firstChangedLine,
+          },
         };
       }
 
+      const combinedDiff = clampDiff(
+        results
+          .filter((r) => r?.diff)
+          .map((r) => `File: ${r.path}\n${r.diff}`)
+          .join("\n\n"),
+      );
+
+      const firstChanged = results.find(
+        (r) => r?.firstChangedLine !== undefined,
+      )?.firstChangedLine;
       const summary = results
         .map((r, i) => `${i + 1}. ${r.message}`)
         .join("\n");
@@ -270,7 +358,10 @@ export default function (pi: ExtensionAPI) {
 
       return {
         content: [{ type: "text" as const, text: statusLine }],
-        details: {},
+        details: {
+          diff: combinedDiff,
+          firstChangedLine: firstChanged,
+        },
       };
     },
   });

@@ -92,14 +92,16 @@ export default function (pi: ExtensionAPI) {
     name: "search_sessions",
     label: "Search Sessions",
     description:
-      "Semantic search over the agent's historical conversation sessions (.jsonl). Finds solutions, configs, and code patterns from previous work. Returns preview excerpts only — follow up with get_session_content to read the chosen session.",
+      "Search the user's past conversation history for previously discussed solutions, configurations, code patterns, or decisions. Returns short preview excerpts only — always follow up with get_session_content to read the full session.",
     promptSnippet:
-      "Use to recall past agent work, forgotten configs, or previous solutions. One call returns preview hits. Always follow up with get_session_content(hitIndex) to read the session.",
+      "Use when the user asks about something from a previous conversation, wants to recall how a problem was solved, or refers to past work. One call returns preview hits. Always follow up with get_session_content(hitIndex) if the user wants details.",
     promptGuidelines: [
-      "Trigger on phrases like 'find in sessions', 'recall', 'where did we', 'how did I before', 'как я делал раньше', 'где мы обсуждали'.",
-      "Always follow search_sessions with get_session_content(hitIndex=0) if the user wants details. Do not guess from training data.",
-      "Score is cosine similarity [-1, 1]. Higher is better. Values > 0.5 are usually strongly relevant. Compare relative magnitudes within the result set.",
-      "Never use the raw read tool on .jsonl files — session files can be 50 MB+. Always use get_session_content.",
+      "TRIGGERS — call this tool when the user uses phrases like: 'recall', 'remember', 'where did we', 'how did I before', 'as we discussed earlier', 'in a previous session', 'как я делал раньше', 'в прошлый раз', 'где мы обсуждали', 'напомни', 'найди в истории'.",
+      "TOPIC INDICATORS — also trigger when the user refers to: a past project, a config from before, a previous fix, earlier setup steps, old decisions, or anything that happened in prior conversations.",
+      "WORKFLOW — always follow search_sessions with get_session_content(hitIndex=0) if the user wants details. Never guess from training data; the truth is in the indexed sessions.",
+      "QUERY QUALITY — the query parameter should use specific technical terms, file names, error messages, or framework names. Avoid vague single words. Example: 'NextAuth credentials provider setup' is better than 'auth'.",
+      "SCORE INTERPRETATION — score is cosine similarity [-1, 1]. Higher is better. Values > 0.5 are usually strongly relevant. Compare relative magnitudes within the result set.",
+      "NEVER use the raw read tool on .jsonl session files — they can be 50 MB+. Always use get_session_content.",
     ],
     parameters: Type.Object({
       query: Type.String({ description: "What to search for. Be specific — use technical terms, file names, or problem descriptions." }),
@@ -184,12 +186,13 @@ export default function (pi: ExtensionAPI) {
     name: "get_session_content",
     label: "Get Session Content",
     description:
-      "Safely read a historical agent session (.jsonl) with server-side limits. Use as the second step after search_sessions. Retrieves actual conversation messages from a hit. Never use raw read on .jsonl files.",
+      "Read a specific past conversation session safely, with hard size limits. Use only as the second step after search_sessions (via hitIndex) or when the user provides an exact session path.",
     promptSnippet:
-      "Use after search_sessions. Pass hitIndex from the last search, or an explicit sourcePath. Hard limits prevent context overflow.",
+      "Second step after search_sessions. Pass hitIndex from the last search result, or sourcePath if explicitly given. Hard limits prevent context overflow.",
     promptGuidelines: [
-      "Call only after search_sessions (use hitIndex) or when the user provides a sourcePath.",
-      "Default limits (maxMessages=30, maxChars=4000) are safe. Increase only if explicitly asked.",
+      "ALWAYS call this after search_sessions, using hitIndex from that result. Only use sourcePath if the user explicitly provides a full .jsonl path.",
+      "Default limits (maxMessages=30, maxChars=4000) are safe. Increase only if the user explicitly asks for more content.",
+      "Never use this tool as a first step — search_sessions must run first to identify which session is relevant.",
     ],
     parameters: Type.Object({
       sourcePath: Type.Optional(Type.String({ description: "Absolute path to the .jsonl file. Prefer hitIndex when following up on a search." })),

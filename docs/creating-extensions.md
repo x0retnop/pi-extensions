@@ -91,9 +91,7 @@ What it does in one sentence.
 
 ## Install
 
-```bash
-pi install ./my-extension
-```
+Copy the extension folder to `~/.pi/agent/extensions/` and restart Pi.
 
 ## Features
 
@@ -103,19 +101,15 @@ pi install ./my-extension
 
 ## Local install / test
 
-```bash
-# from the repo root
-pi install ./my-extension
-```
-
-Then `/reload` or restart Pi.
-
-## Type-check
-
-```bash
-# from the repo root
-npx --no-install tsc --noEmit
-```
+1. Type-check from the repo root:
+   ```bash
+   npx --no-install tsc --noEmit
+   ```
+2. Copy the extension folder to the Pi runtime:
+   ```bash
+   cp -r ./my-extension ~/.pi/agent/extensions/
+   ```
+3. Restart Pi to load the extension.
 
 ## Style rules
 

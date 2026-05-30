@@ -22,6 +22,19 @@ Pi CLI bundles its own core packages. When an extension runs inside Pi, these im
 
 **Do not** install these into an extension folder. They are not needed at runtime.
 
+### Dev type-checking setup
+
+For `npx tsc --noEmit` to resolve `@earendil-works/*` types, the dev repo uses **symbolic links** inside `node_modules/@earendil-works/` that point to the globally installed Pi CLI packages:
+
+- `pi-coding-agent` → `C:/Users/user/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent`
+- `pi-ai`, `pi-tui`, `pi-agent-core` → nested inside `pi-coding-agent/node_modules/@earendil-works/`
+
+This means:
+- `@earendil-works/*` are **not** listed in the root `package.json`.
+- `typebox` is kept locally in `devDependencies` because it is not installed globally as a standalone package.
+- When Pi CLI is updated globally, the linked types are automatically refreshed — no `npm update` needed in the dev repo.
+- If the links break (e.g., after a Node/npm reinstallation), recreate them with `ln -s` from the global `node_modules` paths.
+
 ### The `@mariozechner/` alias
 
 Old extensions may still import `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, etc. Pi CLI currently maps these to the same bundled code as `@earendil-works/*`. This is a **backward-compatibility alias** that may be removed in a future Pi release. Do not introduce `@mariozechner/` imports in new code; migrate to `@earendil-works/*` when touching a legacy file.
@@ -61,7 +74,7 @@ Managed by `~/.pi/agent/package.json`.
 ## Version sync after Pi CLI updates
 
 See `docs/pi-version-sync.md`. The short version:
-1. Run `python _check_pi_sync.py`.
+1. Run `python scripts/check-pi-sync.py`.
 2. Decide whether the upgrade is worth it.
 3. If yes, fix extensions in dev repo, type-check, sync, smoke-test.
 4. Only then bump the `BASELINE` comment in `docs/pi-version-sync.md`.

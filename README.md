@@ -103,6 +103,29 @@ pi install git:github.com/x0retnop/pi-extension-permission-gate
 pi install git:github.com/x0retnop/pi-extension-protected-paths
 ```
 
+### Request Inspector
+
+Capture and inspect exactly what Pi sends to the LLM provider. Dumps system prompt, messages, tool definitions, and the full raw payload into a clean markdown file.
+
+- `/inspect` — Save the last request to `./.pi-inspect/inspect-<timestamp>.md`.
+- `/inspect-toggle` — Toggle auto-save for every request.
+
+```bash
+pi install ./pi-request-inspector
+```
+
+### Skill Guard
+
+Control which skills reach the LLM. Disable automatic skill injection globally, or manually inject a specific skill on demand.
+
+- `/skills` — Show auto-skill status and loaded skills.
+- `/skills-toggle` — Turn automatic skill injection ON / OFF.
+- `/use-skill <name> [comment]` — Queue a skill for manual injection into the next turn.
+
+```bash
+pi install ./pi-skill-guard
+```
+
 ### Role Switcher
 
 Switch between preset agent roles via `/role`. Uses an interactive TUI select when called without arguments, or accepts a role name directly (e.g., `/role code_auditor`).

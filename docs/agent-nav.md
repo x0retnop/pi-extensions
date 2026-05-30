@@ -15,7 +15,7 @@ This doc is a compass. If you are unsure where something lives or what the rules
 | Read about a specific extension's behavior | `<extension>/README.md` |
 | See which extensions are **currently active** | `~/.pi/agent/extensions/` (read-only unless asked) |
 | Check gate mode, workspace roots, protected paths | `~/.pi/agent/settings.json` (read-only unless asked) |
-| Understand how `permission-gate` works internally | `docs/permission-gate.md` |
+| Understand how `permission-gate` works internally | `docs/permission-gate.md` (⚠️ deprecated, extension disabled) |
 | Understand how `simple-gate` works | `simple-gate/path-guard.ts` + `simple-gate/index.ts` |
 
 ## "What should I remember every session?"

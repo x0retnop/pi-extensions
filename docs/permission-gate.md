@@ -1,3 +1,6 @@
+> ⚠️ **DEPRECATED / DISABLED**
+> `permission-gate` is no longer active. It is not copied to `~/.pi/agent/extensions/` and this document is unmaintained. Do not edit or rely on it.
+
 # Permission Gate — Agent Guide
 
 Quick map for agents editing `permission-gate/` in a fresh session.

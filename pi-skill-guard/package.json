@@ -1,0 +1,13 @@
+{
+  "name": "pi-extension-skill-guard",
+  "version": "0.1.0",
+  "description": "Toggle automatic skill injection and manually inject skills per-turn.",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}
