@@ -180,6 +180,57 @@ export default async function (pi: ExtensionAPI) {
 }
 ```
 
+## Render a tool result with colored diff
+
+```ts
+import { renderDiff } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
+
+function diffStats(diff: string) {
+  let a = 0, r = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) a++;
+    if (line.startsWith("-") && !line.startsWith("---")) r++;
+  }
+  return { additions: a, removals: r };
+}
+
+function colorizeDiff(diff: string, theme: any): string[] {
+  // If diff has line numbers like "+47 foo", use native renderDiff
+  if (/^[+\- ]\d+\s/.test(diff.split("\n")[0] ?? "")) {
+    return renderDiff(diff).split("\n");
+  }
+  // Otherwise manual coloring for unified diff
+  return diff.split("\n").map((line) => {
+    if (line.startsWith("+")) return theme.fg("toolDiffAdded", line);
+    if (line.startsWith("-")) return theme.fg("toolDiffRemoved", line);
+    return theme.fg("toolDiffContext", line);
+  });
+}
+
+// Inside pi.registerTool:
+renderResult(result, options, theme) {
+  if (options.isPartial) return { render: () => [], invalidate() {} };
+
+  const diff = result.details?.diff;
+  if (!diff) return makePlainText("Done");
+
+  const { additions, removals } = diffStats(diff);
+  const header = theme.fg("toolDiffAdded", `+${additions}`)
+               + theme.fg("dim", " / ")
+               + theme.fg("toolDiffRemoved", `-${removals}`);
+
+  if (!options.expanded) {
+    return makePlainText(header);
+  }
+
+  const lines = colorizeDiff(diff, theme).map((l) =>
+    truncateToWidth(l, width, "...")
+  );
+  return { render: (w: number) => lines, invalidate() {} };
+}
+```
+
 ## Filter active tools
 
 ```ts

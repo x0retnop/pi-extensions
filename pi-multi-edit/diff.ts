@@ -14,7 +14,7 @@ interface ChangePart {
   value: string;
 }
 
-const MAX_DIFF_OUTPUT_LINES = 200;
+const MAX_DIFF_OUTPUT_LINES = 500;
 const MAX_LCS_CELLS = 500_000;
 
 function unifiedDiff(oldContent: string, newContent: string): string | undefined {
@@ -24,7 +24,7 @@ function unifiedDiff(oldContent: string, newContent: string): string | undefined
   try {
     writeFileSync(oldFile, oldContent, "utf8");
     writeFileSync(newFile, newContent, "utf8");
-    const out = execSync(`diff -u "${oldFile}" "${newFile}"`, {
+    const out = execSync(`diff -U 2 "${oldFile}" "${newFile}"`, {
       encoding: "utf8",
       maxBuffer: 50 * 1024 * 1024,
       windowsHide: true,
@@ -210,8 +210,8 @@ export function generateDiffString(
     if (lineCount <= MAX_DIFF_OUTPUT_LINES) {
       return { diff: unified, firstChangedLine: findFirstChangedLineInUnified(unified) };
     }
-    // diff -u gave too many lines — too many changes, show summary
-    return { diff: `--- old (${m} lines)\n+++ new (${n} lines)`, firstChangedLine: undefined };
+    // Even with -U2 diff is too long — omit diff, let UI fall back to text summary
+    return { diff: "", firstChangedLine: undefined };
   }
 
   // Fallback to compact LCS diff for small files only
@@ -224,5 +224,5 @@ export function generateDiffString(
     }
   }
 
-  return { diff: `--- old (${m} lines)\n+++ new (${n} lines)`, firstChangedLine: undefined };
+  return { diff: "", firstChangedLine: undefined };
 }

@@ -99,6 +99,78 @@ function findByNormalizedLines(
   return undefined;
 }
 
+function buildSuggestion(content: string, oldText: string): string | undefined {
+  const fileLines = content.split("\n");
+  const oldLines = oldText.split("\n");
+
+  if (oldLines.length === 0 || oldText.trim().length === 0) {
+    const tail = fileLines.slice(-5);
+    const start = fileLines.length - tail.length + 1;
+    const pad = String(fileLines.length).length;
+    return `Looking for empty/whitespace text. End of file:\n` +
+      tail.map((l, i) => `${String(start + i).padStart(pad)}: ${l}`).join("\n");
+  }
+
+  const anchor = oldLines[0];
+  const anchorTrimmed = anchor.trim();
+  const words = [...anchorTrimmed.matchAll(/\b[a-zA-Z_][a-zA-Z0-9_]{2,}\b/g)].map((m) => m[0].toLowerCase());
+  const uniqueWords = [...new Set(words)];
+
+  type Scored = { idx: number; line: string; score: number };
+  const scored: Scored[] = [];
+
+  for (let i = 0; i < fileLines.length; i++) {
+    const line = fileLines[i];
+    let score = 0;
+
+    // Exact trim match is the strongest signal
+    if (line.trim() === anchorTrimmed) score += 100;
+
+    // Keyword overlap
+    const lower = line.toLowerCase();
+    for (const w of uniqueWords) {
+      if (lower.includes(w)) score += 10;
+    }
+
+    // Common prefix (helps with indent-only mismatches)
+    let common = 0;
+    for (let k = 0; k < Math.min(line.length, anchor.length); k++) {
+      if (line[k] === anchor[k]) common++;
+      else break;
+    }
+    score += common;
+
+    if (score > 0) scored.push({ idx: i + 1, line, score });
+  }
+
+  if (scored.length === 0) return undefined;
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const seen = new Set<number>();
+  const top: Scored[] = [];
+  for (const s of scored) {
+    if (!seen.has(s.idx)) {
+      seen.add(s.idx);
+      top.push(s);
+    }
+    if (top.length >= 3) break;
+  }
+
+  const numW = String(fileLines.length).length;
+  const pad = (n: number) => String(n).padStart(numW);
+
+  return top.map(({ idx, line }) => {
+    const prev = fileLines[idx - 2] ?? null;
+    const next = fileLines[idx] ?? null;
+    const rows: string[] = [];
+    if (prev !== null) rows.push(`${pad(idx - 1)}: ${prev}`);
+    rows.push(`${pad(idx)}: \`${line}\``);
+    if (next !== null) rows.push(`${pad(idx + 1)}: ${next}`);
+    return `Did you mean line ${idx}?\n${rows.join("\n")}`;
+  }).join("\n\n");
+}
+
 interface IndexedEdit {
   index: number;
   edit: EditItem;
@@ -224,10 +296,13 @@ function applyGroupToContent(
         continue;
       }
 
+      const suggestion = buildSuggestion(content, edit.oldText);
+
       results[index] = {
         path: edit.path,
         success: false,
-        message: `Could not find the exact text in ${edit.path}. The old text must match exactly including all whitespace and newlines.`,
+        message: `Could not find the exact text in ${edit.path}. The old text must match exactly including all whitespace and newlines.` +
+          (suggestion ? `\n\n${suggestion}` : ""),
       };
 
       if (continueOnError) continue;

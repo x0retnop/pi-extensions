@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { renderDiff } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -84,6 +85,47 @@ function shortenPath(p: string | undefined): string {
   return p;
 }
 
+function detectDiffFormat(diff: string): "unified" | "numbered" | "unknown" {
+  for (const line of diff.split("\n").slice(0, 30)) {
+    if (line.startsWith("@@")) return "unified";
+    if (/^[+\- ]\d+\s/.test(line)) return "numbered";
+  }
+  return "unknown";
+}
+
+function diffStats(diff: string): { additions: number; removals: number } {
+  let additions = 0;
+  let removals = 0;
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+    if (line.startsWith("-") && !line.startsWith("---")) removals++;
+  }
+  return { additions, removals };
+}
+
+function colorizeDiff(diff: string, theme: any): string[] {
+  const format = detectDiffFormat(diff);
+  if (format === "numbered") {
+    try {
+      return renderDiff(diff).split("\n");
+    } catch {
+      // fallback to manual coloring
+    }
+  }
+  return diff.split("\n").map((line) => {
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+      return theme.fg("toolDiffContext", line);
+    }
+    if (line.startsWith("+")) {
+      return theme.fg("toolDiffAdded", line);
+    }
+    if (line.startsWith("-")) {
+      return theme.fg("toolDiffRemoved", line);
+    }
+    return theme.fg("toolDiffContext", line);
+  });
+}
+
 interface RenderCtx {
   isPartial: boolean;
   executionStarted: boolean;
@@ -129,6 +171,7 @@ export default function (pi: ExtensionAPI) {
       "multi and edits are mutually exclusive; never use both in one call",
       "The patch parameter is mutually exclusive with oldText/newText/multi/edits",
       "oldText must match exactly including whitespace, quotes, and trailing spaces",
+      "If preflight fails, use the MOST RECENT read output as the only source for oldText. Ignore earlier file versions from context",
       "Patch: wrap in *** Begin Patch ... *** End Patch. Use *** Update File:, *** Add File:, *** Delete File:",
       "Patch @@ marker must contain a line of CONTEXT that appears BEFORE the change, never the changed line itself",
       "Patch lines: '-' removes the exact file line, '+' adds a new line, ' ' is optional unchanged context",
@@ -149,16 +192,30 @@ export default function (pi: ExtensionAPI) {
       return makePlainText(label);
     },
 
-    renderResult(result: any, options: any, _theme: any, _context: any) {
+    renderResult(result: any, options: any, theme: any, _context: any) {
       if (options.isPartial) {
         return makePlainText("");
       }
 
-      // Prefer diff from details; fall back to content text
       const diff = result.details?.diff;
       if (typeof diff === "string" && diff.trim()) {
-        const lines = clampDiff(diff).split("\n");
-        return makeWrappedText(lines);
+        const { additions, removals } = diffStats(diff);
+        let header = theme.fg("toolDiffAdded", `+${additions}`);
+        header += theme.fg("dim", " / ");
+        header += theme.fg("toolDiffRemoved", `-${removals}`);
+
+        if (options.expanded) {
+          const colored = colorizeDiff(diff, theme);
+          const lines = [header, ...colored];
+          return {
+            render(width: number): string[] {
+              return lines.map((l) => truncateToWidth(l, width, "..."));
+            },
+            invalidate() {},
+          };
+        }
+
+        return makePlainText(header);
       }
 
       const text = result.content?.[0]?.text;

@@ -98,16 +98,89 @@ The native `edit` renderer expects:
 
 If your custom `edit` uses a different schema (`multi`, `patch`, or `File:` prefixed diffs), the native renderer will mis-parse the diff and may show duplicated or broken output. Always provide custom renderers when you change the argument schema.
 
-## Theme colors commonly used
+## Diff colors reference
+
+Pi defines three dedicated diff colors in every theme:
+
+| Token | Used for |
+|---|---|
+| `toolDiffAdded` | Added lines (`+`) and addition stats |
+| `toolDiffRemoved` | Removed lines (`-`) and removal stats |
+| `toolDiffContext` | Context lines, `@@` headers, `---` / `+++` filenames |
+
+```ts
+// Manual coloring for unified diff
+diff.split("\n").map((line) => {
+  if (line.startsWith("+")) return theme.fg("toolDiffAdded", line);
+  if (line.startsWith("-")) return theme.fg("toolDiffRemoved", line);
+  return theme.fg("toolDiffContext", line);
+});
+```
+
+Other commonly-used colors:
 
 ```ts
 theme.fg("toolTitle",   theme.bold("edit"))   // tool name
 theme.fg("accent",      path)                  // file path / subject
 theme.fg("dim",         "(3 changes)")         // meta suffix
-theme.fg("toolDiffAdded",   "+5")              // diff stats
-theme.fg("toolDiffRemoved", "-2")
 theme.fg("error",       errText)               // failures
 ```
+
+## Expanded state (`Ctrl+E`)
+
+The user can toggle tool output open/closed with **Ctrl+E** (or by clicking the tool block). `renderResult` receives this state in `options.expanded`.
+
+**Recommended pattern for diffs:**
+
+| State | Show |
+|---|---|
+| Collapsed (`!expanded`) | Compact stats only: `+3 / -2` |
+| Expanded (`expanded`) | Full colored diff |
+
+```ts
+renderResult(result, options, theme) {
+  const diff = result.details?.diff;
+  if (!diff) return makePlainText("");
+
+  const { additions, removals } = diffStats(diff);
+  const header = theme.fg("toolDiffAdded", `+${additions}`)
+               + theme.fg("dim", " / ")
+               + theme.fg("toolDiffRemoved", `-${removals}`);
+
+  if (!options.expanded) {
+    return makePlainText(header);
+  }
+
+  // Full colored diff when expanded
+  const lines = colorizeDiff(diff, theme);
+  return makeWrappedText([header, ...lines]);
+}
+```
+
+## `renderDiff` — native colored diff renderer
+
+`@earendil-works/pi-coding-agent` exports `renderDiff(diffText)` which produces colored output with intra-line token highlighting.
+
+**Input format:** expects a **numbered** diff where lines start with a prefix, optional line number, and a space:
+
+```
+-47 const x = 1;
++47 const x = 2;
+ 48 return x;
+```
+
+**Not** unified diff (`@@` headers) — `renderDiff` looks for lines matching `/^[+\- ]\d*\s/`. If your diff is unified, colorize it manually with `theme.fg("toolDiff*", ...)`.
+
+```ts
+import { renderDiff } from "@earendil-works/pi-coding-agent";
+
+const colored = renderDiff(numberedDiff); // string with ANSI sequences
+return makeWrappedText(colored.split("\n"));
+```
+
+Features:
+- **Line-level colors**: green `+`, red `-`, gray context.
+- **Intra-line highlighting**: when a single line is replaced (1 removed + 1 added), changed tokens are rendered with inverse video inside the line.
 
 ## renderContext useful fields
 
