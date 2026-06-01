@@ -1,12 +1,86 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { renderDiff } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { applyClassicEdits, formatResults } from "./classic.js";
 import { applyPatchOperations, parsePatch } from "./patch.js";
 import type { EditItem } from "./types.ts";
 import { createRealWorkspace, createVirtualWorkspace } from "./workspace.js";
+
+// Safe truncation that handles ANSI escapes, surrogate pairs, and wide Unicode.
+// Pi TUI requires no rendered line exceeds terminal width.
+function charDisplayWidth(ch: string): number {
+  const cp = ch.codePointAt(0) ?? 0;
+  if (cp < 0x1000) return 1;
+  // CJK Unified Ideographs, Hiragana, Katakana, etc.
+  if (cp >= 0x2E80 && cp <= 0xA4CF) return 2;
+  // Hangul Syllables
+  if (cp >= 0xAC00 && cp <= 0xD7AF) return 2;
+  // Hangul Jamo
+  if (cp >= 0x1100 && cp <= 0x11FF) return 2;
+  // Fullwidth forms
+  if (cp >= 0xFF01 && cp <= 0xFF60) return 2;
+  if (cp >= 0xFFE0 && cp <= 0xFFE6) return 2;
+  // Emoji and supplemental symbols
+  if (cp >= 0x1F000) return 2;
+  // Misc symbols
+  if (cp >= 0x2600 && cp <= 0x27BF) return 2;
+  return 1;
+}
+
+function safeTruncate(str: string, maxWidth: number, suffix = "..."): string {
+  // Normalize ambiguous whitespace
+  str = str.replace(/\t/g, " ").replace(/\r/g, "");
+
+  let visible = 0;
+  let result = "";
+  let inAnsi = false;
+
+  for (let i = 0; i < str.length; ) {
+    const chCode = str.charCodeAt(i);
+
+    // Start of ANSI escape sequence
+    if (chCode === 0x1b && str.charCodeAt(i + 1) === 0x5b) {
+      inAnsi = true;
+      result += str[i];
+      i++;
+      continue;
+    }
+
+    // Inside ANSI escape sequence
+    if (inAnsi) {
+      result += str[i];
+      if ((chCode >= 0x41 && chCode <= 0x5a) || (chCode >= 0x61 && chCode <= 0x7a)) {
+        inAnsi = false;
+      }
+      i++;
+      continue;
+    }
+
+    // Handle surrogate pairs as single character
+    let ch: string;
+    let step: number;
+    if (chCode >= 0xD800 && chCode <= 0xDBFF && i + 1 < str.length) {
+      ch = str.slice(i, i + 2);
+      step = 2;
+    } else {
+      ch = str[i];
+      step = 1;
+    }
+
+    const w = charDisplayWidth(ch);
+
+    if (visible + w > maxWidth - suffix.length) {
+      result += suffix;
+      break;
+    }
+
+    result += ch;
+    visible += w;
+    i += step;
+  }
+
+  return result;
+}
 
 const singleEditItemSchema = Type.Object(
   {
@@ -85,14 +159,6 @@ function shortenPath(p: string | undefined): string {
   return p;
 }
 
-function detectDiffFormat(diff: string): "unified" | "numbered" | "unknown" {
-  for (const line of diff.split("\n").slice(0, 30)) {
-    if (line.startsWith("@@")) return "unified";
-    if (/^[+\- ]\d+\s/.test(line)) return "numbered";
-  }
-  return "unknown";
-}
-
 function diffStats(diff: string): { additions: number; removals: number } {
   let additions = 0;
   let removals = 0;
@@ -103,25 +169,41 @@ function diffStats(diff: string): { additions: number; removals: number } {
   return { additions, removals };
 }
 
-function colorizeDiff(diff: string, theme: any): string[] {
-  const format = detectDiffFormat(diff);
-  if (format === "numbered") {
-    try {
-      return renderDiff(diff).split("\n");
-    } catch {
-      // fallback to manual coloring
+function fileDiffStats(diff: string): { path: string; additions: number; removals: number }[] {
+  const files: { path: string; additions: number; removals: number }[] = [];
+  let current: { path: string; additions: number; removals: number } | null = null;
+
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("File: ")) {
+      if (current) files.push(current);
+      current = { path: line.slice(6).trim(), additions: 0, removals: 0 };
+    } else if (current) {
+      if (line.startsWith("+") && !line.startsWith("+++")) current.additions++;
+      if (line.startsWith("-") && !line.startsWith("---")) current.removals++;
     }
   }
+  if (current) files.push(current);
+  return files;
+}
+
+function diffBodyLineCount(diff: string): number {
+  let count = 0;
+  for (const line of diff.split("\n")) {
+    if ((line.startsWith("+") && !line.startsWith("+++")) ||
+        (line.startsWith("-") && !line.startsWith("---"))) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function colorizeDiff(diff: string, theme: any): string[] {
   return diff.split("\n").map((line) => {
-    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
+    if (line.startsWith("File:")) return theme.fg("accent", line);
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@"))
       return theme.fg("toolDiffContext", line);
-    }
-    if (line.startsWith("+")) {
-      return theme.fg("toolDiffAdded", line);
-    }
-    if (line.startsWith("-")) {
-      return theme.fg("toolDiffRemoved", line);
-    }
+    if (line.startsWith("+")) return theme.fg("toolDiffAdded", line);
+    if (line.startsWith("-")) return theme.fg("toolDiffRemoved", line);
     return theme.fg("toolDiffContext", line);
   });
 }
@@ -135,7 +217,7 @@ interface RenderCtx {
 function makePlainText(text: string) {
   return {
     render(width: number): string[] {
-      return text ? [truncateToWidth(text, width, "...")] : [];
+      return text ? [safeTruncate(text, width, "...")] : [];
     },
     invalidate() {},
   };
@@ -144,7 +226,7 @@ function makePlainText(text: string) {
 function makeWrappedText(lines: string[]) {
   return {
     render(width: number): string[] {
-      return lines.map((line) => truncateToWidth(line, width, "..."));
+      return lines.map((line) => safeTruncate(line, width, "..."));
     },
     invalidate() {},
   };
@@ -181,41 +263,87 @@ export default function (pi: ExtensionAPI) {
     parameters: multiEditSchema,
     renderShell: "self",
 
-    renderCall(args: any, theme: any, context: RenderCtx) {
+    renderCall(args: any, theme: any, _context: RenderCtx) {
+      const mode =
+        args.patch ? "patch" :
+        Array.isArray(args.multi) ? "multi" :
+        Array.isArray(args.edits) ? "batch" :
+        "";
+      const modeLabel = mode ? `edit:${mode}` : "edit";
+
       const count =
         args.patch ? "patch" :
         Array.isArray(args.multi) ? `${args.multi.length} file${args.multi.length === 1 ? "" : "s"}` :
         Array.isArray(args.edits) ? `${args.edits.length} change${args.edits.length === 1 ? "" : "s"}` :
         "1 change";
-      const target = shortenPath(args.path || (Array.isArray(args.multi) && args.multi[0]?.path) || undefined);
-      const label = `${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
+
+      let target: string;
+      if (args.path) {
+        target = shortenPath(args.path);
+      } else if (Array.isArray(args.multi) && args.multi.length > 0) {
+        const uniquePaths = new Set(args.multi.map((m: any) => m.path).filter(Boolean));
+        target = uniquePaths.size === 1
+          ? shortenPath(args.multi[0].path)
+          : `${uniquePaths.size} files`;
+      } else {
+        target = "...";
+      }
+
+      const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
       return makePlainText(label);
     },
 
-    renderResult(result: any, options: any, theme: any, _context: any) {
+    renderResult(result: any, options: any, theme: any, context: any) {
       if (options.isPartial) {
         return makePlainText("");
       }
 
+      // Errors — red text, no diff stats
+      if (context.isError) {
+        const text = result.content?.[0]?.text || "Error";
+        return makeWrappedText(text.split("\n").map((l: string) => theme.fg("error", l)));
+      }
+
       const diff = result.details?.diff;
       if (typeof diff === "string" && diff.trim()) {
-        const { additions, removals } = diffStats(diff);
-        let header = theme.fg("toolDiffAdded", `+${additions}`);
-        header += theme.fg("dim", " / ");
-        header += theme.fg("toolDiffRemoved", `-${removals}`);
+        // Collapsed: inline diff if small, otherwise stats + per-file summary
+        if (!options.expanded) {
+          const bodyLines = diffBodyLineCount(diff);
 
-        if (options.expanded) {
-          const colored = colorizeDiff(diff, theme);
-          const lines = [header, ...colored];
-          return {
-            render(width: number): string[] {
-              return lines.map((l) => truncateToWidth(l, width, "..."));
-            },
-            invalidate() {},
-          };
+          // Small diff: show colored lines inline
+          if (bodyLines > 0 && bodyLines <= 20) {
+            const colored = colorizeDiff(diff, theme);
+            return makeWrappedText(colored);
+          }
+
+          // Large diff: compact stats only
+          const { additions, removals } = diffStats(diff);
+          const header = theme.fg("toolDiffAdded", `+${additions}`)
+                       + theme.fg("dim", " / ")
+                       + theme.fg("toolDiffRemoved", `-${removals}`);
+
+          const files = fileDiffStats(diff);
+          if (files.length > 0) {
+            const fileSummaries = files.slice(0, 3).map((f) => {
+              const short = shortenPath(f.path);
+              return `${theme.fg("accent", short)} ${theme.fg("toolDiffAdded", `+${f.additions}`)}${theme.fg("dim", "/")}${theme.fg("toolDiffRemoved", `-${f.removals}`)}`;
+            });
+            const more = files.length > 3 ? theme.fg("dim", ` +${files.length - 3} more`) : "";
+            return makePlainText(header + theme.fg("dim", " · ") + fileSummaries.join(theme.fg("dim", ", ")) + more);
+          }
+
+          return makePlainText(header);
         }
 
-        return makePlainText(header);
+        // Expanded: manual unified-diff coloring, no truncation
+        const colored = colorizeDiff(diff, theme);
+
+        return {
+          render(width: number): string[] {
+            return colored.map((line) => safeTruncate(line, width, "..."));
+          },
+          invalidate() {},
+        };
       }
 
       const text = result.content?.[0]?.text;

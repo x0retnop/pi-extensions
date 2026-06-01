@@ -291,7 +291,9 @@ export default function (pi: ExtensionAPI) {
             details: { error: "rg not found" },
           };
         }
-        if (err.status === 1 && !err.stderr) {
+        // On Windows execFile puts the exit code in err.code (number) instead of err.status.
+        const exitCode = err.status ?? err.code;
+        if ((exitCode === 1 || exitCode === "1") && !err.stderr) {
           return {
             content: [{ type: "text", text: "(no matches)" }],
             details: { count: 0 },

@@ -55,6 +55,7 @@ Pi core packages (`@earendil-works/*`, `typebox`) are provided by Pi CLI at runt
 |---|---|
 | Dev vs runtime rules, sync, dependencies | `docs/pi-workflow.md` |
 | API types, events, UI | `docs/pi-quickref.md` |
+| Providers, models, auth, adding custom models | `docs/pi-providers-models.md` |
 | Where Pi types live locally | `docs/pi-local-map.md` |
 | What to check after Pi CLI update | `docs/pi-version-sync.md` |
 | Pi changelog / release notes | `https://pi.dev/changelog` |

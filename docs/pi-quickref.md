@@ -42,6 +42,28 @@ Tool execution must return `AgentToolResult<TDetails>`:
 }
 ```
 
+Optional `promptGuidelines` strongly influence agent behavior (injected into system prompt):
+
+```ts
+pi.registerTool({
+  // ...
+  promptGuidelines: [
+    "Use mode:overview FIRST for files >200 lines.",
+    "Use mode:section with a target name to read a specific block.",
+  ],
+});
+```
+
+Optional `terminate: true` in the execute return value ends the agent turn without an extra LLM call:
+
+```ts
+return {
+  content: [{ type: "text", text: "Done" }],
+  details: {},
+  terminate: true,
+};
+```
+
 Optional renderers:
 
 ```ts

@@ -245,3 +245,94 @@ pi.setActiveTools(
 ```ts
 pi.sendUserMessage("Please also check the tests.", { deliverAs: "followUp" });
 ```
+
+## Terminate the turn from a tool
+
+```ts
+return {
+  content: [{ type: "text", text: "Done" }],
+  details: {},
+  terminate: true, // Ends the agent turn without an extra LLM call
+};
+```
+
+## Delegate to the original built-in tool
+
+When overriding a built-in tool (e.g. `read`), you can delegate to the original implementation to preserve images, truncation, and native behavior:
+
+```ts
+import { createReadTool } from "@earendil-works/pi-coding-agent";
+
+const originalRead = createReadTool(process.cwd());
+
+// In your override execute():
+return originalRead.execute(toolCallId, params, signal, onUpdate);
+```
+
+## Safe truncation for custom renderers
+
+`truncateToWidth` from `pi-tui` can corrupt UTF-8 + ANSI. Use this instead:
+
+```ts
+function safeTruncate(str: string, maxWidth: number, suffix = "..."): string {
+  let visible = 0;
+  let result = "";
+  let inAnsi = false;
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    if (ch === 0x1b && str.charCodeAt(i + 1) === 0x5b) {
+      inAnsi = true;
+      result += str[i];
+      continue;
+    }
+    if (inAnsi) {
+      result += str[i];
+      if ((ch >= 0x41 && ch <= 0x5a) || (ch >= 0x61 && ch <= 0x7a)) {
+        inAnsi = false;
+      }
+      continue;
+    }
+    if (visible >= maxWidth - suffix.length) {
+      result += suffix;
+      break;
+    }
+    result += str[i];
+    visible++;
+  }
+  return result;
+}
+
+// Usage in render():
+render(width: number): string[] {
+  return lines.map((line) => safeTruncate(line, width, "..."));
+}
+```
+
+## promptGuidelines matter more than description
+
+`description` is for humans. `promptGuidelines` are injected into the system prompt and strongly influence agent behavior.
+
+```ts
+pi.registerTool({
+  name: "read",
+  description: "Read files...",
+  promptGuidelines: [
+    "Use mode:overview FIRST for files >200 lines.",
+    "Use mode:section with a target name to read a specific block.",
+  ],
+  // ...
+});
+```
+
+## Cross-extension communication
+
+```ts
+// Extension A
+pi.events.emit("my:event", { data: 42 });
+
+// Extension B
+pi.events.on("my:event", (payload) => {
+  console.log(payload.data); // 42
+});
+```

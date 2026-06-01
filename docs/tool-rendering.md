@@ -182,6 +182,71 @@ Features:
 - **Line-level colors**: green `+`, red `-`, gray context.
 - **Intra-line highlighting**: when a single line is replaced (1 removed + 1 added), changed tokens are rendered with inverse video inside the line.
 
+## Terminal width enforcement (critical)
+
+Pi TUI will **crash** with `Error: Rendered line N exceeds terminal width` if any line returned by `render()` is wider than the terminal.
+
+This applies to **all** custom renderers, including `renderShell: "self"` tools and message renderers.
+
+**Do not** return raw strings that may exceed terminal width. Always truncate.
+
+### `truncateToWidth` pitfall
+
+`truncateToWidth` from `@earendil-works/pi-tui` handles ANSI correctly for ASCII, but can corrupt **UTF-8** (e.g. Cyrillic) when ANSI escape sequences are present.
+
+**Safe replacement** that counts only visible characters and preserves ANSI:
+
+```ts
+function safeTruncate(str: string, maxWidth: number, suffix = "..."): string {
+  let visible = 0;
+  let result = "";
+  let inAnsi = false;
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+
+    if (ch === 0x1b && str.charCodeAt(i + 1) === 0x5b) {
+      inAnsi = true;
+      result += str[i];
+      continue;
+    }
+
+    if (inAnsi) {
+      result += str[i];
+      if ((ch >= 0x41 && ch <= 0x5a) || (ch >= 0x61 && ch <= 0x7a)) {
+        inAnsi = false;
+      }
+      continue;
+    }
+
+    if (visible >= maxWidth - suffix.length) {
+      result += suffix;
+      break;
+    }
+    result += str[i];
+    visible++;
+  }
+
+  return result;
+}
+```
+
+Use it in every `render(width)` method:
+
+```ts
+render(width: number): string[] {
+  return lines.map((line) => safeTruncate(line, width, "..."));
+}
+```
+
+## Override conflicts
+
+If **multiple extensions** register tools with the same name (e.g. `edit`), the **last loaded extension wins**. However, some extensions (like `pi-tool-codex`) may also wrap the tool's renderer if `registerToolOverrides` is enabled for that tool name. This causes visual glitches, duplicated output, or crashes.
+
+**Rule:** if you override a built-in tool with `renderShell: "self"`, ensure no other loaded extension claims ownership of that tool's renderer.
+
+Check `~/.pi/agent/extensions/` for conflicting extensions, or disable the other extension's override via its config.
+
 ## renderContext useful fields
 
 ```ts

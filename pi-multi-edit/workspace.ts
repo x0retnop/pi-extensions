@@ -5,6 +5,7 @@ import {
   unlink as fsUnlink,
   writeFile as fsWriteFile,
 } from "fs/promises";
+import { dirname } from "path";
 
 import type { Workspace } from "./types.ts";
 
@@ -35,8 +36,13 @@ export function createRealWorkspace(): Workspace {
         return false;
       }
     },
-    checkWriteAccess: (absolutePath: string) =>
-      fsAccess(absolutePath, constants.R_OK | constants.W_OK),
+    checkWriteAccess: async (absolutePath: string) => {
+      try {
+        await fsAccess(absolutePath, constants.R_OK | constants.W_OK);
+      } catch {
+        await fsAccess(dirname(absolutePath), constants.W_OK);
+      }
+    },
   };
 }
 
@@ -77,7 +83,11 @@ export function createVirtualWorkspace(cwd: string): Workspace {
       return state.get(absolutePath) !== null;
     },
     checkWriteAccess: async (absolutePath: string) => {
-      await fsAccess(absolutePath, constants.W_OK);
+      try {
+        await fsAccess(absolutePath, constants.W_OK);
+      } catch {
+        await fsAccess(dirname(absolutePath), constants.W_OK);
+      }
     },
   };
 }
