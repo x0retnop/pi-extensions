@@ -1,11 +1,14 @@
 2026-06-01
+- pi-multi-edit: FINAL fix for duplicate edit blocks — remove custom renderResult entirely (Pi fallback renderer handles diff display without conflicts)
+- pi-multi-edit: renderShell stays "default" (Pi colored box, no Working artifacts)
+- pi-multi-edit: renderCall uses ANSI colors like read-mode: `edit:batch path (count)` with toolTitle/accent/dim
+- pi-multi-edit: single-file diff returned without `File:` prefix so Pi native edit renderer colorizes unified diff correctly
+- pi-multi-edit: multi-file diff keeps `File:` prefix for file identification
+- pi-multi-edit: safeTruncate guards against width ≤ suffix.length (prevents TUI crash on narrow terminals)
 - pi-multi-edit: fix checkWriteAccess for non-existent files (classic mode preflight)
 - pi-multi-edit: show unique file count in renderCall for multi-file edits
-- pi-multi-edit: add per-file diff stats in collapsed renderResult view (large diffs)
 - pi-multi-edit: renderCall always visible; removes orphaned "Working..." indicator
 - pi-multi-edit: renderCall shows edit mode suffix — :patch / :multi / :batch
-- pi-multi-edit: collapsed inline diff for small changes (≤20 +/- lines) with colored text
 - pi-multi-edit: rewrite safeTruncate to handle surrogate pairs, wide Unicode, and emoji correctly (fixes TUI crash)
 - read-mode: add safeTruncate and renderResult to prevent TUI crash on long lines (e.g. compiled JS)
 - read-mode: update description and promptGuidelines to explicitly tell agents to use read (mode:raw) for images/screenshots so the model can see the picture content
-- models.json (runtime): add "image" to kimi-for-coding input capabilities; confirm kimi-k2.6 vision works via anthropic-messages API

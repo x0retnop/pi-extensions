@@ -15,6 +15,18 @@ pi.registerTool({
 - `"default"` — Pi draws a colored shell (pending / success / error background) and places your component inside it.
 - `"self"` — Pi skips its shell and puts **your** component directly into the chat stream. You are responsible for header + body, but you also control the layout completely.
 
+### Critical: built-in tool overrides
+
+If you override a **built-in** tool (e.g. `edit`, `bash`) and use `renderShell: "default"`, Pi may still invoke the **native fallback result renderer** for that tool name. This produces **duplicate blocks**: one from your `renderCall` (inside the colored box) and another from the built-in renderer (below it, often with a different background).
+
+| Tool | `renderShell: "default"` safe without `renderResult`? | Notes |
+|---|---|---|
+| `read` | ✅ Yes | No built-in diff renderer; Pi shows plain text fallback. |
+| `edit` | ❌ No | Built-in `edit` renderer draws its own header + diff block, causing duplicates. |
+| Custom tool names | ✅ Yes | No built-in renderer exists. |
+
+**Rule:** when overriding `edit` (or any built-in that has a native diff renderer), always use `renderShell: "self"` and provide **both** `renderCall` (header) and `renderResult` (body only). This is the only combination that suppresses the fallback completely.
+
 ## Component contract (duck-typed)
 
 Pi does **not** require `pi-tui` classes. A plain object works:
@@ -88,6 +100,19 @@ renderResult(result, options, _theme, _ctx) {
 - `renderResult` is called on **every** update, so keep it cheap.
 - Return an empty component (`[]`) during partial phase if you do not want any placeholder text.
 
+**Confirmed working pattern for partial:**
+
+```ts
+renderResult(result, options, theme, context) {
+  if (options.isPartial) {
+    return { render(_w: number) { return []; }, invalidate() {} };
+  }
+  // ...
+}
+```
+
+Returning `[""]` or `makePlainText("")` during partial can leave a ghost line or trigger Pi's `"⚡ Working..."` fallback. An empty array `[]` is the only safe value.
+
 ## Native built-in expectations
 
 If you **do not** provide `renderCall` / `renderResult`, Pi falls back to the **built-in** renderer for that tool name (e.g. `edit`).
@@ -97,6 +122,22 @@ The native `edit` renderer expects:
 - `details.diff` in **unified diff** format (`@@` headers, `+`/`-` lines)
 
 If your custom `edit` uses a different schema (`multi`, `patch`, or `File:` prefixed diffs), the native renderer will mis-parse the diff and may show duplicated or broken output. Always provide custom renderers when you change the argument schema.
+
+### Diff format for custom `renderResult`
+
+When you provide a custom `renderResult` for `edit` (with `renderShell: "self"`), you control coloring manually. The diff format should match what your renderer expects:
+
+- **Single-file edits** — return plain unified diff (no `File:` prefix). Your `renderResult` can add its own filename context if needed.
+- **Multi-file edits** — prefix each file's diff with `File: <path>` so `renderResult` can parse and colorize per-file sections.
+
+Example:
+```ts
+// Single file
+return { diff: unifiedDiffString };
+
+// Multi file
+return { diff: "File: src/a.ts\n" + diffA + "\n\nFile: src/b.ts\n" + diffB };
+```
 
 ## Diff colors reference
 
@@ -265,7 +306,7 @@ renderResult(result, options, theme, context) {
 }
 ```
 
-## Minimal working example
+## Minimal working example (override `edit` safely)
 
 ```ts
 function makePlainText(text: string) {
@@ -275,23 +316,46 @@ function makePlainText(text: string) {
 pi.registerTool({
   name: "edit",
   label: "edit",
-  renderShell: "self",
+  renderShell: "self",   // MUST be "self" to suppress built-in fallback
 
   renderCall(args, theme) {
+    const mode = args.patch ? "patch" : Array.isArray(args.multi) ? "multi" : "";
+    const modeLabel = mode ? `edit:${mode}` : "edit";
     const path = args.path || "...";
-    return makePlainText(`${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("accent", path)}`);
+    const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", path)}`;
+    return makePlainText(label);
   },
 
-  renderResult(result, options) {
-    if (options.isPartial) return makePlainText("");
+  renderResult(result, options, theme, context) {
+    if (options.isPartial) {
+      return { render(_w: number) { return []; }, invalidate() {} }; // empty, no Working artifact
+    }
+    if (context.isError) {
+      const text = result.content?.[0]?.text ?? "Error";
+      return makePlainText(theme.fg("error", text));
+    }
     const diff = result.details?.diff;
-    if (diff) return { render(_w: number) { return diff.split("\n"); }, invalidate() {} };
+    if (diff) {
+      // Colorize unified diff manually
+      const lines = diff.split("\n").map((line) => {
+        if (line.startsWith("+")) return theme.fg("toolDiffAdded", line);
+        if (line.startsWith("-")) return theme.fg("toolDiffRemoved", line);
+        return theme.fg("toolDiffContext", line);
+      });
+      return { render(width: number) { return lines.map((l) => safeTruncate(l, width)); }, invalidate() {} };
+    }
     return makePlainText("");
   },
 
   async execute(...) { /* ... */ }
 });
 ```
+
+Key takeaways from this pattern:
+1. `renderShell: "self"` is **required** for built-in overrides to avoid fallback duplicates.
+2. `renderCall` = header only (`edit:batch path (count)`).
+3. `renderResult` = body only (diff lines or error text). Never repeat the header.
+4. Partial phase returns `[]` (empty array), not `[""]`.
 
 ## See also
 
