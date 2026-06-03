@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { applyClassicEdits, formatResults } from "./classic.js";
@@ -129,7 +128,7 @@ const multiEditSchema = Type.Object({
   ),
 });
 
-function clampDiff(diff: string | undefined, maxLines = 50): string {
+function clampDiff(diff: string | undefined, maxLines = 200): string {
   if (!diff) return "";
   const lines = diff.split("\n");
   if (lines.length <= maxLines) return diff;
@@ -191,23 +190,7 @@ export default function (pi: ExtensionAPI) {
     parameters: multiEditSchema,
     renderShell: "self",
 
-    renderCall() {
-      return { render() { return []; }, invalidate() {} };
-    },
-
-    renderResult(result: any, options: any, theme: any, context: any) {
-      if (options.isPartial) {
-        return {
-          render(width: number) { return [theme.bg("toolPendingBg", " ".repeat(width))]; },
-          invalidate() {},
-        };
-      }
-
-      const bg = context.isError
-        ? (s: string) => theme.bg("toolErrorBg", s)
-        : (s: string) => theme.bg("toolSuccessBg", s);
-
-      const args = context.args || {};
+    renderCall(args: any, theme: any, _context: RenderCtx) {
       const mode =
         args.patch ? "patch" :
         Array.isArray(args.multi) ? "multi" :
@@ -233,39 +216,51 @@ export default function (pi: ExtensionAPI) {
       }
 
       const modeLabel = mode ? `edit:${mode}` : "edit";
-      const header = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
+      const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
+      return {
+        render(width: number) { return [safeTruncate(label, width, "...")]; },
+        invalidate() {},
+      };
+    },
 
-      let rawLines: string[];
+    renderResult(result: any, options: any, theme: any, context: any) {
+      if (options.isPartial) {
+        return { render(_w: number) { return []; }, invalidate() {} };
+      }
 
       if (context.isError) {
         const text = result.content?.[0]?.text ?? "Error";
         const lines = text.split("\n").filter((l: string) => l.length > 0);
-        rawLines = [header, "", ...lines.map((l: string) => theme.fg("error", l))];
-      } else {
-        const diff = result.details?.diff;
-        if (typeof diff === "string" && diff.trim()) {
-          rawLines = [header, "", ...colorizeDiff(diff, theme)];
-        } else {
-          const text = result.content?.[0]?.text;
-          if (typeof text === "string" && text.trim()) {
-            rawLines = [header, "", ...text.split("\n")];
-          } else {
-            rawLines = [header];
-          }
-        }
+        return {
+          render(width: number) {
+            return lines.map((line: string) => safeTruncate(theme.fg("error", line), width, "..."));
+          },
+          invalidate() {},
+        };
       }
 
-      return {
-        render(width: number) {
-          return rawLines.map((line) => {
-            const truncated = safeTruncate(line, width, "...");
-            const vis = visibleWidth(truncated);
-            const padded = vis >= width ? truncated : truncated + " ".repeat(width - vis);
-            return bg(padded);
-          });
-        },
-        invalidate() {},
-      };
+      const diff = result.details?.diff;
+      if (typeof diff === "string" && diff.trim()) {
+        const colored = colorizeDiff(diff, theme);
+        return {
+          render(width: number) {
+            return colored.map((line) => safeTruncate(line, width, "..."));
+          },
+          invalidate() {},
+        };
+      }
+
+      const text = result.content?.[0]?.text;
+      if (typeof text === "string" && text.trim()) {
+        return {
+          render(width: number) {
+            return text.split("\n").map((line: string) => safeTruncate(line, width, "..."));
+          },
+          invalidate() {},
+        };
+      }
+
+      return { render(_w: number) { return []; }, invalidate() {} };
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {

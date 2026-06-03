@@ -17,6 +17,8 @@ This doc is a compass. If you are unsure where something lives or what the rules
 | Check gate mode, workspace roots, protected paths | `~/.pi/agent/settings.json` (read-only unless asked) |
 | Understand how `permission-gate` works internally | `docs/permission-gate.md` (⚠️ deprecated, extension disabled) |
 | Understand how `simple-gate` works | `simple-gate/path-guard.ts` + `simple-gate/index.ts` |
+| Find built-in tool limits (read truncation, bash output caps) | `docs/pi-local-map.md` → `dist/core/tools/truncate.js` |
+| Read actual implementation of built-in read/bash/edit | `dist/core/tools/*.js` inside Pi install (see `pi-local-map.md`) |
 
 ## "What should I remember every session?"
 

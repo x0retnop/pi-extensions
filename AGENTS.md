@@ -49,6 +49,13 @@ If you add a **new extension** or **new runtime dependency** to an existing exte
 
 Pi core packages (`@earendil-works/*`, `typebox`) are provided by Pi CLI at runtime — never list them as `dependencies`.
 
+## When you are unsure — follow this order
+
+1. **Check agent docs first.** Look at the tables in this file and `docs/agent-nav.md` for the topic.  
+   Docs in `docs/` are written for agents and cover workflow, API, patterns, and known pitfalls.
+2. **If the doc points to source, go there.** Some answers live in `.d.ts` files (`dist/core/**/*.d.ts`) or Pi runtime JS (`dist/core/tools/*.js`).
+3. **Only then search the web or guess.** Local docs are the single source of truth for this collection.
+
 ## Where to look
 
 | If you need... | Look at... |
@@ -63,6 +70,7 @@ Pi core packages (`@earendil-works/*`, `typebox`) are provided by Pi CLI at runt
 | Copy-paste snippets | `docs/patterns.md` |
 | Current active extensions / settings | `~/.pi/agent/extensions/`, `~/.pi/agent/settings.json` |
 | Custom tool rendering (renderCall / renderResult pitfalls) | `docs/tool-rendering.md` |
+| Lost? Not sure which doc to open | `docs/agent-nav.md` |
 
 ## Style
 

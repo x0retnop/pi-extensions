@@ -27,6 +27,8 @@ pi-coding-agent/
 | `dist/core/extensions/types.d.ts` | **Extension system types**: all event types, `ExtensionAPI` methods, `ExtensionContext`/`ExtensionCommandContext`, `ToolDefinition`, handler signatures, event results (`block`, `cancel`, `message`, etc.). |
 | `dist/core/extensions/index.d.ts` | Re-exports from `types.d.ts` plus runtime helpers (`createExtensionRuntime`, `defineTool`, `wrapRegisteredTool`, `ExtensionRunner`). |
 | `dist/core/tools/index.d.ts` | Built-in tool input/output types: `BashToolInput`, `ReadToolInput`, `WriteToolInput`, `EditToolInput`, `GrepToolInput`, `FindToolInput`, `LsToolInput`, and their `*Details` result types. |
+| `dist/core/tools/truncate.js` | `DEFAULT_MAX_LINES` (2000), `DEFAULT_MAX_BYTES` (50KB), `truncateHead`, `truncateTail`. Hard limits and truncation logic for built-in tool outputs. |
+| `dist/core/tools/read.js` | `createReadTool`, `createReadToolDefinition`. Image resizing, auto-resize logic, truncation notices with `offset` continuation, and the actual built-in read implementation. |
 | `dist/modes/interactive/theme/theme.d.ts` | `Theme`, `ThemeColor`, `initTheme`, `getLanguageFromPath`, `highlightCode`. |
 | `dist/core/session-manager.d.ts` | `SessionManager`, `SessionEntry`, `SessionMessageEntry`, `CompactionEntry`, `BranchSummaryEntry`, etc. |
 | `dist/core/sdk.d.ts` | SDK factory functions: `createAgentSession`, `createCodingTools`, `createBashTool`, `createReadTool`, etc. |

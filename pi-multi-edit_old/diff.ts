@@ -14,6 +14,7 @@ interface ChangePart {
   value: string;
 }
 
+const MAX_DIFF_OUTPUT_LINES = 500;
 const MAX_LCS_CELLS = 500_000;
 
 function unifiedDiff(oldContent: string, newContent: string): string | undefined {
@@ -205,15 +206,22 @@ export function generateDiffString(
 
   const unified = unifiedDiff(oldContent, newContent);
   if (unified) {
-    return { diff: unified, firstChangedLine: findFirstChangedLineInUnified(unified) };
+    const lineCount = unified.split("\n").length;
+    if (lineCount <= MAX_DIFF_OUTPUT_LINES) {
+      return { diff: unified, firstChangedLine: findFirstChangedLineInUnified(unified) };
+    }
+    // Even with -U2 diff is too long — omit diff, let UI fall back to text summary
+    return { diff: "", firstChangedLine: undefined };
   }
 
   // Fallback to compact LCS diff for small files only
   if (m * n <= MAX_LCS_CELLS) {
     const diff = buildCompactDiff(oldContent, newContent, contextLines);
-    // firstChangedLine is approximate for compact diff (first changed new line)
-    const firstChangedLine = diff.match(/\+(\d+)/)?.[1];
-    return { diff, firstChangedLine: firstChangedLine ? parseInt(firstChangedLine, 10) : undefined };
+    if (diff.split("\n").length <= MAX_DIFF_OUTPUT_LINES) {
+      // firstChangedLine is approximate for compact diff (first changed new line)
+      const firstChangedLine = diff.match(/\+(\d+)/)?.[1];
+      return { diff, firstChangedLine: firstChangedLine ? parseInt(firstChangedLine, 10) : undefined };
+    }
   }
 
   return { diff: "", firstChangedLine: undefined };
