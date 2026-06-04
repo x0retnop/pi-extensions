@@ -1,0 +1,15 @@
+{
+  "name": "pi-xai-oauth-fork",
+  "version": "1.2.3",
+  "description": "Fork of pi-xai-oauth with global on/off toggle",
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./extensions/xai-oauth.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

@@ -1,19 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-// ═══════════════════════════════════════════════════════════
-//  CONFIG — 4 hard-coded roles loaded from ~/.pi/agent/roles
-// ═══════════════════════════════════════════════════════════
-const ROLES: Record<string, string> = {
-  architect_planner: join(homedir(), ".pi", "agent", "roles", "architect_planner.md"),
-  code_auditor:      join(homedir(), ".pi", "agent", "roles", "code_auditor.md"),
-  coding_agent:      join(homedir(), ".pi", "agent", "roles", "coding_agent.md"),
-  kimi:              join(homedir(), ".pi", "agent", "roles", "kimi.md"),
-  project_keeper:    join(homedir(), ".pi", "agent", "roles", "project_keeper.md"),
-};
-
+const ROLES_DIR = join(homedir(), ".pi", "agent", "roles");
 const DEFAULT_ROLE = "kimi";
 
 interface CacheEntry {
@@ -22,6 +12,22 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
+
+async function getAvailableRoles(): Promise<string[]> {
+  try {
+    const files = await readdir(ROLES_DIR);
+    return files
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => f.slice(0, -3))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function resolveRolePath(name: string): string {
+  return join(ROLES_DIR, `${name}.md`);
+}
 
 async function readRole(path: string): Promise<string | null> {
   try {
@@ -54,14 +60,19 @@ export default function (pi: ExtensionAPI) {
     if (!restored) {
       activeRole = DEFAULT_ROLE;
     }
+
+    // If the restored role file no longer exists, fall back
+    const available = await getAvailableRoles();
+    if (!available.includes(activeRole)) {
+      activeRole = available.includes(DEFAULT_ROLE) ? DEFAULT_ROLE : (available[0] ?? DEFAULT_ROLE);
+    }
+
     ctx.ui.setStatus("role", `role: ${activeRole}`);
   });
 
   // ── Inject role prompt into system prompt before each turn ──
   pi.on("before_agent_start", async (event, ctx) => {
-    const rolePath = ROLES[activeRole];
-    if (!rolePath) return;
-
+    const rolePath = resolveRolePath(activeRole);
     const rolePrompt = await readRole(rolePath);
     if (rolePrompt === null) {
       ctx.ui.notify(`Role file not found: ${rolePath}`, "warning");
@@ -82,14 +93,19 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("role", {
     description: "Switch agent role",
     handler: async (args, ctx) => {
-      const requested = args.trim().toLowerCase();
-      const availableNames = Object.keys(ROLES);
+      const available = await getAvailableRoles();
+      if (available.length === 0) {
+        ctx.ui.notify(`No role files found in ${ROLES_DIR}`, "error");
+        return;
+      }
+
+      const requested = args.trim().toLowerCase().replace(/\.md$/, "");
 
       // With argument — switch directly
       if (requested) {
-        if (!ROLES[requested]) {
+        if (!available.includes(requested)) {
           ctx.ui.notify(
-            `Unknown role "${requested}". Available: ${availableNames.join(", ")}`,
+            `Unknown role "${requested}". Available: ${available.join(", ")}`,
             "error"
           );
           return;
@@ -103,16 +119,16 @@ export default function (pi: ExtensionAPI) {
 
       // Without argument — TUI select
       if (!ctx.hasUI) {
-        ctx.ui.notify(`Current role: ${activeRole}. Available: ${availableNames.join(", ")}`, "info");
+        ctx.ui.notify(`Current role: ${activeRole}. Available: ${available.join(", ")}`, "info");
         return;
       }
 
       const choice = await ctx.ui.select(
         `Select role (current: ${activeRole})`,
-        availableNames
+        available
       );
 
-      if (!choice || !ROLES[choice]) return;
+      if (!choice || !available.includes(choice)) return;
 
       activeRole = choice;
       pi.appendEntry("role-switcher", { role: activeRole, switchedAt: Date.now() });

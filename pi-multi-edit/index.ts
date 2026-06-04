@@ -1,5 +1,4 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { applyClassicEdits, formatResults } from "./classic.js";
@@ -129,13 +128,6 @@ const multiEditSchema = Type.Object({
   ),
 });
 
-function clampDiff(diff: string | undefined, maxLines = 50): string {
-  if (!diff) return "";
-  const lines = diff.split("\n");
-  if (lines.length <= maxLines) return diff;
-  return lines.slice(0, maxLines).join("\n") + "\n... (diff truncated)";
-}
-
 function shortenPath(p: string | undefined): string {
   if (!p) return "...";
   const home = typeof process !== "undefined" ? process.env.HOME || process.env.USERPROFILE : "";
@@ -143,15 +135,11 @@ function shortenPath(p: string | undefined): string {
   return p;
 }
 
-function colorizeDiff(diff: string, theme: any): string[] {
-  return diff.split("\n").map((line) => {
-    if (line.startsWith("File:")) return theme.fg("accent", line);
-    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@"))
-      return theme.fg("toolDiffContext", line);
-    if (line.startsWith("+")) return theme.fg("toolDiffAdded", line);
-    if (line.startsWith("-")) return theme.fg("toolDiffRemoved", line);
-    return theme.fg("toolDiffContext", line);
-  });
+function clampDiff(diff: string | undefined, maxLines = 50): string {
+  if (!diff) return "";
+  const lines = diff.split("\n");
+  if (lines.length <= maxLines) return diff;
+  return lines.slice(0, maxLines).join("\n") + "\n... (diff truncated)";
 }
 
 interface RenderCtx {
@@ -189,25 +177,9 @@ export default function (pi: ExtensionAPI) {
       "Correct: @@ function setup() {\\n-    const x = 1;\\n+    const x = 2; | Wrong: @@ -    const x = 1;\\n-    const x = 1;",
     ],
     parameters: multiEditSchema,
-    renderShell: "self",
+    renderShell: "default",
 
-    renderCall() {
-      return { render() { return []; }, invalidate() {} };
-    },
-
-    renderResult(result: any, options: any, theme: any, context: any) {
-      if (options.isPartial) {
-        return {
-          render(width: number) { return [theme.bg("toolPendingBg", " ".repeat(width))]; },
-          invalidate() {},
-        };
-      }
-
-      const bg = context.isError
-        ? (s: string) => theme.bg("toolErrorBg", s)
-        : (s: string) => theme.bg("toolSuccessBg", s);
-
-      const args = context.args || {};
+    renderCall(args: any, theme: any) {
       const mode =
         args.patch ? "patch" :
         Array.isArray(args.multi) ? "multi" :
@@ -233,39 +205,15 @@ export default function (pi: ExtensionAPI) {
       }
 
       const modeLabel = mode ? `edit:${mode}` : "edit";
-      const header = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
-
-      let rawLines: string[];
-
-      if (context.isError) {
-        const text = result.content?.[0]?.text ?? "Error";
-        const lines = text.split("\n").filter((l: string) => l.length > 0);
-        rawLines = [header, "", ...lines.map((l: string) => theme.fg("error", l))];
-      } else {
-        const diff = result.details?.diff;
-        if (typeof diff === "string" && diff.trim()) {
-          rawLines = [header, "", ...colorizeDiff(diff, theme)];
-        } else {
-          const text = result.content?.[0]?.text;
-          if (typeof text === "string" && text.trim()) {
-            rawLines = [header, "", ...text.split("\n")];
-          } else {
-            rawLines = [header];
-          }
-        }
-      }
-
+      const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
       return {
-        render(width: number) {
-          return rawLines.map((line) => {
-            const truncated = safeTruncate(line, width, "...");
-            const vis = visibleWidth(truncated);
-            const padded = vis >= width ? truncated : truncated + " ".repeat(width - vis);
-            return bg(padded);
-          });
-        },
+        render(_width: number) { return [label]; },
         invalidate() {},
       };
+    },
+
+    renderResult() {
+      return { render() { return []; }, invalidate() {} };
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {

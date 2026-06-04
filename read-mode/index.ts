@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext, AgentToolUpdateCallback } from "@e
 import { createReadTool } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   buildOverview,
@@ -113,12 +113,13 @@ export default function (pi: ExtensionAPI) {
       '{ mode:"section", path:"src/app.ts", target:"handleRequest", limit:60 }\n' +
       '{ mode:"grep", path:"src/app.ts", target:"validateToken", contextLines:2 }\n' +
       '{ mode:"headtail", path:"logs/app.log" }\n' +
+      '{ mode:"raw", path:"src/app.ts", offset:1000, limit:300 }\n' +
       '{ path:"screenshot.png" }  // image: omit mode (defaults to raw) so the AI sees the picture',
     parameters: Type.Object({
       path: Type.String({ description: "Path to the file to read (relative or absolute). Can be code, text, log, config, or image files (PNG, JPG, GIF, WebP, BMP)." }),
       mode: Type.Optional(
         StringEnum(["overview", "section", "grep", "headtail", "raw"], {
-          description: "Reading mode. Default is raw (built-in behavior).",
+          description: "Reading mode. Default is raw.",
         })
       ),
       target: Type.Optional(Type.String({ description: "Target name for section/grep modes" })),
@@ -126,15 +127,15 @@ export default function (pi: ExtensionAPI) {
         Type.Number({ default: 3, description: "Lines of context around each match for grep mode" })
       ),
       limit: Type.Optional(
-        Type.Number({ description: "Maximum lines to return. For section mode: lines from target. For raw mode: passed to built-in reader when explicitly set." })
+        Type.Number({ description: "Maximum lines to return. For section mode: lines from target. For raw mode: lines to read from offset." })
       ),
       fixed_strings: Type.Optional(
         Type.Boolean({ default: false, description: "Treat target as literal string in grep mode" })
       ),
       maxBytes: Type.Optional(
-        Type.Number({ default: 8192, description: "Maximum bytes to return" })
+        Type.Number({ default: 65536, description: "Maximum bytes to return" })
       ),
-      offset: Type.Optional(Type.Number({ description: "Line offset for raw mode (delegated)" })),
+      offset: Type.Optional(Type.Number({ description: "Line offset for raw mode (1-indexed)." })),
     }),
 
     promptGuidelines: [
@@ -143,6 +144,7 @@ export default function (pi: ExtensionAPI) {
       "Use mode:grep to search for a keyword inside a single file. Use the separate grep tool for project-wide search.",
       "Use mode:headtail for large log or config files when you only need the beginning and end.",
       "mode:raw is the default; use it for small files or when you need the full content with offset/limit.",
+      "When reading large files with mode:raw, always provide offset and limit. If you omit them, the tool may truncate and return a continuation hint with the next offset.",
       "When the user refers to an image, screenshot, or picture file (PNG, JPG, GIF, WebP, BMP), you MUST use read:raw (or omit mode) so the AI can see and analyze the image. Do not skip image files.",
     ],
 
@@ -154,9 +156,10 @@ export default function (pi: ExtensionAPI) {
         text += " " + theme.fg("dim", `target="${args.target}"`);
       }
       if (args.offset !== undefined || args.limit !== undefined) {
-        const start = args.offset ?? 1;
-        const end = args.limit !== undefined ? start + args.limit - 1 : undefined;
-        text += " " + theme.fg("dim", end !== undefined ? `:${start}-${end}` : `:${start}`);
+        text += " " + theme.fg("dim", `offset=${args.offset ?? 1}`);
+        if (args.limit !== undefined) {
+          text += " " + theme.fg("dim", `limit=${args.limit}`);
+        }
       }
       return {
         render(width: number) { return [safeTruncate(text, width, "...")]; },
@@ -173,14 +176,67 @@ export default function (pi: ExtensionAPI) {
     ) {
       const filePath = resolve(ctx.cwd, params.path);
       const mode = params.mode || "raw";
-      const maxBytes = params.maxBytes ?? 8192;
+      const maxBytes = params.maxBytes ?? 65536;
 
       if (mode === "raw") {
-        const rawParams: any = { path: params.path, offset: params.offset };
-        if (params.limit != null) {
-          rawParams.limit = params.limit;
+        const ext = filePath.split(".").pop()?.toLowerCase();
+        const imageExts = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+        if (imageExts.has(ext || "")) {
+          const rawParams: any = { path: params.path, offset: params.offset };
+          if (params.limit != null) {
+            rawParams.limit = params.limit;
+          }
+          return originalRead.execute(toolCallId, rawParams, signal, onUpdate);
         }
-        return originalRead.execute(toolCallId, rawParams, signal, onUpdate);
+
+        const content = await readFile(filePath, "utf-8");
+        const allLines = content.split("\n");
+        const startLine = params.offset ? Math.max(0, params.offset - 1) : 0;
+        const startLineDisplay = startLine + 1;
+
+        if (startLine >= allLines.length) {
+          return {
+            content: [{ type: "text", text: `Error: offset ${params.offset} is beyond end of file (${allLines.length} lines total)` }],
+            details: { error: true },
+          };
+        }
+
+        const firstLineBuf = Buffer.from(allLines[startLine], "utf-8");
+        if (firstLineBuf.length > maxBytes) {
+          return {
+            content: [{ type: "text", text: `[Line ${startLineDisplay} exceeds ${Math.round(maxBytes / 1024)}KB limit. Use bash: sed -n '${startLineDisplay}p' ${params.path} | head -c ${maxBytes}]` }],
+            details: { error: true },
+          };
+        }
+
+        let selectedContent: string;
+        let userLimitedLines: number | undefined;
+        if (params.limit !== undefined) {
+          const endLine = Math.min(startLine + params.limit, allLines.length);
+          selectedContent = allLines.slice(startLine, endLine).join("\n");
+          userLimitedLines = endLine - startLine;
+        } else {
+          selectedContent = allLines.slice(startLine).join("\n");
+        }
+
+        const buf = Buffer.from(selectedContent, "utf-8");
+        if (buf.length <= maxBytes) {
+          let text = selectedContent;
+          if (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length) {
+            const nextOffset = startLine + userLimitedLines + 1;
+            text += `\n\n[${allLines.length - (startLine + userLimitedLines)} more lines in file. Use offset=${nextOffset} to continue.]`;
+          }
+          return { content: [{ type: "text", text }], details: {} };
+        }
+
+        let cut = maxBytes;
+        while (cut > 0 && (buf[cut] & 0b11000000) === 0b10000000) cut--;
+        const truncated = buf.slice(0, cut).toString("utf-8");
+        const shownLines = truncated.split("\n").length;
+        const endLineDisplay = startLineDisplay + shownLines - 1;
+        const nextOffset = endLineDisplay + 1;
+        const text = truncated + `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${allLines.length} (${Math.round(maxBytes / 1024)}KB limit). Use offset=${nextOffset} to continue.]`;
+        return { content: [{ type: "text", text }], details: { truncated: true } };
       }
 
       try {

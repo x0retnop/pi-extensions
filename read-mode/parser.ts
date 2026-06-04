@@ -27,7 +27,7 @@ function getTopLevelRegex(lang: string): RegExp | null {
     case "js":
       return /^\s*(export\s+)?(async\s+)?(function|class|interface|type|enum)\s+(\w+)/;
     case "python":
-      return /^(class|def)\s+(\w+)/;
+      return /^\s*(class|def)\s+(\w+)/;
     case "markdown":
       return /^(#{1,6})\s+(.+)/;
     case "json":
@@ -41,30 +41,51 @@ export async function buildOverview(filePath: string): Promise<OverviewResult> {
   const content = await readFile(filePath, "utf-8");
   const lines = content.split("\n");
   const lang = detectLanguage(filePath);
-  const regex = getTopLevelRegex(lang);
   const sections: Section[] = [];
 
-  if (regex) {
+  if (lang === "ts" || lang === "js") {
+    const reTop = /^\s*(export\s+)?(async\s+)?(function|class|interface|type|enum)\s+(\w+)/;
+    const reMethod = /^\s*(?:async\s+)?(?:get\s+|set\s+)?(?:\w+\s+)*(\w+)\s*\([^)]*\)\s*(?:\{|=>)/;
+    const keywords = new Set(["if", "while", "for", "switch", "catch", "with", "else", "do", "try", "finally", "let", "const", "var", "function", "class", "return"]);
     for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(regex);
-      if (match) {
-        let name = "";
-        let type = "block";
-        if (lang === "markdown") {
-          name = match[2].trim();
-          type = `h${match[1].length}`;
-        } else if (lang === "json") {
-          name = match[1];
-          type = "key";
-        } else if (match[4]) {
-          name = match[4];
-          type = match[3] || "declaration";
-        } else if (match[2]) {
-          name = match[2];
-          type = match[1];
+      const line = lines[i];
+      let m = line.match(reTop);
+      if (m) {
+        sections.push({ name: m[4], type: m[3] || "declaration", startLine: i + 1 });
+        continue;
+      }
+      m = line.match(reMethod);
+      if (m) {
+        const name = m[1];
+        if (name && !keywords.has(name)) {
+          sections.push({ name, type: "method", startLine: i + 1 });
         }
-        if (name) {
-          sections.push({ name, type, startLine: i + 1 });
+      }
+    }
+  } else {
+    const regex = getTopLevelRegex(lang);
+    if (regex) {
+      for (let i = 0; i < lines.length; i++) {
+        const match = lines[i].match(regex);
+        if (match) {
+          let name = "";
+          let type = "block";
+          if (lang === "markdown") {
+            name = match[2].trim();
+            type = `h${match[1].length}`;
+          } else if (lang === "json") {
+            name = match[1];
+            type = "key";
+          } else if (match[4]) {
+            name = match[4];
+            type = match[3] || "declaration";
+          } else if (match[2]) {
+            name = match[2];
+            type = match[1];
+          }
+          if (name) {
+            sections.push({ name, type, startLine: i + 1 });
+          }
         }
       }
     }
@@ -79,11 +100,12 @@ function getSectionStartRegex(target: string, lang: string): RegExp {
     case "ts":
     case "js":
       return new RegExp(
-        `^\\s*(export\\s+)?(async\\s+)?(function|class|interface|type|enum|const|let|var)\\s+${t}\\b`,
+        `^\\s*(?:export\\s+)?(?:async\\s+)?(?:function|class|interface|type|enum|const|let|var)\\s+${t}\\b|` +
+        `^\\s*(?:async\\s+)?(?:\\w+\\s+)*${t}\\s*\\(`,
         "i"
       );
     case "python":
-      return new RegExp(`^(class|def)\\s+${t}\\b`, "i");
+      return new RegExp(`^\\s*(class|def)\\s+${t}\\b`, "i");
     case "markdown":
       return new RegExp(`^#{1,6}\\s+.*\\b${t}\\b`, "i");
     default:

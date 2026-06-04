@@ -108,39 +108,39 @@ export default function aRewind(pi: ExtensionAPI) {
 		updateTimerStatus(ctx);
 	});
 
-	pi.registerCommand("a-rewind-tt", {
-		description: "Toggle task timer display in the status bar",
-		handler: async (args: string, ctx: any) => {
+	pi.registerCommand("a-rewind", {
+		description: "Rewind session to before the latest assistant message",
+		handler: async (_args: string, ctx: any) => {
 			try {
-				const arg = args.trim().toLowerCase();
+				if (typeof ctx?.waitForIdle === "function") {
+					await ctx.waitForIdle();
+				}
 
-				if (arg === "off" || arg === "disable" || arg === "0") {
-					timerEnabled = false;
-					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
-					notify(ctx, "task timer display disabled", "info");
+				const branch = getCurrentBranch(ctx);
+				const lastAssistantEntry = findLastAssistantMessageEntry(branch);
+
+				if (!lastAssistantEntry) {
+					notify(ctx, "no assistant message found in current branch.", "warning");
 					return;
 				}
 
-				if (arg === "on" || arg === "enable" || arg === "1") {
-					timerEnabled = true;
-					updateTimerStatus(ctx);
-					notify(ctx, "task timer display enabled", "info");
+				const targetId = lastAssistantEntry.parentId;
+				if (!targetId) {
+					notify(ctx, "cannot rewind before the first session entry.", "error");
 					return;
 				}
 
-				if (arg === "status") {
-					notify(ctx, `task timer display is ${timerEnabled ? "enabled" : "disabled"}`, "info");
+				const result = await ctx.navigateTree(targetId, {
+					summarize: false,
+					label: EXT,
+				});
+
+				if (result?.cancelled) {
+					notify(ctx, "rewind cancelled.", "warning");
 					return;
 				}
 
-				timerEnabled = !timerEnabled;
-				if (timerEnabled) {
-					updateTimerStatus(ctx);
-					notify(ctx, "task timer display enabled", "info");
-				} else {
-					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
-					notify(ctx, "task timer display disabled", "info");
-				}
+				notify(ctx, "rewound to before the latest assistant message.", "info");
 			} catch (err) {
 				notify(ctx, formatError(err), "error");
 			}
@@ -184,8 +184,8 @@ export default function aRewind(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("a-rewind-last", {
-		description: "Rewind session to before the latest assistant message",
+	pi.registerCommand("a-rewind-user", {
+		description: "Rewind to the latest user message (undo all agent actions after it)",
 		handler: async (_args: string, ctx: any) => {
 			try {
 				if (typeof ctx?.waitForIdle === "function") {
@@ -193,16 +193,22 @@ export default function aRewind(pi: ExtensionAPI) {
 				}
 
 				const branch = getCurrentBranch(ctx);
-				const lastAssistantEntry = findLastAssistantMessageEntry(branch);
+				const lastUserEntry = findLastUserMessageEntry(branch);
 
-				if (!lastAssistantEntry) {
-					notify(ctx, "no assistant message found in current branch.", "warning");
+				if (!lastUserEntry) {
+					notify(ctx, "no user message found in current branch.", "warning");
 					return;
 				}
 
-				const targetId = lastAssistantEntry.parentId;
+				const leaf = ctx?.sessionManager?.getLeafEntry?.();
+				if (leaf?.id === lastUserEntry.id) {
+					notify(ctx, "already at the latest user message. Nothing to rewind.", "info");
+					return;
+				}
+
+				const targetId = lastUserEntry.id;
 				if (!targetId) {
-					notify(ctx, "cannot rewind before the first session entry.", "error");
+					notify(ctx, "cannot rewind: user message has no id.", "error");
 					return;
 				}
 
@@ -212,11 +218,50 @@ export default function aRewind(pi: ExtensionAPI) {
 				});
 
 				if (result?.cancelled) {
-					notify(ctx, "rewind cancelled.", "warning");
+					notify(ctx, "rewind to user message cancelled.", "warning");
 					return;
 				}
 
-				notify(ctx, "rewound to before the latest assistant message.", "info");
+				notify(ctx, "rewound to the latest user message. All agent actions after it have been undone.", "info");
+			} catch (err) {
+				notify(ctx, formatError(err), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("a-rewind-tt", {
+		description: "Toggle task timer display in the status bar",
+		handler: async (args: string, ctx: any) => {
+			try {
+				const arg = args.trim().toLowerCase();
+
+				if (arg === "off" || arg === "disable" || arg === "0") {
+					timerEnabled = false;
+					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+					notify(ctx, "task timer display disabled", "info");
+					return;
+				}
+
+				if (arg === "on" || arg === "enable" || arg === "1") {
+					timerEnabled = true;
+					updateTimerStatus(ctx);
+					notify(ctx, "task timer display enabled", "info");
+					return;
+				}
+
+				if (arg === "status") {
+					notify(ctx, `task timer display is ${timerEnabled ? "enabled" : "disabled"}`, "info");
+					return;
+				}
+
+				timerEnabled = !timerEnabled;
+				if (timerEnabled) {
+					updateTimerStatus(ctx);
+					notify(ctx, "task timer display enabled", "info");
+				} else {
+					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+					notify(ctx, "task timer display disabled", "info");
+				}
 			} catch (err) {
 				notify(ctx, formatError(err), "error");
 			}
@@ -237,6 +282,17 @@ function findLastAssistantMessageEntry(branch: any[]) {
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
 		if (entry?.type === "message" && entry?.message?.role === "assistant") {
+			return entry;
+		}
+	}
+
+	return undefined;
+}
+
+function findLastUserMessageEntry(branch: any[]) {
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (entry?.type === "message" && entry?.message?.role === "user") {
 			return entry;
 		}
 	}
