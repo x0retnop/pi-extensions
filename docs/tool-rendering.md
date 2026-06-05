@@ -357,6 +357,80 @@ Key takeaways from this pattern:
 3. `renderResult` = body only (diff lines or error text). Never repeat the header.
 4. Partial phase returns `[]` (empty array), not `[""]`.
 
+## Battle-tested lessons from `pi-multi-edit` (2026-06)
+
+After ~15 iterations trying to get a custom `edit` override stable, the following **hard-earned** rules emerged.
+
+### 1. Never use `renderShell: "default"` when overriding `edit`
+
+Even though the docs say `"default"` lets Pi draw the colored Box, the built-in `edit` renderer **always** exists as a fallback. If your `renderCall` / `renderResult` are missing, incomplete, or if Pi's internal `ToolExecutionComponent` decides to call the fallback, you get:
+- **Duplicate blocks** (your renderer + built-in renderer).
+- **Giant JSON dump** — the built-in renderer does `JSON.stringify(args, null, 2)` for unknown params like `multi[]` or `patch`. This flashes as a massive wall of text for 1–2 frames before collapsing.
+- **Orphaned "edit" headers** — the fallback draws its own header below yours.
+
+**Verdict:** `renderShell: "self"` is mandatory for built-in `edit` override. No exceptions.
+
+### 2. Do NOT manually apply `theme.bg()` + width padding
+
+We tried padding every line to terminal width and wrapping in `theme.bg("toolSuccessBg", ...)` to fill the Box background manually. This caused:
+- **TUI glitches on every state change** (pending → success, Ctrl+E expand/collapse).
+- **Missing background colors** — the padded spaces sometimes rendered as black holes.
+- **Crash risk** — miscounting visible width with ANSI sequences = `Rendered line N exceeds terminal width`.
+
+**Verdict:** If you need the colored Box, use `renderShell: "default"` (see rule #1 conflict). With `"self"`, accept that the background comes from the outer `selfRenderContainer` and is handled by Pi. Don't fight it.
+
+### 3. `renderResult` must return stable height during partial
+
+Returning `[]` (empty array) during `options.isPartial` collapses the block to zero height. When the result arrives, the block jumps from 0 → N lines. This jump triggers Pi's diff renderer to flash old buffer content for 1–2 frames (the "giant text flash" glitch).
+
+Returning `[""]` (one empty string) keeps the block at exactly 1 line during partial, making the transition smoother. However, it can leave a ghost line artifact.
+
+**Best compromise found:** return a single static placeholder line (e.g. a space or the header repeated) during partial, so height never changes.
+
+### 4. Large-file diffs (>1000 lines) always glitch on expand/collapse
+
+Even with `clampDiff(diff, 50)` limiting output to 50 lines, if the underlying file is large, Pi's TUI still seems to allocate/render a larger internal buffer. Toggling `Ctrl+E` causes a massive text flash before settling.
+
+**Verdict:** If you need glitch-free display for large files, **do not render diffs at all** inside `renderResult`. Show only a one-line summary.
+
+### 5. The only bulletproof solution: use a custom tool name
+
+`pi-xai-oauth` avoids all of this by registering **new** tool names (`StrReplace`, `Edit` with capital E) instead of overriding the built-in `edit`. Custom tool names have **no built-in renderer**, so:
+- `renderShell: "default"` works perfectly — Pi draws the Box, no fallback conflicts.
+- No JSON-dump flash.
+- No duplicate blocks.
+
+**If visual stability matters more than the model calling `edit` by name**, this is the only path that "just works."
+
+### 6. Minimal stable override pattern (if you must keep `name: "edit"`)
+
+If you absolutely need to override the built-in `edit` and want the least-glitchy display:
+
+```ts
+pi.registerTool({
+  name: "edit",
+  renderShell: "self",
+
+  renderCall(args, theme) {
+    // ONE line, never fails, no heavy logic
+    const label = theme.fg("toolTitle", theme.bold("edit")); // or edit:batch etc.
+    return {
+      render(width: number) { return [safeTruncate(label, width)]; },
+      invalidate() {},
+    };
+  },
+
+  renderResult() {
+    // Dead-empty.renderCall already showed everything.
+    return { render() { return []; }, invalidate() {} };
+  },
+
+  async execute(...) { /* ... */ }
+});
+```
+
+What you get: a stable 1-line block (`edit:batch path.js (3 changes)`) that turns from blue → green without content jumps. No diff, no summary, no glitches. Whether this UX is acceptable depends on your workflow.
+
 ## See also
 
 - `docs/pi-quickref.md` — full ExtensionAPI reference

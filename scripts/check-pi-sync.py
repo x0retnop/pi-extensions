@@ -285,7 +285,7 @@ def main():
                 api_hits[term] = hits
 
     if api_hits:
-        print("\n--- Red Flag → Local File Matches ---")
+        print("\n--- Red Flag -> Local File Matches ---")
         for term, files in api_hits.items():
             print(f"\n  {term} found in:")
             for f in files:

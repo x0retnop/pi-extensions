@@ -177,7 +177,8 @@ export default function (pi: ExtensionAPI) {
       "Correct: @@ function setup() {\\n-    const x = 1;\\n+    const x = 2; | Wrong: @@ -    const x = 1;\\n-    const x = 1;",
     ],
     parameters: multiEditSchema,
-    renderShell: "default",
+
+    renderShell: "self",
 
     renderCall(args: any, theme: any) {
       const mode =
@@ -207,7 +208,7 @@ export default function (pi: ExtensionAPI) {
       const modeLabel = mode ? `edit:${mode}` : "edit";
       const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
       return {
-        render(_width: number) { return [label]; },
+        render(width: number) { return [safeTruncate(label, width, "...")]; },
         invalidate() {},
       };
     },
