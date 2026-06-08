@@ -68,7 +68,7 @@ function safeTruncate(str: string, maxWidth: number, suffix = "..."): string {
 const singleEditItemSchema = Type.Object(
   {
     oldText: Type.String({
-      description: "Exact text to find and replace (must match exactly)",
+      description: "Exact text to find and replace (must match exactly including whitespace, quotes, and backticks)",
     }),
     newText: Type.String({
       description: "New text to replace the old text with",
@@ -142,11 +142,7 @@ function clampDiff(diff: string | undefined, maxLines = 50): string {
   return lines.slice(0, maxLines).join("\n") + "\n... (diff truncated)";
 }
 
-interface RenderCtx {
-  isPartial: boolean;
-  executionStarted: boolean;
-  isError: boolean;
-}
+
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
@@ -168,8 +164,10 @@ export default function (pi: ExtensionAPI) {
       "For multiple replacements across DIFFERENT files use the multi array; each item MUST have its own path",
       "multi and edits are mutually exclusive; never use both in one call",
       "The patch parameter is mutually exclusive with oldText/newText/multi/edits",
-      "oldText must match exactly including whitespace, quotes, and trailing spaces",
+      "oldText must match exactly including whitespace, quotes, backticks, and trailing spaces",
       "If preflight fails, use the MOST RECENT read output as the only source for oldText. Ignore earlier file versions from context",
+      "If preflight fails, DO NOT rewrite the entire file with write. Use read with offset/limit or grep to get the exact current text, then retry",
+      "Never fall back to write for the whole file just because an edit failed to match",
       "Patch: wrap in *** Begin Patch ... *** End Patch. Use *** Update File:, *** Add File:, *** Delete File:",
       "Patch @@ marker must contain a line of CONTEXT that appears BEFORE the change, never the changed line itself",
       "Patch lines: '-' removes the exact file line, '+' adds a new line, ' ' is optional unchanged context",
@@ -181,40 +179,53 @@ export default function (pi: ExtensionAPI) {
     renderShell: "self",
 
     renderCall(args: any, theme: any) {
-      const mode =
-        args.patch ? "patch" :
-        Array.isArray(args.multi) ? "multi" :
-        Array.isArray(args.edits) ? "batch" :
-        "";
+      try {
+        const mode =
+          args && args.patch ? "patch" :
+          Array.isArray(args?.multi) ? "multi" :
+          Array.isArray(args?.edits) ? "batch" :
+          "";
 
-      const count =
-        args.patch ? "patch" :
-        Array.isArray(args.multi) ? `${args.multi.length} file${args.multi.length === 1 ? "" : "s"}` :
-        Array.isArray(args.edits) ? `${args.edits.length} change${args.edits.length === 1 ? "" : "s"}` :
-        "1 change";
+        const count =
+          args && args.patch ? "patch" :
+          Array.isArray(args?.multi) ? `${args.multi.length} file${args.multi.length === 1 ? "" : "s"}` :
+          Array.isArray(args?.edits) ? `${args.edits.length} change${args.edits.length === 1 ? "" : "s"}` :
+          "1 change";
 
-      let target: string;
-      if (args.path) {
-        target = shortenPath(args.path);
-      } else if (Array.isArray(args.multi) && args.multi.length > 0) {
-        const uniquePaths = new Set(args.multi.map((m: any) => m.path).filter(Boolean));
-        target = uniquePaths.size === 1
-          ? shortenPath(args.multi[0].path)
-          : `${uniquePaths.size} files`;
-      } else {
-        target = "...";
+        let target: string;
+        if (args?.path) {
+          target = shortenPath(args.path);
+        } else if (Array.isArray(args?.multi) && args.multi.length > 0) {
+          const uniquePaths = new Set(args.multi.map((m: any) => m.path).filter(Boolean));
+          target = uniquePaths.size === 1
+            ? shortenPath(args.multi[0].path)
+            : `${uniquePaths.size} files`;
+        } else {
+          target = "...";
+        }
+
+        const modeLabel = mode ? `edit:${mode}` : "edit";
+        const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
+
+        return {
+          render(width: number) { return [safeTruncate(label, width)]; },
+          invalidate() {},
+        };
+      } catch {
+        const safeLabel = theme.fg("toolTitle", theme.bold("edit"));
+        return {
+          render(width: number) { return [safeTruncate(safeLabel, width)]; },
+          invalidate() {},
+        };
       }
-
-      const modeLabel = mode ? `edit:${mode}` : "edit";
-      const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
-      return {
-        render(width: number) { return [safeTruncate(label, width, "...")]; },
-        invalidate() {},
-      };
     },
 
     renderResult() {
-      return { render() { return []; }, invalidate() {} };
+      // Zero-glitches: render nothing. The execute result content is sent to the LLM.
+      return {
+        render(_width: number) { return []; },
+        invalidate() {},
+      };
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -243,13 +254,20 @@ export default function (pi: ExtensionAPI) {
       if (pa !== undefined) {
         const ops = parsePatch(pa);
 
-        await applyPatchOperations(
-          ops,
-          createVirtualWorkspace(ctx.cwd),
-          ctx.cwd,
-          signal,
-          { collectDiff: false },
-        );
+        try {
+          await applyPatchOperations(
+            ops,
+            createVirtualWorkspace(ctx.cwd),
+            ctx.cwd,
+            signal,
+            { collectDiff: false },
+          );
+        } catch (err: any) {
+          throw new Error(
+            `STOP — do not rewrite. Read exact text, fix patch syntax, then retry.\n` +
+            `Patch preflight failed: ${err.message ?? String(err)}`,
+          );
+        }
 
         const applied = await applyPatchOperations(
           ops,
@@ -350,13 +368,18 @@ export default function (pi: ExtensionAPI) {
         const preflightFails = preflightResults.filter((r) => !r.success);
         if (preflightFails.length > 0) {
           throw new Error(
-            `Preflight failed — ${preflightFails.length}/${edits.length} edit(s) could not be matched. No files were modified.\n` +
+            `STOP — do not rewrite. Read exact text, then retry.\n` +
+            `Preflight failed — ${preflightFails.length}/${edits.length} unmatched (no files modified).\n` +
             formatResults(preflightResults, edits.length),
           );
         }
       } catch (err: any) {
+        const msg = err.message ?? String(err);
+        if (msg.startsWith("STOP")) {
+          throw err;
+        }
         throw new Error(
-          `Preflight failed before mutating files.\n${err.message ?? String(err)}`,
+          `Preflight failed before mutating files.\n${msg}`,
         );
       }
 

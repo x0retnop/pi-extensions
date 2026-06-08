@@ -137,9 +137,35 @@ function reserveRequestBudget(): { exhausted: true } | null {
 	return null;
 }
 
-function requestSignal(signal?: AbortSignal): AbortSignal {
-	const timeout = AbortSignal.timeout(60000);
-	return signal ? AbortSignal.any([signal, timeout]) : timeout;
+async function fetchWithTimeout(url: string, init: RequestInit & { timeoutMs?: number }): Promise<Response> {
+	const { timeoutMs = 60000, ...rest } = init;
+	const controller = new AbortController();
+
+	if (rest.signal) {
+		if (rest.signal.aborted) {
+			controller.abort();
+		} else {
+			rest.signal.addEventListener("abort", () => controller.abort(), { once: true });
+		}
+	}
+
+	const timer = setTimeout(() => controller.abort(new Error(`Request timeout after ${timeoutMs}ms: ${url}`)), timeoutMs);
+
+	try {
+		const res = await fetch(url, { ...rest, signal: controller.signal });
+		return res;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function readBodyWithTimeout(response: Response, timeoutMs: number = 60000): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`Response body timeout after ${timeoutMs}ms`)), timeoutMs);
+		response.text()
+			.then((text) => { clearTimeout(timer); resolve(text); })
+			.catch((err) => { clearTimeout(timer); reject(err); });
+	});
 }
 
 function recencyToStartDate(filter: string): string {
@@ -237,30 +263,36 @@ export async function callExaMcp(
 	args: Record<string, unknown>,
 	signal?: AbortSignal,
 ): Promise<string> {
-	const response = await fetch(EXA_MCP_URL, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"Accept": "application/json, text/event-stream",
-		},
-		body: JSON.stringify({
-			jsonrpc: "2.0",
-			id: 1,
-			method: "tools/call",
-			params: {
-				name: toolName,
-				arguments: args,
+	let response;
+	try {
+		response = await fetchWithTimeout(EXA_MCP_URL, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Accept": "application/json, text/event-stream",
 			},
-		}),
-		signal: requestSignal(signal),
-	});
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: {
+					name: toolName,
+					arguments: args,
+				},
+			}),
+			signal,
+		});
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		throw new Error(`Exa MCP fetch failed: ${message.slice(0, 300)}`);
+	}
 
 	if (!response.ok) {
-		const errorText = await response.text();
+		const errorText = await readBodyWithTimeout(response);
 		throw new Error(`Exa MCP error ${response.status}: ${errorText.slice(0, 300)}`);
 	}
 
-	const body = await response.text();
+	const body = await readBodyWithTimeout(response);
 	const dataLines = body.split("\n").filter(line => line.startsWith("data:"));
 
 	let parsed: ExaMcpRpcResponse | null = null;
@@ -457,18 +489,24 @@ export async function searchWithExa(query: string, options: ExaSearchOptions = {
 
 	try {
 		if (!useSearch) {
-			const response = await fetch(EXA_ANSWER_URL, {
-				method: "POST",
-				headers: {
-					"x-api-key": apiKey,
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify({
-					query,
-					text: true,
-				}),
-				signal: requestSignal(options.signal),
-			});
+			let response;
+			try {
+				response = await fetchWithTimeout(EXA_ANSWER_URL, {
+					method: "POST",
+					headers: {
+						"x-api-key": apiKey,
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({
+						query,
+						text: true,
+					}),
+					signal: options.signal,
+				});
+			} catch (err) {
+				const message = err instanceof Error ? err.message : String(err);
+				throw new Error(`Exa API answer fetch failed: ${message.slice(0, 300)}`);
+			}
 
 			if (!response.ok) {
 				const errorText = await response.text();
@@ -485,25 +523,31 @@ export async function searchWithExa(query: string, options: ExaSearchOptions = {
 
 		const startDate = options.recencyFilter ? recencyToStartDate(options.recencyFilter) : null;
 		const domainFilters = mapDomainFilter(options.domainFilter);
-		const response = await fetch(EXA_SEARCH_URL, {
-			method: "POST",
-			headers: {
-				"x-api-key": apiKey,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({
-				query,
-				type: "auto",
-				numResults: defaultNumResults,
-				...domainFilters,
-				...(startDate ? { startPublishedDate: startDate } : {}),
-				contents: {
-					text: options.includeContent ? true : { maxCharacters: 3000 },
-					highlights: true,
+		let response;
+		try {
+			response = await fetchWithTimeout(EXA_SEARCH_URL, {
+				method: "POST",
+				headers: {
+					"x-api-key": apiKey,
+					"Content-Type": "application/json",
 				},
-			}),
-			signal: requestSignal(options.signal),
-		});
+				body: JSON.stringify({
+					query,
+					type: "auto",
+					numResults: defaultNumResults,
+					...domainFilters,
+					...(startDate ? { startPublishedDate: startDate } : {}),
+					contents: {
+						text: options.includeContent ? true : { maxCharacters: 3000 },
+						highlights: true,
+					},
+				}),
+				signal: options.signal,
+			});
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			throw new Error(`Exa API search fetch failed: ${message.slice(0, 300)}`);
+		}
 
 		if (!response.ok) {
 			const errorText = await response.text();

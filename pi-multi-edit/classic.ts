@@ -99,76 +99,91 @@ function findByNormalizedLines(
   return undefined;
 }
 
-function buildSuggestion(content: string, oldText: string): string | undefined {
+interface Candidate {
+  idx: number;
+  line: string;
+  score: number;
+}
+
+function findTopCandidates(content: string, oldText: string, limit = 2): Candidate[] {
   const fileLines = content.split("\n");
   const oldLines = oldText.split("\n");
 
-  if (oldLines.length === 0 || oldText.trim().length === 0) {
-    const tail = fileLines.slice(-5);
-    const start = fileLines.length - tail.length + 1;
-    const pad = String(fileLines.length).length;
-    return `Looking for empty/whitespace text. End of file:\n` +
-      tail.map((l, i) => `${String(start + i).padStart(pad)}: ${l}`).join("\n");
-  }
+  if (oldLines.length === 0 || oldText.trim().length === 0) return [];
 
   const anchor = oldLines[0];
   const anchorTrimmed = anchor.trim();
   const words = [...anchorTrimmed.matchAll(/\b[a-zA-Z_][a-zA-Z0-9_]{2,}\b/g)].map((m) => m[0].toLowerCase());
   const uniqueWords = [...new Set(words)];
 
-  type Scored = { idx: number; line: string; score: number };
-  const scored: Scored[] = [];
-
+  const scored: Candidate[] = [];
   for (let i = 0; i < fileLines.length; i++) {
     const line = fileLines[i];
     let score = 0;
-
-    // Exact trim match is the strongest signal
     if (line.trim() === anchorTrimmed) score += 100;
-
-    // Keyword overlap
     const lower = line.toLowerCase();
-    for (const w of uniqueWords) {
-      if (lower.includes(w)) score += 10;
-    }
-
-    // Common prefix (helps with indent-only mismatches)
-    let common = 0;
+    for (const w of uniqueWords) if (lower.includes(w)) score += 10;
     for (let k = 0; k < Math.min(line.length, anchor.length); k++) {
-      if (line[k] === anchor[k]) common++;
-      else break;
+      if (line[k] === anchor[k]) score++; else break;
     }
-    score += common;
-
     if (score > 0) scored.push({ idx: i + 1, line, score });
   }
 
-  if (scored.length === 0) return undefined;
-
+  if (scored.length === 0) return [];
   scored.sort((a, b) => b.score - a.score);
 
   const seen = new Set<number>();
-  const top: Scored[] = [];
+  const top: Candidate[] = [];
   for (const s of scored) {
-    if (!seen.has(s.idx)) {
-      seen.add(s.idx);
-      top.push(s);
-    }
-    if (top.length >= 3) break;
+    if (!seen.has(s.idx)) { seen.add(s.idx); top.push(s); }
+    if (top.length >= limit) break;
+  }
+  return top;
+}
+
+function diagnoseMismatch(oldText: string, candidates: Candidate[]): string | undefined {
+  const hints: string[] = [];
+
+  if (/[\u2018\u2019\u201A\u201B\u201C\u201D\u201E\u201F]/.test(oldText)) {
+    hints.push("curly/smart quotes in oldText");
   }
 
-  const numW = String(fileLines.length).length;
-  const pad = (n: number) => String(n).padStart(numW);
+  if (oldText !== oldText.trimEnd()) {
+    hints.push("trailing whitespace in oldText");
+  }
 
-  return top.map(({ idx, line }) => {
-    const prev = fileLines[idx - 2] ?? null;
-    const next = fileLines[idx] ?? null;
-    const rows: string[] = [];
-    if (prev !== null) rows.push(`${pad(idx - 1)}: ${prev}`);
-    rows.push(`${pad(idx)}: \`${line}\``);
-    if (next !== null) rows.push(`${pad(idx + 1)}: ${next}`);
-    return `Did you mean line ${idx}?\n${rows.join("\n")}`;
-  }).join("\n\n");
+  const oldLines = oldText.split("\n");
+  if (oldLines.some((l) => l.startsWith("`"))) {
+    hints.push("check leading backtick");
+  }
+
+  if (oldText.includes("\t")) {
+    hints.push("tab characters in oldText");
+  }
+
+  if (!oldText.endsWith("\n") && oldText.includes("\n")) {
+    hints.push("missing trailing newline");
+  } else if (oldText.endsWith("\n") && oldLines.length > 1 && oldLines[oldLines.length - 1] === "") {
+    hints.push("extra trailing newline");
+  }
+
+  if (candidates.length > 0) {
+    const best = candidates[0];
+    if (oldText.toLowerCase() === best.line.toLowerCase() && oldText !== best.line) {
+      hints.push(`case mismatch on line ${best.idx}`);
+    }
+    if (oldText.trimStart() === best.line.trimStart() && oldText !== best.line) {
+      hints.push(`indentation differs on line ${best.idx}`);
+    }
+  }
+
+  return hints.length > 0 ? `Hint: ${hints.join("; ")}.` : undefined;
+}
+
+function buildSuggestion(content: string, oldText: string): string | undefined {
+  const top = findTopCandidates(content, oldText, 2);
+  if (top.length === 0) return undefined;
+  return "Did you mean " + top.map(({ idx, line }) => `line ${idx}: \`${line}\``).join(", ") + "?";
 }
 
 interface IndexedEdit {
@@ -296,13 +311,18 @@ function applyGroupToContent(
         continue;
       }
 
-      const suggestion = buildSuggestion(content, edit.oldText);
+      const candidates = findTopCandidates(content, edit.oldText, 2);
+      const suggestion = candidates.length > 0
+        ? "Did you mean " + candidates.map(({ idx, line }) => `line ${idx}: \`${line}\``).join(", ") + "?"
+        : undefined;
+      const hint = diagnoseMismatch(edit.oldText, candidates);
 
       results[index] = {
         path: edit.path,
         success: false,
-        message: `Could not find the exact text in ${edit.path}. The old text must match exactly including all whitespace and newlines.` +
-          (suggestion ? `\n\n${suggestion}` : ""),
+        message: `Could not find the exact text in ${edit.path}.` +
+          (hint ? ` ${hint}` : "") +
+          (suggestion ? ` ${suggestion}` : ""),
       };
 
       if (continueOnError) continue;

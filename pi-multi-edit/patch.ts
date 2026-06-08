@@ -136,6 +136,14 @@ function parseHunk(path: string, cursor: LineCursor): Hunk {
     throw new Error(`Expected update hunk to start with @@ context marker, got: '${header}'`);
   }
 
+  if (contextPrefix !== undefined && /^-\d+(,\d+)? \+\d+(,\d+)? @@?$/.test(contextPrefix)) {
+    throw new Error(
+      `Invalid hunk context '${contextPrefix}' looks like a unified diff line-number header. ` +
+      `In Codex patch format, @@ must be followed by an actual line of code from the file, not line numbers. ` +
+      `Example: @@ function setup() {`,
+    );
+  }
+
   const oldLines: string[] = [];
   const newLines: string[] = [];
 
