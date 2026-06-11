@@ -2,21 +2,17 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { activityMonitor } from "./activity.js";
+import { getApiKey as getApiKeyFromConfig } from "./config.js";
 import type { ExtractedContent } from "./extract.js";
-import type { SearchOptions, SearchResponse } from "./gemini-search.js";
+import type { SearchOptions, SearchResponse } from "./search-orchestrator.js";
 
 const EXA_ANSWER_URL = "https://api.exa.ai/answer";
 const EXA_SEARCH_URL = "https://api.exa.ai/search";
 const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
-const CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
 const USAGE_PATH = join(homedir(), ".pi", "exa-usage.json");
 
 const MONTHLY_LIMIT = 1000;
 const WARNING_THRESHOLD = 800;
-
-interface WebSearchConfig {
-	exaApiKey?: unknown;
-}
 
 interface ExaUsage {
 	month: string;
@@ -59,34 +55,10 @@ export interface ExaSearchOptions extends SearchOptions {
 
 type McpParsedResult = { title: string; url: string; content: string };
 
-let cachedConfig: WebSearchConfig | null = null;
 let warnedMonth: string | null = null;
 
-function loadConfig(): WebSearchConfig {
-	if (cachedConfig) return cachedConfig;
-	if (!existsSync(CONFIG_PATH)) {
-		cachedConfig = {};
-		return cachedConfig;
-	}
-
-	const raw = readFileSync(CONFIG_PATH, "utf-8");
-	try {
-		cachedConfig = JSON.parse(raw) as WebSearchConfig;
-		return cachedConfig;
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-	}
-}
-
-function normalizeApiKey(value: unknown): string | null {
-	if (typeof value !== "string") return null;
-	const normalized = value.trim();
-	return normalized.length > 0 ? normalized : null;
-}
-
 function getApiKey(): string | null {
-	return normalizeApiKey(process.env.EXA_API_KEY) ?? normalizeApiKey(loadConfig().exaApiKey);
+	return getApiKeyFromConfig("exa");
 }
 
 function getCurrentMonth(): string {
@@ -205,7 +177,7 @@ function isLikelyBinaryGarbage(text: string): boolean {
 	let suspicious = 0;
 	for (let i = 0; i < text.length; i++) {
 		const code = text.charCodeAt(i);
-		// Null bytes, control chars (кроме whitespace), и replacement character �
+		// Null bytes, control chars (except whitespace), and replacement character �
 		if (code === 0x00 || code === 0xFFFD || (code < 0x20 && code !== 0x09 && code !== 0x0A && code !== 0x0D)) {
 			suspicious++;
 		}
@@ -411,7 +383,7 @@ function buildMcpQuery(query: string, options: ExaSearchOptions): string {
 	return parts.join(" ");
 }
 
-async function searchWithExaMcp(query: string, options: ExaSearchOptions = {}): Promise<SearchResponse | null> {
+export async function searchWithExaMcp(query: string, options: ExaSearchOptions = {}): Promise<SearchResponse | null> {
 	const enrichedQuery = buildMcpQuery(query, options);
 	const activityId = activityMonitor.logStart({ type: "api", query: enrichedQuery });
 

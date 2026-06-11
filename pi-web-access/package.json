@@ -1,6 +1,6 @@
 {
   "name": "pi-web-access",
-  "version": "0.10.7",
+  "version": "0.11.0",
   "description": "Web search, URL fetching, and code search for Pi coding agent",
   "type": "module",
   "keywords": [

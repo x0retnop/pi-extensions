@@ -14,6 +14,7 @@ pi install ./pi-session-memory
 - `get_session_content` — safely read a specific session with hard limits (`maxMessages`, `maxChars`). Use `hitIndex` from the last `search_sessions` or an explicit `sourcePath`.
 - `/session-memory-status` — show index status (enabled, indexed count, model).
 - `/session-memory-rebuild` — trigger incremental rebuild.
+- `/session-memory-resume [all]` — manually pick a saved session and load its context into the editor. Default scope is the current directory; pass `all` to list sessions from every project. You can add a note so the agent understands what to focus on.
 
 ## Workflow
 

@@ -20,6 +20,124 @@ const MATCH_PASSES: readonly ((s: string) => string)[] = [
   trimTrailingPerLine,
 ];
 
+/* ── Indentation normalization ───────────────────────────────────────── */
+
+function detectIndentUnit(content: string): "\t" | number | null {
+  const lines = content.split("\n");
+  const spaceIndents: number[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    if (trimmed === line) continue;
+    if (line[0] === "\t") return "\t";
+    const spaces = line.length - trimmed.length;
+    if (spaces > 0) spaceIndents.push(spaces);
+  }
+
+  if (spaceIndents.length === 0) return null;
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const unit = spaceIndents.reduce(gcd);
+  return unit >= 2 ? unit : null;
+}
+
+function detectTabWidth(content: string): number {
+  const lines = content.split("\n");
+  const counts = new Map<number, number>();
+
+  for (const line of lines) {
+    const m = line.match(/^(\t+)( +)/);
+    if (m) {
+      const spaces = m[2].length;
+      for (const w of [2, 4, 8]) {
+        if (spaces < w) {
+          counts.set(w, (counts.get(w) || 0) + 1);
+        }
+      }
+    }
+  }
+
+  if (counts.size > 0) {
+    let best = 2;
+    let bestCount = 0;
+    for (const [w, c] of counts) {
+      if (c > bestCount) {
+        bestCount = c;
+        best = w;
+      }
+    }
+    return best;
+  }
+
+  // fallback: look at space-only indents
+  const spaceIndents: number[] = [];
+  for (const line of lines) {
+    const m = line.match(/^( +)/);
+    if (m && !line.includes("\t")) spaceIndents.push(m[1].length);
+  }
+  if (spaceIndents.length > 0) {
+    const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+    const unit = spaceIndents.reduce(gcd);
+    if (unit >= 2) return unit;
+  }
+  return 2;
+}
+
+function convertIndent(
+  s: string,
+  from: "\t" | number,
+  to: "\t" | number,
+  tabWidth = 2,
+): string {
+  return s
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trimStart();
+      const indent = line.slice(0, line.length - trimmed.length);
+      if (!indent) return line;
+
+      let depth = 0;
+      let i = 0;
+      while (i < indent.length) {
+        if (indent[i] === "\t") {
+          depth++;
+          i++;
+        } else {
+          let spaces = 0;
+          while (i < indent.length && indent[i] === " ") {
+            spaces++;
+            i++;
+          }
+          const unit = from === "\t" ? tabWidth : (from as number);
+          depth += Math.floor(spaces / unit);
+        }
+      }
+
+      if (to === "\t") {
+        return "\t".repeat(depth) + trimmed;
+      }
+      return " ".repeat(depth * (to as number)) + trimmed;
+    })
+    .join("\n");
+}
+
+function normalizeIndentOldText(
+  oldText: string,
+  content: string,
+): string | undefined {
+  const fileStyle = detectIndentUnit(content);
+  const oldStyle = detectIndentUnit(oldText);
+  if (!fileStyle || !oldStyle || fileStyle === oldStyle) return undefined;
+
+  const tabWidth =
+    fileStyle === "\t" || oldStyle === "\t"
+      ? detectTabWidth(content)
+      : 2;
+  const converted = convertIndent(oldText, oldStyle, fileStyle, tabWidth);
+  return converted === oldText ? undefined : converted;
+}
+
+/* ────────────────────────────────────────────────────────────────────── */
+
 export function findActualString(
   content: string,
   oldText: string,
@@ -50,6 +168,18 @@ export function findActualString(
       if (match) return match;
     }
   }
+
+  // Indentation-normalization pass (tabs ↔ spaces)
+  const indentConverted = normalizeIndentOldText(oldText, content);
+  if (indentConverted !== undefined) {
+    const pos = content.indexOf(indentConverted, offset);
+    if (pos !== -1) {
+      return { pos, actualOldText: indentConverted };
+    }
+    const match = findByNormalizedLines(content, indentConverted, offset, (s) => s);
+    if (match) return match;
+  }
+
   return undefined;
 }
 
@@ -173,7 +303,21 @@ function diagnoseMismatch(oldText: string, candidates: Candidate[]): string | un
       hints.push(`case mismatch on line ${best.idx}`);
     }
     if (oldText.trimStart() === best.line.trimStart() && oldText !== best.line) {
-      hints.push(`indentation differs on line ${best.idx}`);
+      const oldIndent = oldText.slice(0, oldText.length - oldText.trimStart().length);
+      const fileIndent = best.line.slice(0, best.line.length - best.line.trimStart().length);
+
+      const desc = (indent: string) => {
+        const tabs = indent.split("").filter((c) => c === "\t").length;
+        const spaces = indent.split("").filter((c) => c === " ").length;
+        const parts: string[] = [];
+        if (tabs) parts.push(`${tabs} tab(s)`);
+        if (spaces) parts.push(`${spaces} space(s)`);
+        return parts.join(" + ") || "none";
+      };
+
+      hints.push(
+        `indentation differs on line ${best.idx}: you sent ${desc(oldIndent)}, file has ${desc(fileIndent)}`,
+      );
     }
   }
 
@@ -183,7 +327,24 @@ function diagnoseMismatch(oldText: string, candidates: Candidate[]): string | un
 function buildSuggestion(content: string, oldText: string): string | undefined {
   const top = findTopCandidates(content, oldText, 2);
   if (top.length === 0) return undefined;
-  return "Did you mean " + top.map(({ idx, line }) => `line ${idx}: \`${line}\``).join(", ") + "?";
+
+  const indentDesc = (line: string) => {
+    const trimmed = line.trimStart();
+    const indent = line.slice(0, line.length - trimmed.length);
+    if (!indent) return "";
+    const tabs = indent.split("").filter((c) => c === "\t").length;
+    const spaces = indent.split("").filter((c) => c === " ").length;
+    const parts: string[] = [];
+    if (tabs) parts.push(`${tabs} tab(s)`);
+    if (spaces) parts.push(`${spaces} space(s)`);
+    return ` (starts with ${parts.join(" + ")})`;
+  };
+
+  return (
+    "Did you mean " +
+    top.map(({ idx, line }) => `line ${idx}: \`${line}\`${indentDesc(line)}`).join(", ") +
+    "?"
+  );
 }
 
 interface IndexedEdit {
@@ -223,6 +384,8 @@ interface ApplyOptions {
   collectDiff?: boolean;
   rollbackOnError?: boolean;
   continueOnError?: boolean;
+  /** If true, messages will say "Matched" instead of "Edited" so the agent does not think files were mutated. */
+  isPreflight?: boolean;
 }
 
 export async function applyClassicEdits(
@@ -252,7 +415,7 @@ export async function applyClassicEdits(
 
       let updatedContent: string;
       try {
-        updatedContent = applyGroupToContent(group, originalContent, results, edits.length, signal, continueOnError);
+        updatedContent = applyGroupToContent(group, originalContent, results, edits.length, signal, continueOnError, options.isPreflight ?? false);
       } catch (err) {
         if (continueOnError) continue;
         throw err;
@@ -289,12 +452,14 @@ function applyGroupToContent(
   totalEdits: number,
   signal: AbortSignal | undefined,
   continueOnError = false,
+  isPreflight = false,
 ): string {
   let content = originalContent;
   let searchOffset = 0;
 
   const appliedPairs = new Set<string>();
   const pairKey = (edit: EditItem) => `${edit.oldText}\0${edit.newText}`;
+  let failedInFile = false;
 
   for (const { index, edit } of group) {
     throwIfAborted(signal);
@@ -302,6 +467,8 @@ function applyGroupToContent(
     const match = findActualString(content, edit.oldText, searchOffset);
 
     if (match === undefined) {
+      failedInFile = true;
+
       if (appliedPairs.has(pairKey(edit))) {
         results[index] = {
           path: edit.path,
@@ -328,10 +495,24 @@ function applyGroupToContent(
       if (continueOnError) continue;
 
       markRemainingSkipped(group, index, results);
-      throw new Error(formatResults(results.filter(Boolean), totalEdits));
+      throw new Error(formatResults(results.filter(Boolean), totalEdits, isPreflight));
     }
 
     const { pos, actualOldText } = match;
+
+    if (failedInFile && continueOnError) {
+      results[index] = {
+        path: edit.path,
+        success: true,
+        skipped: true,
+        preflight: isPreflight,
+        message: `Matched ${edit.path}, but will be skipped in actual apply because an earlier edit failed.`,
+      };
+      searchOffset = pos + actualOldText.length;
+      appliedPairs.add(pairKey(edit));
+      continue;
+    }
+
     content = content.slice(0, pos) + edit.newText + content.slice(pos + actualOldText.length);
     searchOffset = pos + edit.newText.length;
     appliedPairs.add(pairKey(edit));
@@ -339,7 +520,8 @@ function applyGroupToContent(
     results[index] = {
       path: edit.path,
       success: true,
-      message: `Edited ${edit.path}.`,
+      preflight: isPreflight,
+      message: isPreflight ? `Matched ${edit.path}.` : `Edited ${edit.path}.`,
     };
   }
 
@@ -370,16 +552,24 @@ async function rollbackSnapshots(snapshots: Map<string, string>, workspace: Work
   );
 }
 
-export function formatResults(results: EditResult[], totalEdits: number): string {
+export function formatResults(results: EditResult[], totalEdits: number, isPreflight = false): string {
   const lines: string[] = [];
+  let hasSkipped = false;
   for (let i = 0; i < results.length; i++) {
     const r = results[i];
-    const status = r.success ? "✓" : "✗";
+    const status = r.success ? (r.skipped ? "⊘" : (isPreflight ? "≈" : "✓")) : "✗";
     lines.push(`${status} Edit ${i + 1}/${totalEdits} (${r.path}): ${r.message}`);
+    if (r.skipped) hasSkipped = true;
   }
   const remaining = totalEdits - results.length;
   if (remaining > 0) {
     lines.push(`⊘ ${remaining} remaining edit(s) skipped due to error.`);
+  }
+  if (hasSkipped) {
+    lines.push(
+      `Note: ⊘ = matched but will be skipped in actual apply because an earlier edit failed. ` +
+      `Fix the failed edit(s) and retry the whole batch.`,
+    );
   }
   return lines.join("\n");
 }

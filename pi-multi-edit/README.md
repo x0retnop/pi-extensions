@@ -1,23 +1,27 @@
 # pi-multi-edit
 
-Replaces the built-in `edit` tool with a batch-capable version.
+Batch-capable replacement for the built-in `edit` tool.
 
-## What it does
+## Features
 
 - **Single edit** — classic `path` + `oldText` + `newText`, fully backward-compatible.
-- **Single-file batch (`edits`)** — apply many edits to one file using a top-level `path`.
-- **Multi-file batch (`multi`)** — apply edits across one or more files in a single tool call; each item carries its own `path`.
-- **Patch mode** — Codex-style `*** Begin Patch … *** End Patch` payloads with `Add File`, `Delete File`, and `Update File` operations.
+- **Single-file batch (`edits`)** — many edits to one file via a top-level `path`.
+- **Multi-file batch (`multi`)** — edits across one or more files in a single tool call.
+- **Patch mode** — Codex-style `*** Begin Patch … *** End Patch` with `Add File`, `Delete File`, and `Update File` operations.
+- **Atomic** — preflight pass on an in-memory snapshot first. If any replacement fails, no real file is touched. Failed real execution rolls back all changes automatically.
+- **Tolerant matching** — retries with curly-quote and trailing-whitespace normalization before failing.
+- **Duplicate safety** — duplicate `oldText → newText` pairs in the same file are skipped gracefully.
+- **Auto-sort** — same-file edits are sorted top-to-bottom so positional matching works regardless of model ordering.
 
-All mutations run a **preflight pass** on an in-memory snapshot first. If any replacement fails, no real file is touched. Both batch and patch modes are **fully atomic**: if any edit or patch operation fails during real execution, all changes are rolled back automatically.
+## Tradeoff
+
+Replaces the native `edit` renderer. In the TUI, multi-file and patch calls may render in a compact raw form instead of the native diff view. The functionality is fully intact; only the visual presentation differs.
 
 ## Install
 
 ```bash
 pi install ./pi-multi-edit
 ```
-
-Or copy the folder into your Pi extensions directory and `/reload`.
 
 ## Parameters
 
@@ -58,21 +62,8 @@ Multi-file batch:
 }
 ```
 
-## Patch Format
+## Patch format
 
-Patches use Codex-style `*** Begin Patch ... *** End Patch` syntax.
-
-### Rules
-
-1. **`@@` context marker** — contains a line that appears **BEFORE** the change, not the line being changed.
-2. **`-` lines** — exact lines removed from the file.
-3. **`+` lines** — new lines inserted.
-4. **` ` lines** (space prefix) — context kept unchanged (optional but recommended).
-5. **Insertions with no removal** — use `@@` with context prefix, then only `+` lines.
-
-### Examples
-
-**Replace a line (context = line before):**
 ```text
 *** Begin Patch
 *** Update File: src/main.ts
@@ -82,53 +73,7 @@ Patches use Codex-style `*** Begin Patch ... *** End Patch` syntax.
 *** End Patch
 ```
 
-**Insert after existing code (no old lines removed):**
-```text
-*** Begin Patch
-*** Update File: src/main.ts
-@@ function setup() {
-+    const y = 3;
-*** End Patch
-```
-
-**Multi-line replacement:**
-```text
-*** Begin Patch
-*** Update File: src/main.ts
-@@ function setup() {
--    const x = 1;
--    return x;
-+    const x = 2;
-+    return x + 1;
-*** End Patch
-```
-
-**Multi-file patch (update + add):**
-```text
-*** Begin Patch
-*** Update File: src/a.ts
-@@ const foo = 1;
--const foo = 1;
-+const foo = 2;
-*** Update File: src/b.ts
-@@ export
--const bar = 3;
-+const bar = 4;
-*** Add File: src/c.ts
-+export const baz = 5;
-*** End Patch
-```
-
-**Common mistake — WRONG:**
-```text
-@@ -    const x = 1;   <-- NEVER: @@ contains the line being changed
--    const x = 1;
-+    const x = 2;
-```
-
-## Notes
-
-- Same-file edits are auto-sorted top-to-bottom so positional matching works regardless of the order the model lists them.
-- Curly quotes and trailing-whitespace mismatches are retried with tolerant passes before failing.
-- Duplicate `oldText → newText` pairs in the same file are skipped gracefully instead of erroring.
-- Both batch and patch modes are **fully atomic**: if any edit fails, all changes are rolled back automatically.
+Rules:
+- `@@` line is context that appears **before** the change, not the line being changed.
+- `-` lines are removed; `+` lines are inserted; ` ` lines (space prefix) are kept context.
+- For insertions with no removal, use `@@` with a context prefix followed by only `+` lines.

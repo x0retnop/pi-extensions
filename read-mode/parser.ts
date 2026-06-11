@@ -12,6 +12,15 @@ export interface OverviewResult {
   sizeBytes: number;
 }
 
+export interface SectionExtractResult {
+  lines: string[];
+  startLine: number;
+  endLine: number;
+  blockEndDetected: boolean;
+  blockTruncated: boolean;
+  totalBlockLines?: number;
+}
+
 function detectLanguage(filePath: string): "js" | "ts" | "python" | "markdown" | "json" | "other" {
   if (filePath.endsWith(".py")) return "python";
   if (filePath.endsWith(".md") || filePath.endsWith(".mdx")) return "markdown";
@@ -113,11 +122,99 @@ function getSectionStartRegex(target: string, lang: string): RegExp {
   }
 }
 
+function findPythonBlockEnd(lines: string[], startIdx: number): number | null {
+  if (startIdx >= lines.length) return null;
+  const baseMatch = lines[startIdx].match(/^(\s*)/);
+  const baseIndent = baseMatch ? baseMatch[1].length : 0;
+
+  let lastContentLine = startIdx;
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    if (trimmed.startsWith("#")) continue;
+
+    const indentMatch = line.match(/^(\s*)/);
+    const indent = indentMatch ? indentMatch[1].length : 0;
+    if (indent <= baseIndent) {
+      return lastContentLine;
+    }
+    lastContentLine = i;
+  }
+  return lines.length - 1;
+}
+
+function findJsBlockEnd(lines: string[], startIdx: number): number | null {
+  let braceBalance = 0;
+  let insideBlock = false;
+
+  for (let i = startIdx; i < lines.length; i++) {
+    const line = lines[i];
+    let inString: '"' | "'" | '`' | null = null;
+    let escaped = false;
+    let inLineComment = false;
+
+    for (let j = 0; j < line.length; j++) {
+      const ch = line[j];
+
+      if (inLineComment) continue;
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (ch === inString) {
+          inString = null;
+        }
+        continue;
+      }
+
+      if (ch === '/' && j + 1 < line.length && line[j + 1] === '/') {
+        inLineComment = true;
+        continue;
+      }
+
+      if (ch === '"' || ch === "'" || ch === '`') {
+        inString = ch;
+        continue;
+      }
+
+      if (ch === '{') {
+        braceBalance++;
+        insideBlock = true;
+      } else if (ch === '}') {
+        if (!insideBlock) continue;
+        braceBalance--;
+        if (braceBalance === 0) {
+          return i;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function detectBlockEnd(lines: string[], startIdx: number, lang: string): number | null {
+  if (lang === "python") {
+    return findPythonBlockEnd(lines, startIdx);
+  }
+  if (lang === "ts" || lang === "js") {
+    return findJsBlockEnd(lines, startIdx);
+  }
+  return null;
+}
+
 export async function extractSection(
   filePath: string,
   target: string,
   limit: number
-): Promise<{ lines: string[]; startLine: number; endLine: number } | { candidates: { name: string; line: number }[] } | null> {
+): Promise<SectionExtractResult | { candidates: { name: string; line: number }[] } | null> {
   const content = await readFile(filePath, "utf-8");
   const lines = content.split("\n");
   const lang = detectLanguage(filePath);
@@ -142,12 +239,33 @@ export async function extractSection(
 
   const startIdx = matches[0].idx;
   const startLine = matches[0].line;
-  const endIdx = Math.min(lines.length - 1, startIdx + limit - 1);
+
+  const detectedEnd = detectBlockEnd(lines, startIdx, lang);
+  let blockEndDetected = false;
+  let blockTruncated = false;
+  let totalBlockLines: number | undefined;
+
+  let endIdx: number;
+  if (detectedEnd !== null) {
+    blockEndDetected = true;
+    totalBlockLines = detectedEnd - startIdx + 1;
+    if (detectedEnd > startIdx + limit - 1) {
+      endIdx = startIdx + limit - 1;
+      blockTruncated = true;
+    } else {
+      endIdx = detectedEnd;
+    }
+  } else {
+    endIdx = Math.min(lines.length - 1, startIdx + limit - 1);
+  }
 
   return {
     lines: lines.slice(startIdx, endIdx + 1),
     startLine,
     endLine: endIdx + 1,
+    blockEndDetected,
+    blockTruncated,
+    totalBlockLines,
   };
 }
 

@@ -1,5 +1,6 @@
 nul
 *.ps1
+*.txt
 _*.py
 .env
 node_modules/

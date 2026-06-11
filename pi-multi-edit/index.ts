@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { applyClassicEdits, formatResults } from "./classic.js";
@@ -117,7 +118,7 @@ const multiEditSchema = Type.Object({
   edits: Type.Optional(
     Type.Array(singleEditItemSchema, {
       description:
-        "Single-file batch edits within the file specified by the top-level path. Mutually exclusive with multi.",
+        "Single-file batch edits within the file specified by the top-level path. PREFERRED over multiple separate edit calls when changing the same file more than once. Mutually exclusive with multi.",
     }),
   ),
   patch: Type.Optional(
@@ -142,43 +143,59 @@ function clampDiff(diff: string | undefined, maxLines = 50): string {
   return lines.slice(0, maxLines).join("\n") + "\n... (diff truncated)";
 }
 
+class EditHeaderRenderer {
+  private _label = "";
+  private _bg = "toolPendingBg";
+  private _theme: any;
 
+  setLabel(label: string) { this._label = label; }
+  setBg(bg: string) { this._bg = bg; }
+  setTheme(theme: any) { this._theme = theme; }
+
+  render(width: number): string[] {
+    const padded = truncateToWidth(this._label, width, "", true);
+    return [this._theme.bg(this._bg, padded)];
+  }
+
+  invalidate() {
+    // Pi TUI will re-render this component on next frame.
+  }
+}
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "edit",
     label: "edit",
     description:
-      `Edit files by replacing exact text. Four modes:
-      1) Classic: single file, single replacement (path + oldText + newText).
-      2) Single-file batch: top-level path + edits array of {oldText, newText} for many changes in one file.
-      3) Multi-file batch: multi array of {path, oldText, newText} for changes across many files.
-      4) Patch: a patch string in Codex format for complex multi-file changes.
+      `Atomic file editor. Four modes (mutually exclusive):
+      1) Single: path + oldText + newText — one change in one file.
+      2) Single-file batch: top-level path + edits array [{oldText,newText}, ...] — many changes in ONE file. PREFERRED when editing the same file more than once.
+      3) Multi-file batch: multi array [{path,oldText,newText}, ...] — changes across DIFFERENT files.
+      4) Patch: patch string in Codex format for complex refactors.
 
-      Batch and patch edits are atomic: if any individual edit fails, all changes are rolled back and no files are modified. oldText must match exactly including whitespace.`,
+      Batches and patch are atomic: one failure rolls back ALL changes in that call. oldText must match exactly including whitespace.`,
     promptSnippet:
-      "Edit files with exact replacement. Use edits for single-file batches, multi for multi-file batches, and patch for Codex-style patches.",
+      "Edit files with exact text replacement. PREFER batching: use the `edits` array for multiple changes in the SAME file, `multi` for changes across DIFFERENT files, and `patch` for complex refactors. Avoid sending many separate single-edit calls for the same file.",
     promptGuidelines: [
-      "For a single replacement use path + oldText + newText",
-      "For multiple replacements in the SAME file use top-level path + the edits array",
-      "For multiple replacements across DIFFERENT files use the multi array; each item MUST have its own path",
-      "multi and edits are mutually exclusive; never use both in one call",
-      "The patch parameter is mutually exclusive with oldText/newText/multi/edits",
-      "oldText must match exactly including whitespace, quotes, backticks, and trailing spaces",
-      "If preflight fails, use the MOST RECENT read output as the only source for oldText. Ignore earlier file versions from context",
-      "If preflight fails, DO NOT rewrite the entire file with write. Use read with offset/limit or grep to get the exact current text, then retry",
-      "Never fall back to write for the whole file just because an edit failed to match",
+      "PREFER batching: if you plan 2+ changes in the same file, use ONE call with top-level path + edits array",
+      "Use `multi` ONLY when editing DIFFERENT files in one call; each item MUST have its own path",
+      "NEVER send multiple separate `edit` calls for the same file — batch them into one edits array",
+      "Single path+oldText+newText is ONLY for trivial one-line fixes; everything else should use edits/multi",
+      "oldText must match exactly including whitespace, tabs, quotes, backticks, and trailing spaces. If the file uses tabs for indentation, oldText must contain tabs, not spaces (and vice versa)",
+      "If a batch preflight fails, fix ONLY the failed edit(s) and re-send the ENTIRE batch; do NOT split into separate calls",
+      "If preflight fails, use the MOST RECENT read output as the only source for oldText; ignore earlier file versions from context. When copying from terminal output, verify whether indentation is shown as tabs or spaces",
+      "If preflight fails, DO NOT rewrite the entire file with write. Use read with offset/limit or grep to get exact current text, then retry the whole batch",
+      "In preflight output \"≈ Matched\" means the text was found but NO file was modified yet; \"✓ Edited\" means the change was written",
       "Patch: wrap in *** Begin Patch ... *** End Patch. Use *** Update File:, *** Add File:, *** Delete File:",
-      "Patch @@ marker must contain a line of CONTEXT that appears BEFORE the change, never the changed line itself",
-      "Patch lines: '-' removes the exact file line, '+' adds a new line, ' ' is optional unchanged context",
-      "To insert new code without removing old lines, use @@ with context followed by only '+' lines",
-      "Correct: @@ function setup() {\\n-    const x = 1;\\n+    const x = 2; | Wrong: @@ -    const x = 1;\\n-    const x = 1;",
+      "Patch @@ context must be a line that appears BEFORE the change, never the changed line itself",
+      "Example single-file batch: { path: 'src/main.ts', edits: [{oldText:'const x = 1;', newText:'const x = 2;'}, {oldText:'foo()', newText:'bar()'}] }",
+      "Example multi-file batch: { multi: [{path:'src/a.ts', oldText:'a', newText:'b'}, {path:'src/b.ts', oldText:'c', newText:'d'}] }",
     ],
     parameters: multiEditSchema,
 
     renderShell: "self",
 
-    renderCall(args: any, theme: any) {
+    renderCall(args: any, theme: any, context: any) {
       try {
         const mode =
           args && args.patch ? "patch" :
@@ -188,7 +205,7 @@ export default function (pi: ExtensionAPI) {
 
         const count =
           args && args.patch ? "patch" :
-          Array.isArray(args?.multi) ? `${args.multi.length} file${args.multi.length === 1 ? "" : "s"}` :
+          Array.isArray(args?.multi) ? `${args.multi.length} change${args.multi.length === 1 ? "" : "s"}` :
           Array.isArray(args?.edits) ? `${args.edits.length} change${args.edits.length === 1 ? "" : "s"}` :
           "1 change";
 
@@ -207,25 +224,39 @@ export default function (pi: ExtensionAPI) {
         const modeLabel = mode ? `edit:${mode}` : "edit";
         const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
 
-        return {
-          render(width: number) { return [safeTruncate(label, width)]; },
-          invalidate() {},
-        };
+        const renderer = new EditHeaderRenderer();
+        renderer.setTheme(theme);
+        renderer.setLabel(label);
+        renderer.setBg("toolPendingBg");
+        if (context) {
+          context.state = context.state || {};
+          context.state.headerRenderer = renderer;
+        }
+        return renderer;
       } catch {
         const safeLabel = theme.fg("toolTitle", theme.bold("edit"));
-        return {
-          render(width: number) { return [safeTruncate(safeLabel, width)]; },
-          invalidate() {},
-        };
+        const renderer = new EditHeaderRenderer();
+        renderer.setTheme(theme);
+        renderer.setLabel(safeLabel);
+        renderer.setBg("toolPendingBg");
+        return renderer;
       }
     },
 
-    renderResult() {
-      // Zero-glitches: render nothing. The execute result content is sent to the LLM.
-      return {
-        render(_width: number) { return []; },
-        invalidate() {},
-      };
+    renderResult(_result: any, options: any, _theme: any, context: any) {
+      if (options?.isPartial) {
+        return { render(_w: number) { return []; }, invalidate() {} };
+      }
+
+      const header = context?.state?.headerRenderer;
+      if (header instanceof EditHeaderRenderer) {
+        header.setBg(context?.isError ? "toolErrorBg" : "toolSuccessBg");
+      }
+      if (typeof context?.invalidate === "function") {
+        context.invalidate();
+      }
+
+      return { render(_w: number) { return []; }, invalidate() {} };
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -363,14 +394,14 @@ export default function (pi: ExtensionAPI) {
           createVirtualWorkspace(ctx.cwd),
           ctx.cwd,
           signal,
-          { collectDiff: false, continueOnError: true },
+          { collectDiff: false, continueOnError: true, isPreflight: true },
         );
         const preflightFails = preflightResults.filter((r) => !r.success);
         if (preflightFails.length > 0) {
           throw new Error(
-            `STOP — do not rewrite. Read exact text, then retry.\n` +
+            `STOP — do not rewrite. Read exact text, fix the failed edit(s), then retry THE ENTIRE BATCH (do not split into separate calls).\n` +
             `Preflight failed — ${preflightFails.length}/${edits.length} unmatched (no files modified).\n` +
-            formatResults(preflightResults, edits.length),
+            formatResults(preflightResults, edits.length, true),
           );
         }
       } catch (err: any) {

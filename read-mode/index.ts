@@ -94,12 +94,15 @@ export default function (pi: ExtensionAPI) {
       "- overview: Returns a structure map (functions, classes, headers) with line ranges. " +
       "  Use this FIRST for unfamiliar files larger than 200 lines instead of reading blindly.\n" +
       "- section: Reads a specific function, class, or header by name. " +
-      "  Requires target. Fuzzy match: 'authenticate' matches 'async authenticate' and 'private authenticate'.\n" +
+      "  Requires target. Fuzzy match: 'authenticate' matches 'async authenticate' and 'private authenticate'. " +
+      "  Automatically detects block boundaries (Python indentation, JS/TS braces) to return complete blocks when possible. " +
+      "  If the block exceeds the limit, it truncates and reports the total block length.\n" +
       "- grep: Searches inside a single file with context lines. " +
       "  Requires target. Use fixed_strings:true for literal text with regex metacharacters.\n" +
       "- headtail: Returns first 20 and last 20 lines. Use for large logs and config files.\n" +
       "- raw (default): Reads the full file. Supports images (PNG, JPG, GIF, WebP, BMP) — " +
-      "  the AI model can SEE and analyze the image content. Also supports offset/limit.\n\n" +
+      "  the AI model can SEE and analyze the image content. Also supports offset/limit. " +
+      "  Do NOT pass target in raw mode; use mode:section instead.\n\n" +
       "Guidelines:\n" +
       "- Always start with mode:overview for unfamiliar files >200 lines.\n" +
       "- After overview, use mode:section with the exact name from the overview.\n" +
@@ -122,12 +125,12 @@ export default function (pi: ExtensionAPI) {
           description: "Reading mode. Default is raw.",
         })
       ),
-      target: Type.Optional(Type.String({ description: "Target name for section/grep modes" })),
+      target: Type.Optional(Type.String({ description: "Target name for section/grep modes. Do NOT use with raw mode." })),
       contextLines: Type.Optional(
         Type.Number({ default: 3, description: "Lines of context around each match for grep mode" })
       ),
       limit: Type.Optional(
-        Type.Number({ description: "Maximum lines to return. For section mode: lines from target. For raw mode: lines to read from offset." })
+        Type.Number({ description: "Maximum lines to return. For section mode: max lines from target, but full block is returned if it fits. For raw mode: lines to read from offset." })
       ),
       fixed_strings: Type.Optional(
         Type.Boolean({ default: false, description: "Treat target as literal string in grep mode" })
@@ -140,12 +143,12 @@ export default function (pi: ExtensionAPI) {
 
     promptGuidelines: [
       "For large or unfamiliar files (>200 lines), always start with mode:overview to see structure before reading blindly.",
-      "Use mode:section with a target name to read a specific function, class, or header.",
+      "Use mode:section with a target name to read a specific function, class, or header. It detects block boundaries (Python indentation, JS/TS braces) and returns the full block if it fits within limit. If the block is larger than limit, it truncates and tells you the total block size — increase limit or use mode:raw with the reported offset to continue.",
       "Use mode:grep to search for a keyword inside a single file. Use the separate grep tool for project-wide search.",
       "Use mode:headtail for large log or config files when you only need the beginning and end.",
-      "mode:raw is the default; use it for small files or when you need the full content with offset/limit.",
+      "mode:raw reads file bytes directly. Use it for: small files, images (PNG, JPG, GIF, WebP, BMP), or when you need a precise offset/limit range. Do NOT pass target in raw mode — use mode:section instead.",
       "When reading large files with mode:raw, always provide offset and limit. If you omit them, the tool may truncate and return a continuation hint with the next offset.",
-      "When the user refers to an image, screenshot, or picture file (PNG, JPG, GIF, WebP, BMP), you MUST use read:raw (or omit mode) so the AI can see and analyze the image. Do not skip image files.",
+      "When the user refers to an image, screenshot, or picture file, you MUST use read:raw (or omit mode) so the AI can see and analyze the image. Do not skip image files.",
     ],
 
     renderCall(args: any, theme: any) {
@@ -175,10 +178,17 @@ export default function (pi: ExtensionAPI) {
       ctx: ExtensionContext
     ) {
       const filePath = resolve(ctx.cwd, params.path);
-      const mode = params.mode || "raw";
       const maxBytes = params.maxBytes ?? 65536;
 
-      if (mode === "raw") {
+      // Auto-correct: raw + target -> section (agent-friendly safety net)
+      let effectiveMode = params.mode || "raw";
+      let autoSwitched = false;
+      if (effectiveMode === "raw" && params.target) {
+        effectiveMode = "section";
+        autoSwitched = true;
+      }
+
+      if (effectiveMode === "raw") {
         const ext = filePath.split(".").pop()?.toLowerCase();
         const imageExts = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
         if (imageExts.has(ext || "")) {
@@ -240,7 +250,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       try {
-        if (mode === "overview") {
+        if (effectiveMode === "overview") {
           const { sections, totalLines, sizeBytes } = await getOverview(filePath);
 
           if (sections.length === 0) {
@@ -262,14 +272,14 @@ export default function (pi: ExtensionAPI) {
           };
         }
 
-        if (mode === "section") {
+        if (effectiveMode === "section") {
           if (!params.target) {
             return {
               content: [{ type: "text", text: "Error: target is required for mode:section" }],
               details: { error: true },
             };
           }
-          const result = await extractSection(filePath, params.target, params.limit ?? 40);
+          const result = await extractSection(filePath, params.target, params.limit ?? 60);
           if (result === null) {
             return {
               content: [{ type: "text", text: `Section "${params.target}" not found in ${params.path}` }],
@@ -289,17 +299,38 @@ export default function (pi: ExtensionAPI) {
             };
           }
 
-          const header = `[lines ${result.startLine}-${result.endLine}]`;
+          let header = `[lines ${result.startLine}-${result.endLine}]`;
+          if (autoSwitched) {
+            header = `[Auto-switched from raw to section because target was provided]\n${header}`;
+          }
+          if (result.blockEndDetected && result.totalBlockLines !== undefined) {
+            header += ` (block: ${result.totalBlockLines} lines)`;
+          }
           const body = result.lines.join("\n");
-          const full = `${header}\n${body}`;
+          let full = `${header}\n${body}`;
+
+          if (result.blockTruncated) {
+            full += `\n\n[Block truncated at limit. Total block length: ${result.totalBlockLines} lines. Use limit=${result.totalBlockLines} or mode:raw with offset=${result.endLine + 1} to continue.]`;
+          } else if (!result.blockEndDetected && result.lines.length >= (params.limit ?? 60)) {
+            full += `\n\n[End of block not detected. The content may continue beyond the limit. Use a larger limit or mode:raw with offset=${result.endLine + 1} if needed.]`;
+          }
+
           const { text: out, truncated } = truncateText(full, maxBytes);
           return {
             content: [{ type: "text", text: out }],
-            details: { startLine: result.startLine, endLine: result.endLine, truncated },
+            details: {
+              startLine: result.startLine,
+              endLine: result.endLine,
+              truncated,
+              blockEndDetected: result.blockEndDetected,
+              blockTruncated: result.blockTruncated,
+              totalBlockLines: result.totalBlockLines,
+              autoSwitched,
+            },
           };
         }
 
-        if (mode === "grep") {
+        if (effectiveMode === "grep") {
           if (!params.target) {
             return {
               content: [{ type: "text", text: "Error: target is required for mode:grep" }],
@@ -319,7 +350,7 @@ export default function (pi: ExtensionAPI) {
           };
         }
 
-        if (mode === "headtail") {
+        if (effectiveMode === "headtail") {
           const result = await headtail(filePath, 20, 20);
           const { text: out, truncated } = truncateText(result, maxBytes);
           return {
@@ -329,7 +360,7 @@ export default function (pi: ExtensionAPI) {
         }
 
         return {
-          content: [{ type: "text", text: `Unknown mode: ${mode}` }],
+          content: [{ type: "text", text: `Unknown mode: ${effectiveMode}` }],
           details: { error: true },
         };
       } catch (err: any) {

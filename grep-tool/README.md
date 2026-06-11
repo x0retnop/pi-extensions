@@ -1,6 +1,15 @@
-# Grep Tool
+# grep-tool
 
-Adds a model-callable `grep` tool powered by ripgrep. Faster, safer, and easier to parse than raw shell grep.
+Structured project-wide search via ripgrep. Tuned for agent use: safe defaults, multiple output modes, and Windows path fallback.
+
+## Features
+
+- **Structured output** — Uses `rg --json` for reliable parsing instead of raw shell text.
+- **Output modes** — `content` (with context), `files_with_matches` (paths only), `count_matches` (totals).
+- **Safe limits** — `head_limit` caps results to avoid flooding the context window.
+- **Filters** — glob, file type, case-insensitive, multiline, whole-word, context lines.
+- **Respects `.gitignore`** — no accidental node_modules dumps.
+- **Windows fallback** — checks common install paths if `rg` is not on `PATH`.
 
 ## Install
 
@@ -8,28 +17,31 @@ Adds a model-callable `grep` tool powered by ripgrep. Faster, safer, and easier 
 pi install ./grep-tool
 ```
 
-## Tool
+## Parameters
 
-| Tool | Description |
-| --- | --- |
-| `grep` | Structured search via ripgrep. Respects `.gitignore`, supports glob/type filters, context lines, case-insensitive search, and multiple output modes. |
+| Param | Type | Description |
+|-------|------|-------------|
+| `pattern` | `string` | Regex or literal search pattern |
+| `path` | `string?` | File or directory to search (default: cwd) |
+| `output_mode` | `string?` | `content`, `files_with_matches`, or `count_matches` |
+| `head_limit` | `number?` | Max matches to return |
+| `glob` | `string?` | File name filter, e.g. `*.ts` |
+| `type` | `string?` | File type filter, e.g. `ts` |
+| `-i` | `boolean?` | Case-insensitive |
+| `fixed_strings` | `boolean?` | Literal string match (`rg -F`) |
+| `word_match` | `boolean?` | Whole-word match (`rg -w`) |
+| `multiline` | `boolean?` | Multiline matching |
+| `-C` | `number?` | Context lines around each match |
+| `include_ignored` | `boolean?` | Search files ignored by `.gitignore` |
 
-## Behavior
+## Examples
 
-- Searches using `rg --json` for structured output.
-- Falls back to known Windows install paths if `rg` is not on `PATH`.
-- Supports `content`, `files_with_matches`, and `count_matches` output modes.
-- Limits results with `head_limit` to avoid flooding the context window.
-- Handles missing `rg` and empty results gracefully.
+```json
+{ "pattern": "TODO", "output_mode": "files_with_matches" }
+{ "pattern": "function foo(", "fixed_strings": true, "glob": "*.ts" }
+{ "pattern": "class\\s+User", "type": "ts", "output_mode": "content", "-C": 2 }
+```
 
-## Settings
+## Requirements
 
-No external settings file. Ensure `rg` is installed and available on `PATH`.
-
-## Compatibility
-
-Tested and known to work with Pi v0.72.1 or newer.
-
-## Maintenance
-
-See [`AGENTS.md`](../AGENTS.md) for open tasks.
+`rg` (ripgrep) must be installed. On Windows, if it is not on `PATH`, the tool falls back to `C:\ProgramData\chocolatey\bin\rg.exe` and other common locations before failing.

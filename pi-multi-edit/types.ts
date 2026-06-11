@@ -10,6 +10,10 @@ export interface EditResult {
   message: string;
   diff?: string;
   firstChangedLine?: number;
+  /** True when the edit text matched during preflight/continueOnError, but it will be skipped in the actual apply because an earlier edit in the same file failed. */
+  skipped?: boolean;
+  /** True when this result comes from a preflight (virtual) pass. */
+  preflight?: boolean;
 }
 
 export interface Hunk {

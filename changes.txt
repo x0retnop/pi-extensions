@@ -1,7 +1,0 @@
-2026-06-03 pi-multi-edit
-- diff.ts: removed MAX_DIFF_OUTPUT_LINES=500 limit — diff now always returned, clamped by index.ts clampDiff(50)
-- index.ts: 
-  - import visibleWidth from pi-tui
-  - renderCall returns [] (no content, whole block rendered by renderResult)
-  - renderResult applies theme.bg() per line: toolPendingBg / toolSuccessBg / toolErrorBg
-  - all output padded to full terminal width so background fills entire line

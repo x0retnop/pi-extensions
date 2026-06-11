@@ -6,7 +6,7 @@ import { activityMonitor } from "./activity.js";
 import { extractRSCContent } from "./rsc-extract.js";
 import { extractPDFToMarkdown, isPDF } from "./pdf-extract.js";
 import { extractGitHub } from "./github-extract.js";
-import { extractWithGeminiWeb } from "./gemini-web.js";
+import { fetchWithOllama } from "./ollama.js";
 import { extractHeadingTitle } from "./utils.js";
 
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -147,9 +147,9 @@ export async function extractContent(
 	if (jinaResult) return jinaResult;
 	if (signal?.aborted) return abortedResult(url);
 
-	let geminiResult: ExtractedContent | null = null;
+	let ollamaResult: ExtractedContent | null = null;
 	try {
-		geminiResult = await extractWithGeminiWeb(url, signal);
+		ollamaResult = await fetchWithOllama(url, signal);
 	} catch (err) {
 		if (isAbortError(err)) return abortedResult(url);
 		if (isConfigParseError(err)) {
@@ -157,14 +157,14 @@ export async function extractContent(
 		}
 	}
 
-	if (geminiResult) return geminiResult;
+	if (ollamaResult) return ollamaResult;
 	if (signal?.aborted) return abortedResult(url);
 
 	const guidance = [
 		httpResult.error,
 		"",
 		"Fallback options:",
-		"  \u2022 Sign into gemini.google.com in Chrome",
+		"  \u2022 Configure Ollama Cloud: /web-config ollama-key <key>",
 		"  \u2022 Use web_search to find content about this topic",
 	].join("\n");
 	return { ...httpResult, error: guidance };

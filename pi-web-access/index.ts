@@ -4,16 +4,16 @@ import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { fetchAllContent, type ExtractedContent } from "./extract.js";
 import { clearCloneCache } from "./github-extract.js";
-import { search } from "./gemini-search.js";
+import { search } from "./search-orchestrator.js";
 import { executeCodeSearch } from "./code-search.js";
-import type { SearchResult } from "./gemini-search.js";
+import type { SearchResult } from "./search-orchestrator.js";
+import { loadSettings, saveSettings, getApiKey, setApiKey, maskKey, clearConfigCache, type SearchProvider } from "./config.js";
 
 import {
 	clearResults,
 	deleteResult,
 	generateId,
 	getAllResults,
-	getResult,
 	restoreFromSession,
 	storeResult,
 	type QueryResultData,
@@ -31,17 +31,12 @@ function normalizeQueryList(queryList: unknown[]): string[] {
 	return normalized;
 }
 
-const pendingFetches = new Map<string, AbortController>();
 let sessionActive = false;
 let sessionSearchCount = 0;
 let widgetVisible = false;
 let widgetUnsubscribe: (() => void) | null = null;
 
 const MAX_INLINE_CONTENT = 30000;
-
-function stripThumbnails(results: ExtractedContent[]): ExtractedContent[] {
-	return results;
-}
 
 function formatSearchSummary(results: SearchResult[], answer: string): string {
 	let output = answer ? `${answer}\n\n---\n\n**Sources:**\n` : "";
@@ -64,23 +59,6 @@ function duplicateQuerySet(results: QueryResultData[]): Set<string> {
 function formatQueryHeader(query: string, provider: string | undefined, duplicateQueries: Set<string>): string {
 	const suffix = duplicateQueries.has(query) && provider ? ` (${provider})` : "";
 	return `## Query: "${query}"${suffix}\n\n`;
-}
-
-function hasFullInlineCoverage(urls: string[], inlineContent: ExtractedContent[] | undefined): boolean {
-	if (!inlineContent || inlineContent.length === 0) return false;
-	const coveredUrls = new Set(inlineContent.map(c => c.url));
-	return urls.every(url => coveredUrls.has(url));
-}
-
-function formatFullResults(queryData: QueryResultData): string {
-	let output = `## Results for: "${queryData.query}"\n\n`;
-	if (queryData.answer) {
-		output += `${queryData.answer}\n\n---\n\n`;
-	}
-	for (const r of queryData.results) {
-		output += `### ${r.title}\n${r.url}\n\n`;
-	}
-	return output;
 }
 
 function getDomain(url: string): string {
@@ -124,13 +102,6 @@ function analyzeSources(results: SearchResult[]) {
 	return { topDomain, topShare, hasOfficial, hasPrimary, newsDomains: newsDomains.size };
 }
 
-function abortPendingFetches(): void {
-	for (const controller of pendingFetches.values()) {
-		controller.abort();
-	}
-	pendingFetches.clear();
-}
-
 function updateWidget(ctx: ExtensionContext): void {
 	const theme = ctx.ui.theme;
 	const entries = activityMonitor.getEntries();
@@ -161,7 +132,7 @@ function updateWidget(ctx: ExtensionContext): void {
 
 function formatEntryLine(
 	entry: ActivityEntry,
-	theme: { fg: (color: string, text: string) => string },
+	theme: any,
 ): string {
 	const typeStr = entry.type === "api" ? "API" : "GET";
 	const target =
@@ -193,7 +164,6 @@ function formatEntryLine(
 }
 
 function handleSessionChange(ctx: ExtensionContext): void {
-	abortPendingFetches();
 	clearCloneCache();
 	sessionActive = true;
 	sessionSearchCount = 0;
@@ -208,52 +178,6 @@ function handleSessionChange(ctx: ExtensionContext): void {
 }
 
 export default function (pi: ExtensionAPI) {
-
-
-	function startBackgroundFetch(urls: string[]): string | null {
-		if (urls.length === 0) return null;
-		const fetchId = generateId();
-		const controller = new AbortController();
-		pendingFetches.set(fetchId, controller);
-		fetchAllContent(urls, controller.signal)
-			.then((fetched) => {
-				if (!sessionActive || !pendingFetches.has(fetchId)) return;
-				const data: StoredSearchData = {
-					id: fetchId,
-					type: "fetch",
-					timestamp: Date.now(),
-					urls: stripThumbnails(fetched),
-				};
-				storeResult(fetchId, data);
-				pi.appendEntry("web-search-results", data);
-				const ok = fetched.filter(f => !f.error).length;
-				pi.sendMessage(
-					{
-						customType: "web-search-content-ready",
-						content: `Content fetched for ${ok}/${fetched.length} URLs [${fetchId}]. Full page content now available.`,
-						display: true,
-					},
-					{ triggerTurn: true },
-				);
-			})
-			.catch((err) => {
-				if (!sessionActive || !pendingFetches.has(fetchId)) return;
-				const message = err instanceof Error ? err.message : String(err);
-				const isAbort = (err instanceof Error && err.name === "AbortError") || message.toLowerCase().includes("abort");
-				if (!isAbort) {
-					pi.sendMessage(
-						{
-							customType: "web-search-error",
-							content: `Content fetch failed [${fetchId}]: ${message}`,
-							display: true,
-						},
-						{ triggerTurn: false },
-					);
-				}
-			})
-			.finally(() => { pendingFetches.delete(fetchId); });
-		return fetchId;
-	}
 
 	function storeAndPublishSearch(results: QueryResultData[]): string {
 		const id = generateId();
@@ -290,24 +214,8 @@ export default function (pi: ExtensionAPI) {
 			else output += formatSearchSummary(results, answer) + "\n\n";
 		}
 
-		const hasInlineReady = hasFullInlineCoverage(opts.urls, opts.inlineContent);
-		let fetchId: string | null = null;
-		if (hasInlineReady && opts.inlineContent) {
-			fetchId = generateId();
-			const data: StoredSearchData = {
-				id: fetchId,
-				type: "fetch",
-				timestamp: Date.now(),
-				urls: opts.inlineContent,
-			};
-			storeResult(fetchId, data);
-			pi.appendEntry("web-search-results", data);
-			output += `---\nFull content for ${opts.inlineContent.length} sources available [${fetchId}].`;
-		} else if (opts.includeContent) {
-			fetchId = startBackgroundFetch(opts.urls);
-			if (fetchId) {
-				output += `---\nContent fetching in background [${fetchId}]. Will notify when ready.`;
-			}
+		if (opts.inlineContent && opts.inlineContent.length > 0) {
+			output += `---\nFull page content included for ${opts.inlineContent.length} source(s).\n`;
 		}
 
 		const totalResults = tr;
@@ -357,11 +265,10 @@ export default function (pi: ExtensionAPI) {
 			}
 		}
 
-		const searchId = storeAndPublishSearch(opts.results);
-		const isBackgroundFetch = fetchId !== null && !hasInlineReady;
+		storeAndPublishSearch(opts.results);
 
 		return {
-			content: [{ type: "text", text: output.trim() }],
+			content: [{ type: "text" as const, text: output.trim() }],
 			details: {
 				queries: opts.queryList,
 				queryCount: opts.queryList.length,
@@ -370,12 +277,75 @@ export default function (pi: ExtensionAPI) {
 				includeContent: opts.includeContent,
 				depth: opts.depth,
 				researchRound: opts.researchRound,
-				fetchId,
-				fetchUrls: isBackgroundFetch ? opts.urls : undefined,
-				searchId,
 			},
 		};
 	}
+
+	pi.registerCommand("web-config", {
+		description: "Configure web search provider and API keys",
+		handler: async (args, ctx) => {
+			const parts = args.trim().split(/\s+/);
+			const sub = parts[0]?.toLowerCase();
+
+			if (sub === "provider") {
+				const name = parts[1]?.toLowerCase() as SearchProvider;
+				if (!name || !["auto", "exa-mcp", "exa-api", "ollama"].includes(name)) {
+					ctx.ui.notify("Usage: /web-config provider auto|exa-mcp|exa-api|ollama", "warning");
+					return;
+				}
+				saveSettings({ searchProvider: name });
+				clearConfigCache();
+				ctx.ui.notify(`Search provider set to: ${name}`, "info");
+				return;
+			}
+
+			if (sub === "exa-key") {
+				const key = parts[1];
+				if (!key) {
+					ctx.ui.notify("Usage: /web-config exa-key <api-key>", "warning");
+					return;
+				}
+				setApiKey("exa", key);
+				clearConfigCache();
+				ctx.ui.notify("Exa API key saved.", "info");
+				return;
+			}
+
+			if (sub === "ollama-key") {
+				const key = parts[1];
+				if (!key) {
+					ctx.ui.notify("Usage: /web-config ollama-key <api-key>", "warning");
+					return;
+				}
+				setApiKey("ollama", key);
+				clearConfigCache();
+				ctx.ui.notify("Ollama API key saved.", "info");
+				return;
+			}
+
+			if (sub === "show") {
+				const settings = loadSettings();
+				const exaKey = maskKey(getApiKey("exa"));
+				const ollamaKey = maskKey(getApiKey("ollama"));
+				ctx.ui.notify(
+					`Provider: ${settings.searchProvider}\n` +
+					`Exa key: ${exaKey}\n` +
+					`Ollama key: ${ollamaKey}`,
+					"info",
+				);
+				return;
+			}
+
+			ctx.ui.notify(
+				"Usage:\n" +
+				"  /web-config provider auto|exa-mcp|exa-api|ollama\n" +
+				"  /web-config exa-key <key>\n" +
+				"  /web-config ollama-key <key>\n" +
+				"  /web-config show",
+				"info",
+			);
+		},
+	});
 
 	pi.registerCommand("pi-web-activity", {
 		description: "Toggle web search activity widget on/off",
@@ -403,7 +373,6 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("session_shutdown", () => {
 		sessionActive = false;
-		abortPendingFetches();
 		clearCloneCache();
 		clearResults();
 		widgetUnsubscribe?.();
@@ -416,18 +385,21 @@ export default function (pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web Search",
 		description:
-			"Search the web for current information, official docs, discussions, or URLs. Performs ONE round of research. Returns a synthesized answer with source citations. For thorough coverage, call this tool multiple times with follow-up queries based on findings.",
+			"Search the web for current information, official docs, discussions, or URLs. Returns a synthesized answer with source citations. One call = one research round.",
 		promptSnippet:
-			"Use for current information, docs, or unknown URLs. One call = one round. Use depth: 'deep' for thorough research.",
+			"Use when you need current information, docs, or URLs not in your context. One call = one round.",
 		promptGuidelines: [
-			"Use web_search when the user needs current information, docs, or unknown URLs.",
-			"One web_search call = one round. For complex topics, perform 2-4 rounds with targeted follow-up queries.",
+			"Use when the user asks for something outside your training context: current events, specific docs, URLs, or facts you do not know.",
+			"Returns a short answer plus a list of source URLs. Read a specific URL with fetch_content if the user needs full page text.",
+			"Set includeContent:true if you need the full text of result pages immediately (slower but no follow-up call needed).",
+			"For broad or technical topics, use queries (array) with 2-4 different angles instead of a single query.",
+			"Do not use for programming examples or API docs — use code_search for those.",
 		],
 		parameters: Type.Object({
 			query: Type.Optional(Type.String({ description: "Single search query. For research tasks, prefer 'queries' with multiple varied angles instead." })),
 			queries: Type.Optional(Type.Array(Type.String(), { description: "Multiple queries searched in sequence, each returning its own synthesized answer. Prefer this for research — vary phrasing, scope, and angle across 2-4 queries to maximize coverage. Good: ['React vs Vue performance benchmarks 2026', 'React vs Vue developer experience comparison', 'React ecosystem size vs Vue ecosystem']. Bad: ['React vs Vue', 'React vs Vue comparison', 'React vs Vue review'] (too similar, redundant results)." })),
 			numResults: Type.Optional(Type.Number({ description: "Results per query (default: 10, max: 20). Increase for broad or contentious topics." })),
-			includeContent: Type.Optional(Type.Boolean({ description: "Fetch full page content in the background for all result URLs. Use for deep research when you need page text, not just summaries." })),
+			includeContent: Type.Optional(Type.Boolean({ description: "Return full page content inline for each result URL. Slower, but avoids a separate fetch_content call." })),
 			depth: Type.Optional(StringEnum(["quick", "standard", "deep"], { description: "Research depth. 'quick' = 5 sources, 'standard' = 10, 'deep' = 15+ and encourages follow-up rounds." })),
 			recencyFilter: Type.Optional(
 				StringEnum(["day", "week", "month", "year"], { description: "Filter results by recency. Use 'day' or 'week' for news and trends; 'month' or 'year' for broader context." }),
@@ -443,7 +415,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (queryList.length === 0) {
 				return {
-					content: [{ type: "text", text: "Error: No query provided. Use 'query' or 'queries' parameter." }],
+					content: [{ type: "text" as const, text: "Error: No query provided. Use 'query' or 'queries' parameter." }],
 					details: { error: "No query provided" },
 				};
 			}
@@ -459,14 +431,14 @@ export default function (pi: ExtensionAPI) {
 				const query = queryList[i];
 
 				onUpdate?.({
-					content: [{ type: "text", text: `Searching ${i + 1}/${queryList.length}: "${query}"...` }],
+					content: [{ type: "text" as const, text: `Searching ${i + 1}/${queryList.length}: "${query}"...` }],
 					details: { phase: "search", progress: i / queryList.length, currentQuery: query },
 				});
 
 				try {
 					const { answer, results, inlineContent, provider } = await search(query, {
 						numResults: params.numResults,
-						recencyFilter: params.recencyFilter,
+						recencyFilter: params.recencyFilter as any,
 						domainFilter: params.domainFilter,
 						includeContent: params.includeContent,
 						depth,
@@ -528,8 +500,6 @@ export default function (pi: ExtensionAPI) {
 				successfulQueries?: number;
 				totalResults?: number;
 				error?: string;
-				fetchId?: string;
-				fetchUrls?: string[];
 				depth?: string;
 				researchRound?: number;
 				phase?: string;
@@ -553,11 +523,6 @@ export default function (pi: ExtensionAPI) {
 			const queryInfo = details?.queryCount === 1 ? "" : `${details?.successfulQueries}/${details?.queryCount} queries, `;
 			const roundInfo = details?.researchRound ? ` (round ${details.researchRound}${details?.depth && details.depth !== "standard" ? `, ${details.depth}` : ""})` : "";
 			statusLine = theme.fg("success", `${queryInfo}${details?.totalResults ?? 0} sources`) + theme.fg("muted", roundInfo);
-			if (details?.fetchId && details?.fetchUrls) {
-				statusLine += theme.fg("muted", ` • fetching ${details.fetchUrls.length} URLs`);
-			} else if (details?.fetchId) {
-				statusLine += theme.fg("muted", " • content ready");
-			}
 
 			if (!expanded) {
 				return new Text(statusLine, 0, 0);
@@ -572,9 +537,14 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "code_search",
 		label: "Code Search",
-		description: "Search for code examples, documentation, and API references. Returns relevant code snippets and docs. Use for any programming question — API usage, library examples, debugging help.",
+		description: "Search for code examples, documentation, and API references. Returns concrete code snippets and docs.",
 		promptSnippet:
-			"Use for programming/API/library questions to retrieve concrete examples and docs before implementing or debugging code.",
+			"Use for programming questions: API usage, library examples, code snippets, debugging.",
+		promptGuidelines: [
+			"Use when the user asks about code: API usage, library examples, implementations, or debugging.",
+			"Returns code snippets and documentation. Not for general web search, news, or discussions.",
+			"If results are insufficient, fall back to web_search for broader coverage.",
+		],
 		parameters: Type.Object({
 			query: Type.String({ description: "Programming question, API, library, or debugging topic to search for" }),
 			maxTokens: Type.Optional(Type.Integer({
@@ -615,9 +585,14 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "fetch_content",
 		label: "Fetch Content",
-		description: "Fetch URL(s) and extract readable content as markdown. Supports GitHub repository contents. Falls back to Gemini Web for pages that block bots or fail Readability extraction. Content is always stored and can be retrieved with get_search_content.",
+		description: "Fetch a URL and extract its readable content as markdown. Supports GitHub repos (auto-clone or API view). Falls back to Ollama Cloud for bot-blocked pages.",
 		promptSnippet:
-			"Use to extract readable content from URL(s) or GitHub repos.",
+			"Use to read a specific URL or GitHub repo in full. Prefer single URL per call for complete text.",
+		promptGuidelines: [
+			"Use when the user gives a URL, or when web_search found a URL that needs detailed reading.",
+			"Single URL calls return the full page text inline. Multi-URL calls return only summaries.",
+			"GitHub URLs are automatically cloned when possible; otherwise an API view is returned.",
+		],
 		parameters: Type.Object({
 			url: Type.Optional(Type.String({ description: "Single URL to fetch" })),
 			urls: Type.Optional(Type.Array(Type.String(), { description: "Multiple URLs (parallel)" })),
@@ -630,13 +605,13 @@ export default function (pi: ExtensionAPI) {
 			const urlList = params.urls ?? (params.url ? [params.url] : []);
 			if (urlList.length === 0) {
 				return {
-					content: [{ type: "text", text: "Error: No URL provided." }],
+					content: [{ type: "text" as const, text: "Error: No URL provided." }],
 					details: { error: "No URL provided" },
 				};
 			}
 
 			onUpdate?.({
-				content: [{ type: "text", text: `Fetching ${urlList.length} URL(s)...` }],
+				content: [{ type: "text" as const, text: `Fetching ${urlList.length} URL(s)...` }],
 				details: { phase: "fetch", progress: 0 },
 			});
 
@@ -651,7 +626,7 @@ export default function (pi: ExtensionAPI) {
 				id: responseId,
 				type: "fetch",
 				timestamp: Date.now(),
-				urls: stripThumbnails(fetchResults),
+				urls: fetchResults,
 			};
 			storeResult(responseId, data);
 			pi.appendEntry("web-search-results", data);
@@ -660,7 +635,7 @@ export default function (pi: ExtensionAPI) {
 				const result = fetchResults[0];
 				if (result.error) {
 					return {
-						content: [{ type: "text", text: `Error: ${result.error}` }],
+						content: [{ type: "text" as const, text: `Error: ${result.error}` }],
 						details: { urls: urlList, urlCount: 1, successful: 0, error: result.error, responseId },
 					};
 				}
@@ -672,12 +647,11 @@ export default function (pi: ExtensionAPI) {
 					: result.content;
 
 				if (truncated) {
-					output += `\n\n---\nShowing ${MAX_INLINE_CONTENT} of ${fullLength} chars. ` +
-						`Use get_search_content({ responseId: "${responseId}", urlIndex: 0 }) for full content.`;
+					output += `\n\n---\nShowing ${MAX_INLINE_CONTENT} of ${fullLength} chars. Call fetch_content again if you need the rest.`;
 				}
 
 				return {
-					content: [{ type: "text", text: output }],
+					content: [{ type: "text" as const, text: output }],
 					details: {
 						urls: urlList,
 						urlCount: 1,
@@ -698,10 +672,10 @@ export default function (pi: ExtensionAPI) {
 					output += `- ${title || url} (${content.length} chars)\n`;
 				}
 			}
-			output += `\n---\nUse get_search_content({ responseId: "${responseId}", urlIndex: 0 }) to retrieve full content.`;
+			output += `\n---\nTo read full text of a specific URL, call fetch_content with that URL individually.`;
 
 			return {
-				content: [{ type: "text", text: output }],
+				content: [{ type: "text" as const, text: output }],
 				details: { urls: urlList, urlCount: urlList.length, successful, totalChars, responseId },
 			};
 		},
@@ -774,164 +748,6 @@ export default function (pi: ExtensionAPI) {
 			if (!expanded) {
 				return new Text(statusLine, 0, 0);
 			}
-			const textContent = result.content.find((c) => c.type === "text")?.text || "";
-			const preview = textContent.length > 500 ? textContent.slice(0, 500) + "..." : textContent;
-			return new Text(statusLine + "\n" + theme.fg("dim", preview), 0, 0);
-		},
-	});
-
-	pi.registerTool({
-		name: "get_search_content",
-		label: "Get Search Content",
-		description: "Retrieve full content from a previous web_search or fetch_content call.",
-		promptSnippet:
-			"Use to retrieve full stored content from a previous web_search or fetch_content call.",
-		parameters: Type.Object({
-			responseId: Type.String({ description: "The responseId from web_search or fetch_content" }),
-			query: Type.Optional(Type.String({ description: "Get content for this query (web_search)" })),
-			queryIndex: Type.Optional(Type.Number({ description: "Get content for query at index" })),
-			url: Type.Optional(Type.String({ description: "Get content for this URL" })),
-			urlIndex: Type.Optional(Type.Number({ description: "Get content for URL at index" })),
-		}),
-
-		async execute(_toolCallId, params) {
-			const data = getResult(params.responseId);
-			if (!data) {
-				return {
-					content: [{ type: "text", text: `Error: No stored results for "${params.responseId}"` }],
-					details: { error: "Not found", responseId: params.responseId },
-				};
-			}
-
-			if (data.type === "search" && data.queries) {
-				let queryData: QueryResultData | undefined;
-
-				if (params.query !== undefined) {
-					queryData = data.queries.find((q) => q.query === params.query);
-					if (!queryData) {
-						const available = data.queries.map((q) => `"${q.query}"`).join(", ");
-						return {
-							content: [{ type: "text", text: `Query "${params.query}" not found. Available: ${available}` }],
-							details: { error: "Query not found" },
-						};
-					}
-				} else if (params.queryIndex !== undefined) {
-					queryData = data.queries[params.queryIndex];
-					if (!queryData) {
-						return {
-							content: [{ type: "text", text: `Index ${params.queryIndex} out of range (0-${data.queries.length - 1})` }],
-							details: { error: "Index out of range" },
-						};
-					}
-				} else {
-					const available = data.queries.map((q, i) => `${i}: "${q.query}"`).join(", ");
-					return {
-						content: [{ type: "text", text: `Specify query or queryIndex. Available: ${available}` }],
-						details: { error: "No query specified" },
-					};
-				}
-
-				if (queryData.error) {
-					return {
-						content: [{ type: "text", text: `Error for "${queryData.query}": ${queryData.error}` }],
-						details: { error: queryData.error, query: queryData.query },
-					};
-				}
-
-				return {
-					content: [{ type: "text", text: formatFullResults(queryData) }],
-					details: { query: queryData.query, resultCount: queryData.results.length },
-				};
-			}
-
-			if (data.type === "fetch" && data.urls) {
-				let urlData: ExtractedContent | undefined;
-
-				if (params.url !== undefined) {
-					urlData = data.urls.find((u) => u.url === params.url);
-					if (!urlData) {
-						const available = data.urls.map((u) => u.url).join("\n  ");
-						return {
-							content: [{ type: "text", text: `URL not found. Available:\n  ${available}` }],
-							details: { error: "URL not found" },
-						};
-					}
-				} else if (params.urlIndex !== undefined) {
-					urlData = data.urls[params.urlIndex];
-					if (!urlData) {
-						return {
-							content: [{ type: "text", text: `Index ${params.urlIndex} out of range (0-${data.urls.length - 1})` }],
-							details: { error: "Index out of range" },
-						};
-					}
-				} else {
-					const available = data.urls.map((u, i) => `${i}: ${u.url}`).join("\n  ");
-					return {
-						content: [{ type: "text", text: `Specify url or urlIndex. Available:\n  ${available}` }],
-						details: { error: "No URL specified" },
-					};
-				}
-
-				if (urlData.error) {
-					return {
-						content: [{ type: "text", text: `Error for ${urlData.url}: ${urlData.error}` }],
-						details: { error: urlData.error, url: urlData.url },
-					};
-				}
-
-				return {
-					content: [{ type: "text", text: `# ${urlData.title}\n\n${urlData.content}` }],
-					details: { url: urlData.url, title: urlData.title, contentLength: urlData.content.length },
-				};
-			}
-
-			return {
-				content: [{ type: "text", text: "Invalid stored data format" }],
-				details: { error: "Invalid data" },
-			};
-		},
-
-		renderCall(args, theme) {
-			const { responseId, query, queryIndex, url, urlIndex } = args as {
-				responseId: string;
-				query?: string;
-				queryIndex?: number;
-				url?: string;
-				urlIndex?: number;
-			};
-			let target = "";
-			if (query) target = `query="${query}"`;
-			else if (queryIndex !== undefined) target = `queryIndex=${queryIndex}`;
-			else if (url) target = url.length > 30 ? url.slice(0, 27) + "..." : url;
-			else if (urlIndex !== undefined) target = `urlIndex=${urlIndex}`;
-			return new Text(theme.fg("toolTitle", theme.bold("get_content ")) + theme.fg("accent", target || responseId.slice(0, 8)), 0, 0);
-		},
-
-		renderResult(result, { expanded }, theme) {
-			const details = result.details as {
-				error?: string;
-				query?: string;
-				url?: string;
-				title?: string;
-				resultCount?: number;
-				contentLength?: number;
-			};
-
-			if (details?.error) {
-				return new Text(theme.fg("error", `Error: ${details.error}`), 0, 0);
-			}
-
-			let statusLine: string;
-			if (details?.query) {
-				statusLine = theme.fg("success", `"${details.query}"`) + theme.fg("muted", ` (${details.resultCount} results)`);
-			} else {
-				statusLine = theme.fg("success", details?.title || "Content") + theme.fg("muted", ` (${details?.contentLength ?? 0} chars)`);
-			}
-
-			if (!expanded) {
-				return new Text(statusLine, 0, 0);
-			}
-
 			const textContent = result.content.find((c) => c.type === "text")?.text || "";
 			const preview = textContent.length > 500 ? textContent.slice(0, 500) + "..." : textContent;
 			return new Text(statusLine + "\n" + theme.fg("dim", preview), 0, 0);

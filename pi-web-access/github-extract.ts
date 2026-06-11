@@ -1,12 +1,11 @@
 import { existsSync, readFileSync, rmSync, statSync, readdirSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { extname, join, resolve as resolvePath, sep as pathSep } from "node:path";
 import { activityMonitor } from "./activity.js";
+import { loadSettings } from "./config.js";
 import type { ExtractedContent } from "./extract.js";
 import { checkGhAvailable, checkRepoSize, fetchViaApi, showGhHint } from "./github-api.js";
-
-const CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
 
 const BINARY_EXTENSIONS = new Set([
 	".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg", ".tiff", ".tif",
@@ -79,21 +78,8 @@ function loadGitHubConfig(): GitHubCloneConfig {
 		clonePath: join(tmpdir(), "pi-github-repos"),
 	};
 
-	if (!existsSync(CONFIG_PATH)) {
-		cachedConfig = defaults;
-		return cachedConfig;
-	}
-
-	const rawText = readFileSync(CONFIG_PATH, "utf-8");
-	let raw: { githubClone?: { enabled?: unknown; maxRepoSizeMB?: unknown; cloneTimeoutSeconds?: unknown; clonePath?: unknown } };
-	try {
-		raw = JSON.parse(rawText) as { githubClone?: { enabled?: unknown; maxRepoSizeMB?: unknown; cloneTimeoutSeconds?: unknown; clonePath?: unknown } };
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		throw new Error(`Failed to parse ${CONFIG_PATH}: ${message}`);
-	}
-
-	const gc = raw.githubClone ?? {};
+	const settings = loadSettings();
+	const gc = settings.githubClone ?? {};
 	cachedConfig = {
 		enabled: normalizeEnabled(gc.enabled, defaults.enabled),
 		maxRepoSizeMB: normalizePositiveNumber(gc.maxRepoSizeMB, defaults.maxRepoSizeMB),

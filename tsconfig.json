@@ -30,6 +30,7 @@
     "todo/**/*.ts",
     "win-bash-sanitizer/**/*.ts",
     "simple-gate/**/*.ts",
-    "pi-multi-edit/**/*.ts"
+    "pi-multi-edit/**/*.ts",
+    "pi-session-memory/**/*.ts"
   ]
 }

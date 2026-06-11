@@ -33,7 +33,7 @@ async function apiSearch(query: string, limit: number): Promise<SearchHit[]> {
   return data.hits || [];
 }
 
-async function apiSessionContent(sourcePath: string, maxMessages: number, maxChars: number): Promise<{ text: string; total_messages: number; returned_messages: number; chars: number; truncated: boolean }> {
+async function apiSessionContent(sourcePath: string, maxMessages: number, maxChars: number): Promise<{ source_path: string; project: string; date: string; text: string; total_messages: number; returned_messages: number; chars: number; truncated: boolean }> {
   const res = await fetch(`${BASE_URL}/api/session_index/session_content`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -60,6 +60,26 @@ async function apiRebuild(): Promise<any> {
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+interface SessionListItem {
+  source_path: string;
+  project: string;
+  date: string;
+}
+
+async function apiListSessions(scope: "current" | "all", cwd: string, limit = 50): Promise<SessionListItem[]> {
+  const res = await fetch(`${BASE_URL}/api/session_index/list`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope, cwd, limit }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  const data = await res.json();
+  return data.sessions || [];
 }
 
 function getLastSearch(ctx: ExtensionContext): StoredSearch | null {
@@ -176,7 +196,7 @@ export default function (pi: ExtensionAPI) {
         ? theme.fg("muted", "0 hits")
         : theme.fg("success", `${d?.hitsCount ?? 0} hits`) + theme.fg("muted", ` • top score ${(d?.topScore ?? 0).toFixed(3)}`);
       if (!expanded) return new Text(line, 0, 0);
-      const text = result.content.find((c: any) => c.type === "text")?.text || "";
+      const text = (result.content.find((c: any) => c.type === "text") as any)?.text || "";
       const preview = text.length > 600 ? text.slice(0, 600) + "..." : text;
       return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
     },
@@ -229,7 +249,7 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      let result: { text: string; total_messages: number; returned_messages: number; chars: number; truncated: boolean };
+      let result: { source_path: string; project: string; date: string; text: string; total_messages: number; returned_messages: number; chars: number; truncated: boolean };
       try {
         result = await apiSessionContent(sourcePath, params.maxMessages ?? 30, params.maxChars ?? 4000);
       } catch (err) {
@@ -267,7 +287,7 @@ export default function (pi: ExtensionAPI) {
       }
       const line = theme.fg("success", path.basename(d?.sourcePath || "session")) + theme.fg("muted", ` (${d?.chars ?? 0} chars)`);
       if (!expanded) return new Text(line, 0, 0);
-      const text = result.content.find((c: any) => c.type === "text")?.text || "";
+      const text = (result.content.find((c: any) => c.type === "text") as any)?.text || "";
       const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
       return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
     },
@@ -304,6 +324,59 @@ export default function (pi: ExtensionAPI) {
         if (ctx.hasUI) ctx.ui.notify(out, "error");
         else pi.sendMessage({ customType: "session-memory-rebuild", content: out, display: true }, { triggerTurn: false });
       }
+    },
+  });
+
+  pi.registerCommand("session-memory-resume", {
+    description: "Load context from a saved session into the editor (default: current dir; use 'all' for all projects)",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI) {
+        const out = "Error: session-memory-resume requires interactive UI";
+        pi.sendMessage({ customType: "session-memory-resume", content: out, display: true }, { triggerTurn: false });
+        return;
+      }
+      const scope = args?.trim().toLowerCase() === "all" ? "all" : "current";
+      const cwd = ctx.cwd || ctx.sessionManager.getCwd();
+      let sessions: SessionListItem[];
+      try {
+        sessions = await apiListSessions(scope, cwd);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(`Error listing sessions: ${msg}`, "error");
+        return;
+      }
+      if (sessions.length === 0) {
+        ctx.ui.notify(`No saved sessions found for ${scope === "current" ? "current directory" : "all projects"}.`, "warning");
+        return;
+      }
+      const options = sessions.map((s, i) => `[${i}] [${s.date}] ${s.project}`);
+      const selected = await ctx.ui.select("Select a session to load context from", options);
+      if (!selected) {
+        ctx.ui.notify("Cancelled", "info");
+        return;
+      }
+      const idxMatch = selected.match(/^\[(\d+)\]/);
+      const idx = idxMatch ? parseInt(idxMatch[1], 10) : -1;
+      const sourcePath = sessions[idx]?.source_path;
+      if (!sourcePath) {
+        ctx.ui.notify("Could not resolve selected session", "error");
+        return;
+      }
+      const note = await ctx.ui.input("Add a note for the agent (optional)", "e.g., focus on the OAuth setup discussion");
+      let result: { source_path: string; project: string; date: string; text: string; total_messages: number; returned_messages: number; chars: number; truncated: boolean };
+      try {
+        result = await apiSessionContent(sourcePath, 30, 4000);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(`Error loading session: ${msg}`, "error");
+        return;
+      }
+      const headerParts = [`Context from previous session [${result.project}, ${result.date}]`];
+      if (note?.trim()) headerParts.push(`Note: ${note.trim()}`);
+      headerParts.push(`Messages: ${result.returned_messages}/${result.total_messages}${result.truncated ? " (truncated)" : ""}`);
+      const fullText = `${headerParts.join("\n")}\n\n---\n\n${result.text}`;
+      ctx.ui.setEditorText(fullText);
+      ctx.ui.notify("Session context loaded into editor. Review and press Enter to send.", "info");
     },
   });
 }

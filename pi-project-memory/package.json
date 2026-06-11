@@ -1,0 +1,13 @@
+{
+  "name": "pi-extension-project-memory",
+  "version": "0.1.0",
+  "description": "Project-scoped semantic memory for Pi agents",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

@@ -1,67 +1,55 @@
-# Pi Web Access
+# pi-web-access
 
-Web search, URL fetching, and code search for Pi. Zero-config Exa MCP search with optional Gemini Web fallback.
+Web search, URL fetching, and code search for the Pi coding agent.
+
+This is a heavily modified fork of the original `pi-web-access` by Nico Bailon. Key changes: Gemini Web support removed (unreliable and broken by upstream changes), Ollama Cloud added as a fallback provider, configuration moved to Pi's native `settings.json`/`auth.json`, and the tool surface was simplified (removed `get_search_content` and background-fetch complexity).
 
 ## Install
 
 ```bash
-pi install npm:pi-web-access
-```
-
-Works immediately with no API keys — Exa MCP provides zero-config search. For direct Exa API access or Gemini Web fallback, add keys to `~/.pi/web-search.json`:
-
-```json
-{
-  "exaApiKey": "exa-...",
-  "allowBrowserCookies": true
-}
+pi install ./pi-web-access
 ```
 
 ## Tools
 
-| Tool | Description |
-| --- | --- |
-| `web_search` | Search the web via Exa or Gemini Web. Returns a synthesized answer with source citations. Prefer `{queries: [...]}` with 2-4 varied angles. |
-| `fetch_content` | Fetch URL(s) as markdown. Handles GitHub repos (clone or API view), PDFs, and regular pages with Jina Reader / Gemini Web fallback. |
-| `code_search` | Search for code examples and docs via Exa MCP. No API key required. |
-| `get_search_content` | Retrieve stored content from a previous `web_search` or `fetch_content` call via `responseId`. |
+| Tool | When to use |
+|------|-------------|
+| `web_search` | Current information, docs, discussions, URLs. Returns a synthesized answer + source list. Set `includeContent:true` to get full page text inline. |
+| `fetch_content` | Read a specific URL or GitHub repo in full. Single-URL calls return the complete page text. GitHub repos are auto-cloned or served via API view. |
+| `code_search` | Programming questions: API usage, library examples, debugging. Returns code snippets and docs. Falls back to `web_search` if needed. |
 
 ## Commands
 
 | Command | Description |
-| --- | --- |
+|---------|-------------|
+| `/web-config provider auto\|exa-mcp\|exa-api\|ollama` | Set search provider. |
+| `/web-config exa-key <key>` | Save Exa API key to `auth.json`. |
+| `/web-config ollama-key <key>` | Save Ollama Cloud API key to `auth.json`. |
+| `/web-config show` | Show current provider and masked keys. |
 | `/search` | Browse stored search results interactively. |
-| `/pi-web-activity` | Toggle the web search activity monitor widget on or off. |
+| `/pi-web-activity` | Toggle the activity monitor widget. |
 
-## Behavior
+## Provider fallback (auto mode)
 
-- `web_search` tries Exa (MCP if no key, direct API if `EXA_API_KEY` is set), then falls back to Gemini Web when browser cookies are available.
-- `fetch_content` routes GitHub URLs to clone or API view, PDFs to text extraction, and HTML through Readability → RSC parser → Jina Reader → Gemini Web fallback.
-- GitHub repos are cloned locally when possible; otherwise a lightweight API view is returned. Private repos require the `gh` CLI.
-- Results are stored per session and can be retrieved with `get_search_content`.
+1. **Exa API** — direct API calls if an API key is configured.
+2. **Exa MCP** — zero-config search via Exa's MCP endpoint.
+3. **Ollama Cloud** — if an API key is configured.
 
-## Settings
+Set `EXA_API_KEY` or `OLLAMA_API_KEY` env vars, or use `/web-config` to persist keys.
 
-Config lives in `~/.pi/web-search.json`. All fields are optional.
+## Configuration
 
-```json
-{
-  "exaApiKey": "exa-...",
-  "allowBrowserCookies": false,
-  "chromeProfile": "Profile 2"
-}
-```
+Provider selection is stored in `~/.pi/agent/settings.json` under `piWebAccess.searchProvider`.
 
-- `allowBrowserCookies` — enables Chromium cookie extraction for Gemini Web. Defaults to `false`.
-- `chromeProfile` — Chromium profile directory for cookie lookup.
-- `EXA_API_KEY` env var takes precedence over the config file.
-
-## Compatibility
-
-Tested and known to work with Pi v0.72.1 or newer.
+API keys are stored in `~/.pi/agent/auth.json` under `exa.key` and `ollama.key`.
 
 ## Notes
 
-- PDF extraction is text-only; no OCR for scanned documents.
-- Non-code GitHub URLs (issues, PRs, wiki) fall through to normal web extraction.
-- Rate limits: content fetches run 3 concurrent with a 30s timeout per URL.
+- `code_search` uses Exa MCP under the hood.
+- PDF extraction is text-only; no OCR.
+- Content fetches run 3 concurrent with a 30s timeout per URL.
+
+## Credits
+
+- Original: Nico Bailon (`pi-web-access`).
+- Modifications: stripped Gemini Web, added Ollama Cloud, rewrote config system, simplified tools.
