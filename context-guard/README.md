@@ -22,6 +22,7 @@ This extension lets you **inspect** and **remove** those layers per-rule, so you
   - `date` — remove `Current date`
   - `cwd` — remove `Current working directory`
   - `agents` — remove `<project_context>` wrapper
+  - `ancestor-agents` — keep only the `AGENTS.md` / `CLAUDE.md` from the current directory; drop parent/ancestor files
   - `skills` — remove `<available_skills>` block
   - `pi-docs` — remove default Pi docs block
   - `tool-snippets` — remove "Available tools" / "Guidelines" lists from default prompt
@@ -48,6 +49,7 @@ No more "one extension adds, another removes" — one knob for Pi's auto-injecti
     "removeCwd": true,
     "removeDate": true,
     "removeAgentsWrapper": false,
+    "removeAncestorAgents": false,
     "removeSkills": false,
     "removePiDocsBlock": false,
     "removeToolSnippets": false,

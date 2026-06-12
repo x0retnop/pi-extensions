@@ -17,6 +17,7 @@
     "asku/**/*.ts",
     "btw/**/*.ts",
     "context/**/*.ts",
+    "context-guard/**/*.ts",
     "ctx-manager/**/*.ts",
     "grep-tool/**/*.ts",
     "handoff/**/*.ts",

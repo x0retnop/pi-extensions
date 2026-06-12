@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 
 const EXT = "context-guard";
 const SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
@@ -11,6 +11,7 @@ interface GuardConfig {
   removeDate?: boolean;
   removeCwd?: boolean;
   removeAgentsWrapper?: boolean;
+  removeAncestorAgents?: boolean;
   removeSkills?: boolean;
   removePiDocsBlock?: boolean;
   removeToolSnippets?: boolean;
@@ -21,6 +22,7 @@ const RULE_MAP: Record<string, keyof GuardConfig> = {
   date: "removeDate",
   cwd: "removeCwd",
   agents: "removeAgentsWrapper",
+  "ancestor-agents": "removeAncestorAgents",
   skills: "removeSkills",
   "pi-docs": "removePiDocsBlock",
   "tool-snippets": "removeToolSnippets",
@@ -31,6 +33,7 @@ const RULE_LABELS: Record<string, string> = {
   date: "Current date",
   cwd: "Current working directory",
   agents: "AGENTS.md XML wrapper",
+  "ancestor-agents": "Ancestor AGENTS.md / CLAUDE.md files",
   skills: "Skills XML block",
   "pi-docs": "Default Pi docs block",
   "tool-snippets": "Tool snippets & Guidelines",
@@ -68,10 +71,50 @@ function estimateTokens(text: string): number {
   return Math.max(0, Math.ceil(text.length / 4));
 }
 
+/* ─── Remove AGENTS.md / CLAUDE.md files loaded from ancestor directories ─── */
+
+function normalizePathForCompare(p: string): string {
+  return normalize(p).replace(/\\/g, "/").toLowerCase();
+}
+
+function removeAncestorAgents(prompt: string, cwd: string): string {
+  const normalizedCwd = normalizePathForCompare(cwd);
+
+  return prompt.replace(
+    /<project_context>[\s\S]*?<\/project_context>/g,
+    (match) => {
+      const blockRegex = /<project_instructions path="([^"]*)">([\s\S]*?)<\/project_instructions>/g;
+      const kept: string[] = [];
+      let m: RegExpExecArray | null;
+
+      while ((m = blockRegex.exec(match)) !== null) {
+        const fileDir = normalizePathForCompare(dirname(m[1]));
+        if (fileDir === normalizedCwd) {
+          kept.push(m[0]);
+        }
+      }
+
+      if (kept.length === 0) return "";
+
+      let rebuilt = "<project_context>\n\n";
+      rebuilt += "Project-specific instructions and guidelines:\n\n";
+      for (const block of kept) {
+        rebuilt += `${block}\n\n`;
+      }
+      rebuilt += "</project_context>";
+      return rebuilt;
+    },
+  );
+}
+
 /* ─── Apply guard rules to system prompt text ─── */
 
-function applyGuardRules(prompt: string, config: GuardConfig): string {
+function applyGuardRules(prompt: string, config: GuardConfig, cwd?: string): string {
   let result = prompt;
+
+  if (config.removeAncestorAgents && cwd) {
+    result = removeAncestorAgents(result, cwd);
+  }
 
   if (config.removeDate) {
     result = result.replace(/\nCurrent date: [^\n]*/g, "");
@@ -160,7 +203,8 @@ function buildInspectReport(
   const lines: string[] = [];
   lines.push("=== Context Guard Inspection ===\n");
 
-  const effectivePrompt = applyGuardRules(systemPrompt, config);
+  const cwd = options?.cwd;
+  const effectivePrompt = applyGuardRules(systemPrompt, config, cwd);
   const rawTokens = estimateTokens(systemPrompt);
   const effectiveTokens = estimateTokens(effectivePrompt);
   const saved = rawTokens - effectiveTokens;
@@ -185,10 +229,20 @@ function buildInspectReport(
   const files = options?.contextFiles || [];
   if (files.length) {
     const total = files.reduce((a: number, f: any) => a + estimateTokens(f.content || ""), 0);
-    const status = config.removeAgentsWrapper ? "WILL BE REMOVED" : `~${total} tok`;
+    let status: string;
+    if (config.removeAgentsWrapper) {
+      status = "WILL BE REMOVED";
+    } else if (config.removeAncestorAgents && cwd) {
+      const removed = files.filter((f: any) => normalizePathForCompare(dirname(f.path)) !== normalizePathForCompare(cwd)).length;
+      status = removed > 0 ? `~${total} tok (${removed} ancestor file(s) will be removed)` : `~${total} tok`;
+    } else {
+      status = `~${total} tok`;
+    }
     lines.push(`\n[AGENTS.md / CLAUDE.md] ${files.length} file(s) — ${status}`);
     for (const f of files) {
-      lines.push(`  - ${f.path} ~${estimateTokens(f.content || "")} tok`);
+      const isAncestor = cwd && normalizePathForCompare(dirname(f.path)) !== normalizePathForCompare(cwd);
+      const marker = config.removeAncestorAgents && isAncestor ? " [ancestor → removed]" : "";
+      lines.push(`  - ${f.path} ~${estimateTokens(f.content || "")} tok${marker}`);
     }
   } else {
     lines.push("\n[AGENTS.md / CLAUDE.md] (none)");
@@ -258,9 +312,9 @@ export default function (pi: ExtensionAPI) {
   });
 
   // Apply rules on every turn
-  pi.on("before_agent_start", async (event, _ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     const original = event.systemPrompt ?? "";
-    const cleaned = applyGuardRules(original, config);
+    const cleaned = applyGuardRules(original, config, ctx.cwd);
     if (cleaned !== original) {
       return { systemPrompt: cleaned };
     }
@@ -288,7 +342,7 @@ export default function (pi: ExtensionAPI) {
   // /ctx-guard — toggle rules
   pi.registerCommand("ctx-guard", {
     description:
-      "Toggle context guard rules: date, cwd, agents, skills, pi-docs, tool-snippets, role-override",
+      "Toggle context guard rules: date, cwd, agents, ancestor-agents, skills, pi-docs, tool-snippets, role-override",
     handler: async (args, ctx) => {
       const arg = args.trim().toLowerCase();
       const validRules = Object.keys(RULE_MAP);
