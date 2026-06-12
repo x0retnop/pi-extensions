@@ -28,16 +28,25 @@ echo "my-app" > .project-id
 
 Перезапустить Pi и бэкенд.
 
+По умолчанию расширение стучится на `http://127.0.0.1:8000`. Переопределить можно через env:
+
+```bash
+export PI_PROJECT_MEMORY_URL="http://127.0.0.1:8000"
+# или
+export PI_BACKEND_URL="http://127.0.0.1:8000"
+```
+
 ## Когда что использовать
 
 | Ситуация | Как |
 |----------|-----|
 | Новая сессия, «где мы были» | Агент сам вызовет `project_memory_recent` — или ты `/pm` → **Recent handoffs** |
 | «Как у нас сделано X?» | Агент `project_memory_search` — или ты `/pm` → **Search** |
-| Закончил нетривиальную работу | Агент `project_memory_add` — или ты `/pm` → **Add fact** |
-| Осталось todo на потом | Агент `project_memory_add` (type: `todo_item`) — или `/pm` → **Add todo** |
+| Закончил нетривиальную работу | Агент `project_memory_add_fact` — или ты `/pm` → **Add fact** |
+| Осталось todo на потом | Агент `project_memory_add_todo` — или `/pm` → **Add todo** |
+| Конец сессии, «что сделали» | Агент `project_memory_add_handoff` — или `/pm` → **Add handoff** |
 | Проверить/поправить старые факты | `/pm` → **Browse facts** — выбрать, редактировать или удалить |
-| Срочно, не отвлекая агента | Прямая команда: `/pm-add`, `/pm-handoff`, `/pm-todos` |
+| Срочно, не отвлекая агента | Прямая команда: `/pm-add-fact`, `/pm-add-handoff`, `/pm-add-todo`, `/pm-handoff` |
 
 ## Интерактивный режим (`/pm`)
 
@@ -54,12 +63,17 @@ echo "my-app" > .project-id
 Быстрее, когда руки на клавиатуре и ты знаешь, что нужно:
 
 - `/pm-status` — статистика проекта
-- `/pm-recent [N]` — последние N хэндоффов
-- `/pm-todos [active\|done]` — список задач
+- `/pm-recent [N]` — последние N хэндоффов (N ≤ 5)
+- `/pm-todos [active|done|archived]` — список задач
 - `/pm-search <query>` — быстрый семантический поиск
-- `/pm-add type|topic|what` — сохранить факт/туду
-- `/pm-handoff topic|what` — сохранить хэндофф
-- `/pm-get <item_id>`, `/pm-update <item_id> <status>`, `/pm-delete <item_id>` — когда знаешь ID
+- `/pm-add-fact type|topic|what` — сохранить факт
+- `/pm-add-handoff topic|what` — сохранить хэндофф
+- `/pm-add-todo topic|what` — сохранить туду
+- `/pm-handoff topic|what` — алиас для `/pm-add-handoff`
+- `/pm-add type|topic|what` — legacy: тип сам определяет категорию
+- `/pm-get <item_id>`, `/pm-update <item_id> <status>`, `/pm-delete <item_id>`
+
+Типы для `/pm-add-fact`: `decision`, `pattern`, `gotcha`, `architecture`, `bugfix`.
 
 ## Мини-гайд: привыкание к процессу
 
@@ -84,4 +98,4 @@ echo "my-app" > .project-id
 
 ---
 
-**Ключевое правило:** память работает только на том, что ты явно сохранил. Если агент не предложил — попроси `/pm` → **Add fact**. Если забыл сохранить — следующий сессия начнёт с нуля.
+**Ключевое правило:** память работает только на том, что ты явно сохранил. Если агент не предложил — попроси `/pm` → **Add fact**. Если забыл сохранить — следующая сессия начнёт с нуля.

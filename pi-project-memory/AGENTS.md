@@ -38,6 +38,27 @@ Cross-session project memory for Pi agents. Replaces long handoff files with sea
 - No auto-extraction; only explicit save via tool or command.
 - Project identity comes from `.project-id` in cwd.
 - User-facing strings and command docs live in `README.md`.
+- Extension base URL is read from `PI_PROJECT_MEMORY_URL`, then `PI_BACKEND_URL`, then falls back to `http://127.0.0.1:8000`.
+
+## Agent workflow
+
+This is the operational flow the extension expects from agents. Tool-specific triggers and examples live in each tool's `promptGuidelines` inside `index.ts`.
+
+1. **Start of a new session** — call `project_memory_recent` to catch up. Do not ask the user "where did we stop" before reading recent handoffs.
+2. **User asks about conventions, architecture, or "how do we do X"** — call `project_memory_search` first. Only read multiple files if search returns nothing useful.
+3. **Search/recent preview is not enough** — call `project_memory_get({ item_id })` using the exact ID from the previous result.
+4. **User asks about remaining work or todos** — call `project_memory_list_todos` (todos are not searchable).
+5. **After a non-trivial decision, refactor, bugfix, or gotcha** — offer to call `project_memory_add_fact`.
+6. **At the end of a meaningful session** — offer to call `project_memory_add_handoff`.
+7. **When a follow-up task appears** — offer to call `project_memory_add_todo`.
+
+## Tool categories
+
+| What to save | Tool | Backend category | Notes |
+|--------------|------|------------------|-------|
+| Decision, pattern, gotcha, architecture, bugfix | `project_memory_add_fact` | `facts` | Indexed, eternal |
+| Session summary / progress | `project_memory_add_handoff` | `handoffs` | Indexed, rotated to last 30 |
+| Open task | `project_memory_add_todo` | `todos` | Not indexed, JSONL only |
 
 ## Where to find work
 
