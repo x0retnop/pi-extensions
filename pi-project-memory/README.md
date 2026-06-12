@@ -18,6 +18,14 @@ Project-scoped semantic memory for Pi agents. Replaces long handoff files betwee
 
 ## Commands
 
+### Interactive TUI (recommended)
+- `/pm` — opens an interactive menu where you can browse, search, add, edit, and delete records without memorizing syntax.
+  - **Browse facts** — list all facts, edit topic/what/why/where/tags inline, or delete
+  - **Get record** — pick any record from a searchable list (no need to type item_id)
+  - **Update status** — pick a record, then set status
+  - **Delete record** — pick a record, confirm, then delete
+
+### Direct CLI commands
 - `/pm-status` — show project memory stats
 - `/pm-recent [N]` — last N handoff entries
 - `/pm-todos [active|done]` — list todos
