@@ -121,7 +121,7 @@ The native `edit` renderer expects:
 - Tool arguments shaped as `{ path, edits: [{oldText, newText}] }`
 - `details.diff` in **unified diff** format (`@@` headers, `+`/`-` lines)
 
-If your custom `edit` uses a different schema (`multi`, `patch`, or `File:` prefixed diffs), the native renderer will mis-parse the diff and may show duplicated or broken output. Always provide custom renderers when you change the argument schema.
+If your custom `edit` uses a different schema (`multi` or `File:` prefixed diffs), the native renderer will mis-parse the diff and may show duplicated or broken output. Always provide custom renderers when you change the argument schema.
 
 ### Diff format for custom `renderResult`
 
@@ -319,7 +319,7 @@ pi.registerTool({
   renderShell: "self",   // MUST be "self" to suppress built-in fallback
 
   renderCall(args, theme) {
-    const mode = args.patch ? "patch" : Array.isArray(args.multi) ? "multi" : "";
+    const mode = Array.isArray(args.multi) ? "multi" : "";
     const modeLabel = mode ? `edit:${mode}` : "edit";
     const path = args.path || "...";
     const label = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", path)}`;
@@ -365,7 +365,7 @@ After ~15 iterations trying to get a custom `edit` override stable, the followin
 
 Even though the docs say `"default"` lets Pi draw the colored Box, the built-in `edit` renderer **always** exists as a fallback. If your `renderCall` / `renderResult` are missing, incomplete, or if Pi's internal `ToolExecutionComponent` decides to call the fallback, you get:
 - **Duplicate blocks** (your renderer + built-in renderer).
-- **Giant JSON dump** — the built-in renderer does `JSON.stringify(args, null, 2)` for unknown params like `multi[]` or `patch`. This flashes as a massive wall of text for 1–2 frames before collapsing.
+- **Giant JSON dump** — the built-in renderer does `JSON.stringify(args, null, 2)` for unknown params like `multi[]`. This flashes as a massive wall of text for 1–2 frames before collapsing.
 - **Orphaned "edit" headers** — the fallback draws its own header below yours.
 
 **Verdict:** `renderShell: "self"` is mandatory for built-in `edit` override. No exceptions.

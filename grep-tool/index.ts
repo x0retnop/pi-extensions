@@ -9,6 +9,7 @@ const DEFAULT_HEAD_LIMIT = 200;
 const BROAD_CONTENT_THRESHOLD = 100;
 const BROAD_CONTEXT_THRESHOLD = 50;
 const PREFLIGHT_TIMEOUT_MS = 15000;
+const MAX_LINE_LENGTH = 500;
 
 function findRg(): string | null {
   try {
@@ -45,10 +46,17 @@ interface GrepParams {
   allow_broad?: boolean;
 }
 
-function resolvePath(raw: string | undefined): string {
-  if (!raw) return ".";
-  const trimmed = raw.replace(/^["']|["']$/g, "");
-  return trimmed;
+function toAbsoluteAgentPath(raw: string | undefined, cwd: string): string {
+  if (!raw) return cwd;
+  let trimmed = raw.replace(/^["']|["']$/g, "");
+  // Convert Git Bash /c/... style paths to Windows drive letters so Node can resolve them.
+  trimmed = trimmed.replace(/^\/([a-zA-Z])(?=\/)/, "$1:");
+  return path.resolve(cwd, trimmed);
+}
+
+function truncateLine(text: string, maxLen = MAX_LINE_LENGTH): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + " [...truncated]";
 }
 
 function isRegexError(stderr: string): boolean {
@@ -80,6 +88,7 @@ async function runPreflightCount(
     args.push("-g", "!.env");
     args.push("-g", "!**/.env");
   }
+  args.push("-g", "!*.map");
   args.push("--");
   args.push(params.pattern);
   if (searchPath) args.push(searchPath);
@@ -168,7 +177,9 @@ export default function (pi: ExtensionAPI) {
         },
         path: {
           type: "string",
-          description: "File or directory to search in. Defaults to current working directory.",
+          description:
+            "File or directory to search in. Accepts relative paths, absolute paths, " +
+            "and Git Bash /c/... style paths. Defaults to the current working directory.",
         },
         glob: {
           type: "string",
@@ -253,23 +264,7 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      const searchPath = resolvePath(params.path);
-      const absoluteSearchPath = path.resolve(cwd, searchPath);
-      const cwdLower = cwd.toLowerCase();
-      const absLower = absoluteSearchPath.toLowerCase();
-      const isInsideProject =
-        absLower === cwdLower || absLower.startsWith(cwdLower + path.sep);
-      if (!isInsideProject) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Search path must be inside the project directory: ${searchPath}`,
-            },
-          ],
-          details: { error: "path outside project directory", path: searchPath },
-        };
-      }
+      const searchPath = toAbsoluteAgentPath(params.path, cwd);
 
       const mode = params.output_mode || "content";
       const userLimit = params.head_limit;
@@ -330,6 +325,7 @@ export default function (pi: ExtensionAPI) {
         args.push("-g", "!**/.env");
       }
 
+      args.push("-g", "!*.map");
       args.push("--");
       args.push(params.pattern);
 
@@ -362,8 +358,8 @@ export default function (pi: ExtensionAPI) {
               if (file) files.add(file);
 
               const lineNum = obj.data.line_number;
-              const content = (obj.data.lines?.text || "").replace(/\n$/, "");
-              const submatch = obj.data.submatches?.[0]?.match?.text || "";
+              const content = truncateLine((obj.data.lines?.text || "").replace(/\n$/, ""));
+              const submatch = truncateLine(obj.data.submatches?.[0]?.match?.text || "");
 
               matches.push({
                 file,

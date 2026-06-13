@@ -1,4 +1,17 @@
-# Pi CLI Internals — Agent Reference
+---
+
+## 12. Agent loop context snapshot is immutable during a turn
+
+The core agent loop (`@earendil-works/pi-agent-core`) snapshots `systemPrompt`, `messages`, and `tools` at the start of each user turn. Changes to `agent.state.tools` (e.g. via `pi.setActiveTools()`) do not affect the current turn's snapshot. This is why toggling tools from within a tool call only becomes visible on the next user turn. See `docs/pi-tool-internals.md` §9 for details and workarounds.
+
+---
+
+## 13. `prepareNextTurn` is not wired up by Pi
+
+`AgentLoopConfig` exposes `prepareNextTurn` and it could theoretically refresh the context between turns, but `AgentSession` does not assign it when creating the `Agent` in `dist/core/sdk.js`. Therefore extensions cannot use it to update the active tool set mid-stream. The only reliable ways to change active tools are:
+- `pi.setActiveTools()` from a **user turn** (slash command, user bash, or between agent responses).
+- `session_start` / `session_tree` handlers.
+- Another extension's event handler that runs before the agent's next turn.# Pi CLI Internals — Agent Reference
 
 > Installed version: `0.79.0` (2026-06-08).  
 > Install root: `%APPDATA%/npm/node_modules/@earendil-works/pi-coding-agent/`

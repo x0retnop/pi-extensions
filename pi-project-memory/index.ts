@@ -62,6 +62,16 @@ async function resolveProjectId(cwd: string): Promise<string> {
   return path.basename(cwd).replace(/[^a-zA-Z0-9_-]/g, "_") + "_fallback";
 }
 
+function hasProjectId(cwd: string): boolean {
+  try {
+    const text = fs.readFileSync(path.join(cwd, ".project-id"), "utf-8");
+    const id = text.trim().split(/\r?\n/)[0].trim();
+    return id.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
@@ -224,9 +234,12 @@ export default function (pi: ExtensionAPI) {
     notify(ctx, `Error: ${msg}`, "error");
   }
 
-  // -------------------------------------------------------------------------
-  // project_memory_recent
-  // -------------------------------------------------------------------------
+  // Only expose LLM tools when the current working directory has a .project-id
+  // file. This prevents agents from calling project memory tools in projects
+  // that have not opted into them. CLI commands remain available so the user
+  // can still manage memory explicitly.
+  const toolsEnabled = hasProjectId(process.cwd());
+  if (toolsEnabled) {
   pi.registerTool({
     name: "project_memory_recent",
     label: "Project Memory Recent",
@@ -591,6 +604,8 @@ export default function (pi: ExtensionAPI) {
       return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
     },
   });
+
+  } // end toolsEnabled
 
   // -------------------------------------------------------------------------
   // Commands

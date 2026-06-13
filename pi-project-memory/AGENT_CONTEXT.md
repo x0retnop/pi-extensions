@@ -2,11 +2,13 @@
 
 ## Last updated
 
-2026-06-12
+2026-06-13
 
 ## Status
 
 Extension tools consolidated. The three explicit write tools (`add_fact`, `add_handoff`, `add_todo`) have been merged into a single `project_memory_save` tool with a `kind` parameter. The backend remains unchanged. Extension now exposes 5 LLM tools total: `recent`, `search`, `get`, `save`, `list_todos`.
+
+LLM tools are registered only when the current working directory contains a `.project-id` file. CLI commands remain always available.
 
 ## Files
 
@@ -17,6 +19,7 @@ Extension tools consolidated. The three explicit write tools (`add_fact`, `add_h
 
 ## Recent changes
 
+- Conditional LLM tool registration: tools only register when `.project-id` exists in `process.cwd()`. CLI commands remain always available.
 - Replaced `project_memory_add_fact`, `project_memory_add_handoff`, `project_memory_add_todo` with `project_memory_save` (`kind: fact|handoff|todo`).
 - Renamed fact parameter `type` → `fact_type` to prevent agents from confusing it with work types like 'feature' or 'task'.
 - Added explicit `fact_type` mapping guidance: feature → pattern/architecture, bug → bugfix, choice → decision, trap → gotcha.

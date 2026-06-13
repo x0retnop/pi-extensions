@@ -21,6 +21,36 @@ import {
 } from "./storage.js";
 import { activityMonitor, type ActivityEntry } from "./activity.js";
 
+const WEB_TOOLS = ["web_search", "code_search", "fetch_content"] as const;
+const GATE_TOOL = "web_access";
+const WEB_ACCESS_STATE_TYPE = "web-access-state";
+
+type WebAccessState = { enabled: boolean };
+
+function getLatestWebAccessState(ctx: ExtensionContext): WebAccessState | null {
+	const branch = ctx.sessionManager.getBranch();
+	for (let i = branch.length - 1; i >= 0; i--) {
+		const entry = branch[i];
+		if (entry.type === "custom" && entry.customType === WEB_ACCESS_STATE_TYPE) {
+			return entry.data as WebAccessState;
+		}
+	}
+	return null;
+}
+
+function syncWebAccessTools(pi: ExtensionAPI, enabled: boolean): void {
+	const current = pi.getActiveTools();
+	const base = current.filter((name) => name !== GATE_TOOL && !WEB_TOOLS.some((tool) => tool === name));
+	const next = enabled ? [...base, ...WEB_TOOLS] : [...base, GATE_TOOL];
+	pi.setActiveTools([...new Set(next)]);
+}
+
+function setWebAccessStatus(ctx: ExtensionContext, enabled: boolean): void {
+	if (ctx.hasUI) {
+		ctx.ui.setStatus("web-access", enabled ? "web: on" : undefined);
+	}
+}
+
 function normalizeQueryList(queryList: unknown[]): string[] {
 	const normalized: string[] = [];
 	for (const query of queryList) {
@@ -163,11 +193,15 @@ function formatEntryLine(
 	return `${typeStr.padEnd(4)} ${target.padEnd(32)} ${statusStr.padStart(5)} ${duration.padStart(5)} ${indicator}`;
 }
 
-function handleSessionChange(ctx: ExtensionContext): void {
+function handleSessionChange(pi: ExtensionAPI, ctx: ExtensionContext): void {
 	clearCloneCache();
 	sessionActive = true;
 	sessionSearchCount = 0;
 	restoreFromSession(ctx);
+	const state = getLatestWebAccessState(ctx);
+	const enabled = state?.enabled ?? false;
+	syncWebAccessTools(pi, enabled);
+	setWebAccessStatus(ctx, enabled);
 	widgetUnsubscribe?.();
 	widgetUnsubscribe = null;
 	activityMonitor.clear();
@@ -347,6 +381,24 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("web", {
+		description: "Toggle web search tools on/off",
+		handler: async (args, ctx) => {
+			const state = getLatestWebAccessState(ctx);
+			const currentlyEnabled = state?.enabled ?? false;
+			let enabled: boolean;
+			const arg = args.trim().toLowerCase();
+			if (arg === "on") enabled = true;
+			else if (arg === "off") enabled = false;
+			else enabled = !currentlyEnabled;
+
+			pi.appendEntry(WEB_ACCESS_STATE_TYPE, { enabled });
+			syncWebAccessTools(pi, enabled);
+			setWebAccessStatus(ctx, enabled);
+			ctx.ui.notify(`Web access ${enabled ? "ON" : "OFF"}`, "info");
+		},
+	});
+
 	pi.registerCommand("pi-web-activity", {
 		description: "Toggle web search activity widget on/off",
 		handler: async (args, ctx) => {
@@ -368,8 +420,8 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	pi.on("session_start", async (_event, ctx) => handleSessionChange(ctx));
-	pi.on("session_tree", async (_event, ctx) => handleSessionChange(ctx));
+	pi.on("session_start", async (_event, ctx) => handleSessionChange(pi, ctx));
+	pi.on("session_tree", async (_event, ctx) => handleSessionChange(pi, ctx));
 
 	pi.on("session_shutdown", () => {
 		sessionActive = false;
@@ -379,6 +431,56 @@ export default function (pi: ExtensionAPI) {
 		widgetUnsubscribe = null;
 		activityMonitor.clear();
 		widgetVisible = false;
+	});
+
+	pi.registerTool({
+		name: GATE_TOOL,
+		label: "Web Access",
+		description:
+			"Web search, fetch, and code search are currently disabled. " +
+			"Call this tool when the user asks for web content. It returns a reminder to pass to the user: enable web access with /web.",
+		promptGuidelines: [
+			"When web tools are disabled and the user asks for web search, URLs, or code examples, call web_access.",
+			"web_access only returns a reminder message. Pass that message to the user verbatim.",
+		],
+		parameters: Type.Object({}),
+
+		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+			const state = getLatestWebAccessState(ctx);
+			const currentlyEnabled = state?.enabled ?? false;
+			if (currentlyEnabled) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "Web access is already enabled. Use web_search, code_search, or fetch_content directly.",
+						},
+					],
+					details: { enabled: true },
+				};
+			}
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: "Web access is currently disabled. Tell the user to run /web to enable web search, fetch, and code search tools.",
+					},
+				],
+				details: { enabled: false },
+			};
+		},
+
+		renderCall(_args, theme) {
+			return new Text(theme.fg("toolTitle", theme.bold("web_access ")) + theme.fg("warning", "disabled"), 0, 0);
+		},
+
+		renderResult(result, _options, theme) {
+			const details = result.details as { enabled?: boolean } | undefined;
+			if (details?.enabled) {
+				return new Text(theme.fg("success", "Web access already enabled"), 0, 0);
+			}
+			return new Text(theme.fg("warning", "Web access disabled — remind user to run /web"), 0, 0);
+		},
 	});
 
 	pi.registerTool({

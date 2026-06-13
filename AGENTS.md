@@ -18,22 +18,32 @@ They are **not** installed via `pi install`.
 - After editing, the user copies the folder manually and **restarts Pi**.
 - Do **not** test freshly edited extensions via bash — they are not loaded yet.
 - Do **not** edit `~/.pi/agent/extensions/` directly unless the user explicitly asks.
+- Do **not** tell the user to copy/restart unless they ask or the task explicitly requires runtime verification.
 
-## Prompt & roles
+## Type-checking extensions
 
-- `~/.pi/agent/SYSTEM.md` is a **stub** (empty). Real persona comes from `role-sw`.
-- Roles live in `~/.pi/agent/roles/` (`kimi.md`, `coding_agent.md`, etc.).
-- `AGENTS.md` in this file is auto-loaded by Pi from cwd when launched from this directory.
+Only type-check after editing **code** (`.ts`, `.js`, `.tsx`, `.jsx`, `.json` files such as `package.json`). There is no need to run `tsc` for documentation-only changes (`.md`, `.txt`, etc.).
 
-## Checking Pi CLI version compatibility
+Run this from the repo root to verify all included extensions compile:
 
-When the user asks about upgrading Pi, version compatibility, or whether to update:
+```bash
+cd "C:/10x001/pi extensions"
+npx tsc --noEmit
+```
 
-1. **First** run `python scripts/check-pi-sync.py` from the repo root.
-2. **Then** read `docs/pi-version-sync.md` and follow its workflow.
-3. **Only if** the script flags something or the CHANGELOG delta is unclear — use web search or fetch the full release notes for clarification.
+Why this works:
+- `tsconfig.json` in this repo lists every active extension in `include`.
+- Pi core packages (`@earendil-works/*`) are resolved through symlinks in `node_modules/@earendil-works/`, which point to the globally installed Pi CLI.
+- `typebox` is a local `devDependency` in this repo.
 
-**Do NOT start with web search.** The local script is the single source of truth for what is actually installed and what patterns exist in this collection.
+Do **not** run `npx tsc --noEmit <files>` with explicit file arguments unless you also pass `--ignoreConfig` — otherwise the project-wide type resolution is bypassed and Pi core imports will fail. Prefer `npx tsc --noEmit` from the repo root.
+
+If a single extension has errors that are hard to read in the full project output, you can type-check just that extension while keeping the config:
+
+```bash
+cd "C:/10x001/pi extensions"
+npx tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck --types node pi-extension-folder/index.ts
+```
 
 ## Runtime dependencies reminder
 
@@ -48,6 +58,16 @@ If you add a **new extension** or **new runtime dependency** to an existing exte
 3. Do **not** create a `node_modules/` inside the extension folder.
 
 Pi core packages (`@earendil-works/*`, `typebox`) are provided by Pi CLI at runtime — never list them as `dependencies`.
+
+## Checking Pi CLI version compatibility
+
+When the user asks about upgrading Pi, version compatibility, or whether to update:
+
+1. **First** run `python scripts/check-pi-sync.py` from the repo root.
+2. **Then** read `docs/pi-version-sync.md` and follow its workflow.
+3. **Only if** the script flags something or the CHANGELOG delta is unclear — use web search or fetch the full release notes for clarification.
+
+**Do NOT start with web search.** The local script is the single source of truth for what is actually installed and what patterns exist in this collection.
 
 ## When you are unsure — follow this order
 

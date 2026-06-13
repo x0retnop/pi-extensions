@@ -1,0 +1,17 @@
+{
+  "name": "pi-extension-tool-dev",
+  "version": "0.1.0",
+  "description": "Developer commands for inspecting tools registered in Pi.",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}

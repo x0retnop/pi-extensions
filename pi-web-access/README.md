@@ -14,14 +14,18 @@ pi install ./pi-web-access
 
 | Tool | When to use |
 |------|-------------|
+| `web_access` | **Shown only when web access is OFF.** Reminds the user to run `/web` if they asked for web content. |
 | `web_search` | Current information, docs, discussions, URLs. Returns a synthesized answer + source list. Set `includeContent:true` to get full page text inline. |
 | `fetch_content` | Read a specific URL or GitHub repo in full. Single-URL calls return the complete page text. GitHub repos are auto-cloned or served via API view. |
 | `code_search` | Programming questions: API usage, library examples, debugging. Returns code snippets and docs. Falls back to `web_search` if needed. |
+
+By default, `web_search`, `fetch_content`, and `code_search` are **not visible to the agent**. Only `web_access` is active. This keeps the tool list short and reduces context usage. When the user asks for web content, the agent will call `web_access` and remind you to enable access with `/web`. After you run `/web`, the web tools become available on the agent's next turn. Run `/web` again (or `/web off`) to hide them.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `/web` | Toggle web search tools on/off. With `on`/`off` argument sets state explicitly. |
 | `/web-config provider auto\|exa-mcp\|exa-api\|ollama` | Set search provider. |
 | `/web-config exa-key <key>` | Save Exa API key to `auth.json`. |
 | `/web-config ollama-key <key>` | Save Ollama Cloud API key to `auth.json`. |

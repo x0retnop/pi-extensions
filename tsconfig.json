@@ -32,6 +32,8 @@
     "win-bash-sanitizer/**/*.ts",
     "simple-gate/**/*.ts",
     "pi-multi-edit/**/*.ts",
-    "pi-session-memory/**/*.ts"
+    "pi-session-memory/**/*.ts",
+    "pi-list-tools/**/*.ts",
+    "tool-dev/**/*.ts"
   ]
 }

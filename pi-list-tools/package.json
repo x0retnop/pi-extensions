@@ -1,0 +1,13 @@
+{
+  "name": "pi-extension-list-tools",
+  "version": "0.1.0",
+  "description": "Meta-tool that lists every available tool with descriptions and parameter summaries.",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

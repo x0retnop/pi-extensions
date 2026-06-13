@@ -19,6 +19,7 @@ This doc is a compass. If you are unsure where something lives or what the rules
 | Understand how `simple-gate` works | `simple-gate/path-guard.ts` + `simple-gate/index.ts` |
 | Find built-in tool limits (read truncation, bash output caps) | `docs/pi-local-map.md` → `dist/core/tools/truncate.js` |
 | Read actual implementation of built-in read/bash/edit | `dist/core/tools/*.js` inside Pi install (see `pi-local-map.md`) |
+| Understand agent loop snapshot behavior | `docs/pi-tool-internals.md` §9 |
 
 ## "What should I remember every session?"
 
@@ -38,3 +39,13 @@ This doc is a compass. If you are unsure where something lives or what the rules
 | Fix a path classified as protected when it should not be | `simple-gate/path-guard.ts` → `looksLikePath()` or `classifyPathAccess()` |
 | Update roles or add a new role | `role-sw/README.md`, then create a file in `~/.pi/agent/roles/` (user copies it) |
 | Bump supported Pi CLI version | `docs/pi-version-sync.md` → follow the checklist |
+
+## Tool / LLM internals
+
+| I need to... | Go to |
+|---|---|
+| Understand what tool fields are sent to the LLM | `docs/pi-tool-internals.md` |
+| Check why a tool is active or inactive | `docs/pi-tool-internals.md` §5 |
+| Understand when `pi.setActiveTools()` actually takes effect | `docs/pi-tool-internals.md` §9 |
+| Inspect active vs registered tools | `/tools` and `/tools-all` (tool-dev extension) |
+| Write a tool description that steers the LLM | `docs/pi-tool-internals.md` §7 |

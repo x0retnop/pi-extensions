@@ -6,8 +6,9 @@ Structured project-wide search via ripgrep. Tuned for agent use: safe defaults, 
 
 - **Structured output** — Uses `rg --json` for reliable parsing instead of raw shell text.
 - **Output modes** — `content` (with context), `files_with_matches` (paths only), `count_matches` (totals).
-- **Safe limits** — `head_limit` caps results to avoid flooding the context window.
-- **Path sandboxing** — rejects search paths that would escape the project directory.
+- **Safe limits** — `head_limit` caps results and each returned line is truncated to 500 chars to avoid flooding the context window.
+- **Path normalization** — accepts relative paths, absolute paths, and Git Bash `/c/...` style paths.
+- **Noise filtering** — excludes `*.map` files by default and truncates individual result lines to 500 chars.
 - **Filters** — glob, file type, case-insensitive, multiline, whole-word, context lines.
 - **Respects `.gitignore`** — no accidental node_modules dumps.
 - **Windows fallback** — checks common install paths if `rg` is not on `PATH`.
@@ -23,7 +24,7 @@ pi install ./grep-tool
 | Param | Type | Description |
 |-------|------|-------------|
 | `pattern` | `string` | Regex or literal search pattern |
-| `path` | `string?` | File or directory to search (default: cwd) |
+| `path` | `string?` | Relative or absolute path; Git Bash `/c/...` paths also work (default: cwd) |
 | `output_mode` | `string?` | `content`, `files_with_matches`, or `count_matches` |
 | `head_limit` | `number?` | Max matches to return |
 | `glob` | `string?` | File name filter, e.g. `*.ts` |

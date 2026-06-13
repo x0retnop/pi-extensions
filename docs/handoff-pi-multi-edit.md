@@ -1,6 +1,6 @@
 # Handoff — pi-multi-edit Rendering & Agent UX
 
-**Last updated:** 2026-06-11
+**Last updated:** 2026-06-13
 **Extension:** `pi-multi-edit/`
 **Status:** Functional but fragile. Needs ongoing monitoring.
 
@@ -8,11 +8,10 @@
 
 ## What this extension does
 
-Overrides the built-in `edit` tool with four modes:
+Overrides the built-in `edit` tool with three modes:
 1. **Single:** `path + oldText + newText` — one change, one file.
 2. **Single-file batch:** top-level `path` + `edits: [{oldText, newText}, ...]` — many changes in ONE file. **PREFERRED for multiple edits in same file.**
 3. **Multi-file batch:** `multi: [{path, oldText, newText}, ...]` — changes across DIFFERENT files.
-4. **Patch:** Codex-style patch string (`*** Begin Patch ... *** End Patch`).
 
 Key feature: **Atomic batches** — if any edit fails preflight, zero files are modified. Rollback on error during actual apply.
 
@@ -27,11 +26,6 @@ Key feature: **Atomic batches** — if any edit fails preflight, zero files are 
 - **Preflight** (`continueOnError: true` + virtual workspace) correctly catches mismatches before writing.
 - **Preflight distinct messaging** (`≈ Matched` vs `✓ Edited`) prevents agents from thinking files were mutated during preflight.
 - **Skipped edits after failure in same file** are marked `⊘` with clear note: *"Fix the failed edit(s) and retry the whole batch."*
-
-### Patch mode (`patch.ts`)
-- Parses Codex-style patches (`*** Update File:`, `*** Add File:`, `*** Delete File:`).
-- Applies hunks with context matching.
-- Atomic: preflight first, then real apply with rollback.
 
 ### Agent prompts (`index.ts`)
 - Guidelines strongly push batching: `PREFER batching`, `NEVER send multiple separate edit calls for the same file`.
@@ -72,18 +66,7 @@ From `docs/tool-rendering.md` battle-tested lessons:
 
 **Verdict:** We accept empty `renderResult` body to avoid all of this. The diff is still available in `details.diff` and shown as plain text in the LLM result.
 
-### 4. Patch mode is NEVER used by agents
-
-**Observation:** Agents almost never use the `patch` parameter, even for complex changes. They default to `edits` array or single edits.
-
-**Possible causes:**
-- Patch syntax is too complex; agents prefer the simpler mental model of `oldText`/`newText`.
-- Guidelines mention patch but don't strongly recommend it over batch edits.
-- Agents may not trust their ability to generate correct Codex patch syntax.
-
-**Not a bug** — just an observation. Patch works when explicitly asked.
-
-### 5. Agent overcautiousness after preflight fail
+### 4. Agent overcautiousness after preflight fail
 
 **Symptom:** After a preflight fail (e.g., tab vs space mismatch), agent does 3-4 `read:raw` calls in a row with tiny offsets, repeatedly verifying the same lines. Slows down workflow.
 
@@ -91,7 +74,7 @@ From `docs/tool-rendering.md` battle-tested lessons:
 
 **Partial mitigation:** Guidelines now say *"use the MOST RECENT read output as the only source for oldText"*. But this is model behavior, not fixable in code.
 
-### 6. Batch success rate ~50% (agent behavior, not code)
+### 5. Batch success rate ~50% (agent behavior, not code)
 
 **Observation:** In many sessions, batch edits fail 1-2 times and agents fall back to single edits. Even though we explicitly tell them *"do NOT split into separate calls"*.
 
@@ -114,8 +97,7 @@ From `docs/tool-rendering.md` battle-tested lessons:
 |---|---|---|
 | `index.ts` | ✅ Stable | Prompts updated. Rendering uses new component pattern. |
 | `classic.ts` | ✅ Stable | Core logic works. `isPreflight` flag added. Indent-normalization fallback added. |
-| `types.ts` | ✅ Stable | `skipped` and `preflight` flags added to `EditResult`. |
-| `patch.ts` | ✅ Stable | Works but rarely used by agents. |
+| `types.ts` | ✅ Stable | `skipped` and `preflight` flags added to `EditResult`. Patch types removed. |
 | `diff.ts` | ✅ Stable | Unified diff generation. Used internally. |
 | `workspace.ts` | ✅ Stable | Virtual + real workspace implementations. |
 
@@ -150,7 +132,7 @@ renderResult:
 
 3. **Improve fuzzy matching** — add more `MATCH_PASSES` (e.g., normalize mixed indentation, handle CRLF vs LF).
 
-4. **Consider removing `renderCall`/`renderResult` entirely** and letting Pi fall back to native rendering. This only works if we keep the tool name `edit` AND the argument schema matches native expectations. Our `multi` and `patch` params would break native renderer → not viable.
+4. **Consider removing `renderCall`/`renderResult` entirely** and letting Pi fall back to native rendering. This only works if we keep the tool name `edit` AND the argument schema matches native expectations. Our `multi` param would break the native renderer → not viable.
 
 5. **Add a simple one-line body** in `renderResult` (e.g., `+3 / -2` stats) using `options.expanded` for Ctrl+E toggle. Test heavily for glitches.
 
@@ -167,6 +149,7 @@ renderResult:
 | 2026-06-11 | Add batching examples to guidelines | Agents weren't using `edits`/`multi` arrays consistently. |
 | 2026-06-11 | Add indent-normalization fallback pass | Tab/space mismatches are the #1 cause of batch preflight failures in agent logs. |
 | 2026-06-11 | Richer indentation hints in errors | Agents can't visually distinguish 2 vs 3 spaces in backtick-quoted output; explicit counts help. |
+| 2026-06-13 | Remove `patch` mode | Agents never used Codex-style patch syntax; `edits`/`multi` cover all real cases. |
 
 ---
 

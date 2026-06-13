@@ -16,26 +16,6 @@ export interface EditResult {
   preflight?: boolean;
 }
 
-export interface Hunk {
-  contextPrefix?: string;
-  oldBlock: string;
-  newBlock: string;
-  oldLineCount: number;
-  newLineCount: number;
-}
-
-export type PatchOperation =
-  | { kind: "add"; path: string; contents: string }
-  | { kind: "delete"; path: string }
-  | { kind: "update"; path: string; hunks: Hunk[] };
-
-export interface PatchOpResult {
-  path: string;
-  message: string;
-  diff?: string;
-  firstChangedLine?: number;
-}
-
 export interface Workspace {
   readText: (absolutePath: string) => Promise<string>;
   writeText: (absolutePath: string, content: string) => Promise<void>;
