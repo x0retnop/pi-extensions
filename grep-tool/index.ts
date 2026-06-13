@@ -1,4 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
+import path from "node:path";
 import { promisify } from "node:util";
 import type { ExtensionAPI, ExtensionContext, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 
@@ -93,10 +94,14 @@ async function runPreflightCount(
     let count = 0;
     let files = 0;
     for (const line of stdout.trim().split("\n").filter(Boolean)) {
-      const m = line.match(/^(.*):(\d+)$/);
-      if (m) {
-        count += parseInt(m[2], 10);
-        files++;
+      // Paths may contain ':' on some filesystems, so split at the last colon.
+      const colonIdx = line.lastIndexOf(":");
+      if (colonIdx > 0) {
+        const countStr = line.slice(colonIdx + 1);
+        if (/^\d+$/.test(countStr)) {
+          count += parseInt(countStr, 10);
+          files++;
+        }
       }
     }
     return { count, files };
@@ -249,12 +254,30 @@ export default function (pi: ExtensionAPI) {
       }
 
       const searchPath = resolvePath(params.path);
+      const absoluteSearchPath = path.resolve(cwd, searchPath);
+      const cwdLower = cwd.toLowerCase();
+      const absLower = absoluteSearchPath.toLowerCase();
+      const isInsideProject =
+        absLower === cwdLower || absLower.startsWith(cwdLower + path.sep);
+      if (!isInsideProject) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Search path must be inside the project directory: ${searchPath}`,
+            },
+          ],
+          details: { error: "path outside project directory", path: searchPath },
+        };
+      }
+
       const mode = params.output_mode || "content";
       const userLimit = params.head_limit;
       const hasContext =
         params["-C"] !== undefined || params["-B"] !== undefined || params["-A"] !== undefined;
       const broadThreshold = hasContext ? BROAD_CONTEXT_THRESHOLD : BROAD_CONTENT_THRESHOLD;
 
+      // Only guard content queries that are not explicitly capped below the broad threshold.
       if (
         mode === "content" &&
         !params.allow_broad &&
@@ -359,9 +382,9 @@ export default function (pi: ExtensionAPI) {
         const effectiveLimit = userLimit ?? DEFAULT_HEAD_LIMIT;
 
         function makeHint(count: number): string {
-          if (userLimit !== undefined || count <= effectiveLimit) return "";
+          if (count <= effectiveLimit) return "";
           return (
-            `\n\n[Hint: Results limited to ${DEFAULT_HEAD_LIMIT} matches. ` +
+            `\n\n[Hint: Showing ${effectiveLimit} of ${count} matches. ` +
             `The pattern may be too broad. Consider: a more specific regex, ` +
             `a glob filter (e.g. "*.ts"), a narrower path, word_match: true, ` +
             `or first use output_mode: "count_matches" / "files_with_matches".]`
@@ -374,7 +397,12 @@ export default function (pi: ExtensionAPI) {
           const text = limited.join("\n") || "(no matches)";
           return {
             content: [{ type: "text", text: text + makeHint(files.size) }],
-            details: { files: limited, count: limited.length },
+            details: {
+              files: limited,
+              count: limited.length,
+              total: files.size,
+              truncated: files.size > effectiveLimit,
+            },
           };
         }
 
@@ -394,7 +422,12 @@ export default function (pi: ExtensionAPI) {
 
         return {
           content: [{ type: "text", text: text + makeHint(matches.length) }],
-          details: { matches: limitedMatches, count: limitedMatches.length },
+          details: {
+            matches: limitedMatches,
+            count: limitedMatches.length,
+            total: matches.length,
+            truncated: matches.length > effectiveLimit,
+          },
         };
       } catch (err: any) {
         if (err.code === "ENOENT") {

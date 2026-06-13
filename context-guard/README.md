@@ -17,8 +17,11 @@ This extension lets you **inspect** and **remove** those layers per-rule, so you
 ## Commands
 
 - **`/ctx-inspect`** — show a full breakdown of the current system prompt layers with token estimates
-- **`/ctx-guard`** — show active guard rules
-- **`/ctx-guard <rule>`** — toggle a rule on/off:
+- **`/ctx-guard`** — open the interactive TUI to toggle rules
+  - shows every rule with a live ON/OFF indicator
+  - pick a rule and press Enter to toggle it
+  - includes one-click **Inspect**, **Reset all**, and **Done**
+- **`/ctx-guard <rule>`** — toggle a rule directly (skips the TUI):
   - `date` — remove `Current date`
   - `cwd` — remove `Current working directory`
   - `agents` — remove `<project_context>` wrapper

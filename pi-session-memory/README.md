@@ -10,21 +10,29 @@ pi install ./pi-session-memory
 
 ## Features
 
-- `search_sessions` — semantic search across indexed `.jsonl` sessions. Returns preview excerpts with scores. Results are stored for the current session.
-- `get_session_content` — safely read a specific session with hard limits (`maxMessages`, `maxChars`). Use `hitIndex` from the last `search_sessions` or an explicit `sourcePath`.
-- `/session-memory-status` — show index status (enabled, indexed count, model).
-- `/session-memory-rebuild` — trigger incremental rebuild.
-- `/session-memory-resume [all]` — manually pick a saved session and load its context into the editor. Default scope is the current directory; pass `all` to list sessions from every project. You can add a note so the agent understands what to focus on.
+- **`session_memory`** — unified tool for the agent:
+  - `action="search"` — semantic search across indexed `.jsonl` sessions.
+  - `action="content"` — safely read a specific session with hard limits.
+  - `action="list"` — list recent saved sessions for current or all projects.
+- **`/session-memory`** — interactive TUI menu for status, rebuild, search, and resume.
 
-## Workflow
+## Agent workflow
 
 1. Ask the agent to recall something: "How did I set up OAuth last time?"
-2. Agent calls `search_sessions(query="OAuth2 FastAPI setup")`.
-3. Agent sees 3 preview hits.
-4. Agent calls `get_session_content(hitIndex=0, maxMessages=20)` to safely read the most relevant session.
+2. Agent calls `session_memory(action="search", query="OAuth2 FastAPI setup")`.
+3. Agent sees 3 preview hits with scores.
+4. Agent calls `session_memory(action="content", hitIndex=0, maxMessages=20)`.
+
+## User workflow
+
+- `/session-memory` — open the menu.
+  - Status — check index health.
+  - Rebuild index — trigger incremental rebuild.
+  - Search sessions — type a query and see results.
+  - Resume a session — pick current/all projects, choose a session, optionally add a note, and load context into the editor.
 
 ## Requirements
 
 - 0x010 server running on `127.0.0.1:8000`
 - `SESSION_INDEX_ENABLED=true` in `.env`
-- Embedding server on port 8088
+- Embedding server on port `8088`

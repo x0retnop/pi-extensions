@@ -186,6 +186,7 @@ function buildGuardStatus(config: GuardConfig): string {
     lines.push(`  ${enabled ? "✓ ON " : "✗ OFF"}  ${rule.padEnd(15)} — ${RULE_LABELS[rule]}`);
   }
   lines.push("\nCommands:");
+  lines.push("  /ctx-guard          interactive TUI");
   lines.push("  /ctx-guard <rule>   toggle a rule");
   lines.push("  /ctx-guard reset    disable all rules");
   lines.push("  /ctx-inspect        full prompt breakdown");
@@ -311,6 +312,65 @@ export default function (pi: ExtensionAPI) {
     config = loadConfig();
   });
 
+  /* ─── Interactive TUI ─── */
+
+  function formatRuleMenuItem(rule: string): string {
+    const key = RULE_MAP[rule];
+    const enabled = config[key] ?? false;
+    return `${enabled ? "● ON " : "○ OFF"}  ${rule.padEnd(15)} — ${RULE_LABELS[rule]}`;
+  }
+
+  function parseRuleFromMenuItem(item: string): string | undefined {
+    const match = item.match(/^[●○]\s+(?:ON|OFF)\s+(\S+)/);
+    return match?.[1];
+  }
+
+  async function runGuardTUI(ctx: ExtensionCommandContext) {
+    const validRules = Object.keys(RULE_MAP);
+
+    while (true) {
+      const options: string[] = validRules.map((rule) => formatRuleMenuItem(rule));
+      options.push("");
+      options.push("🔍 Inspect prompt breakdown");
+      options.push("↺ Reset all rules");
+      options.push("✓ Done");
+
+      const choice = await ctx.ui.select("Context Guard — toggle rules", options);
+      if (!choice || choice === "✓ Done") return;
+
+      if (choice === "🔍 Inspect prompt breakdown") {
+        const prompt = (ctx as any).getSystemPrompt?.() ?? "";
+        const options = (ctx as any).getSystemPromptOptions?.() ?? {};
+        const entries = (ctx as any).sessionManager?.getEntries?.() ?? [];
+        const report = buildInspectReport(prompt, options, config, entries);
+        await ctx.ui.editor("ctx-inspect", report);
+        continue;
+      }
+
+      if (choice === "↺ Reset all rules") {
+        const confirmed = await ctx.ui.confirm(
+          "Reset all rules?",
+          "This will disable every context guard rule."
+        );
+        if (confirmed) {
+          config = {};
+          saveConfig(config);
+          ctx.ui.notify("All context guard rules reset.", "info");
+        }
+        continue;
+      }
+
+      const rule = parseRuleFromMenuItem(choice);
+      if (rule && validRules.includes(rule)) {
+        const key = RULE_MAP[rule];
+        const current = config[key] ?? false;
+        config = { ...config, [key]: !current };
+        saveConfig(config);
+        ctx.ui.notify(`${RULE_LABELS[rule]} → ${!current ? "ON" : "OFF"}`, "info");
+      }
+    }
+  }
+
   // Apply rules on every turn
   pi.on("before_agent_start", async (event, ctx) => {
     const original = event.systemPrompt ?? "";
@@ -342,16 +402,16 @@ export default function (pi: ExtensionAPI) {
   // /ctx-guard — toggle rules
   pi.registerCommand("ctx-guard", {
     description:
-      "Toggle context guard rules: date, cwd, agents, ancestor-agents, skills, pi-docs, tool-snippets, role-override",
+      "Open the Context Guard TUI, or toggle a rule directly: date, cwd, agents, ancestor-agents, skills, pi-docs, tool-snippets, role-override",
     handler: async (args, ctx) => {
       const arg = args.trim().toLowerCase();
       const validRules = Object.keys(RULE_MAP);
 
       if (!arg || arg === "status") {
-        const status = buildGuardStatus(config);
         if (ctx.hasUI) {
-          await ctx.ui.editor("ctx-guard", status);
+          await runGuardTUI(ctx);
         } else {
+          const status = buildGuardStatus(config);
           console.log(status);
         }
         return;

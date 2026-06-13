@@ -18,6 +18,8 @@ Extension tools consolidated. The three explicit write tools (`add_fact`, `add_h
 ## Recent changes
 
 - Replaced `project_memory_add_fact`, `project_memory_add_handoff`, `project_memory_add_todo` with `project_memory_save` (`kind: fact|handoff|todo`).
+- Renamed fact parameter `type` → `fact_type` to prevent agents from confusing it with work types like 'feature' or 'task'.
+- Added explicit `fact_type` mapping guidance: feature → pattern/architecture, bug → bugfix, choice → decision, trap → gotcha.
 - Fixed TypeScript typecheck: added `getTextContent()` helper, `kind`/`phase` to `ToolResultDetails`, removed unsupported `cancelable`/`hint` TUI options.
 - Updated `AGENTS.md` workflow and tool categories.
 - Updated `docs/reference/API.md` Tools section.

@@ -7,6 +7,7 @@ Structured project-wide search via ripgrep. Tuned for agent use: safe defaults, 
 - **Structured output** — Uses `rg --json` for reliable parsing instead of raw shell text.
 - **Output modes** — `content` (with context), `files_with_matches` (paths only), `count_matches` (totals).
 - **Safe limits** — `head_limit` caps results to avoid flooding the context window.
+- **Path sandboxing** — rejects search paths that would escape the project directory.
 - **Filters** — glob, file type, case-insensitive, multiline, whole-word, context lines.
 - **Respects `.gitignore`** — no accidental node_modules dumps.
 - **Windows fallback** — checks common install paths if `rg` is not on `PATH`.

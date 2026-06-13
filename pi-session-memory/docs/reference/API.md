@@ -20,11 +20,10 @@
 
 ## Extension behavior
 
-- `search_sessions` → calls `/api/session_index/search`, stores results in session manager.
-- `get_session_content` → calls `/api/session_index/session_content`.
-- `/session-memory-status` → calls `/api/session_index/status`.
-- `/session-memory-rebuild` → calls `/api/session_index/rebuild`.
-- `/session-memory-resume` → calls `/api/session_index/list`, then `get_session_content`.
+- `session_memory(action="search")` → calls `/api/session_index/search`, stores results in session manager.
+- `session_memory(action="content")` → calls `/api/session_index/session_content`.
+- `session_memory(action="list")` → calls `/api/session_index/list`.
+- `/session-memory` → TUI menu that calls status / rebuild / search / list / session_content as needed.
 
 ## Configuration
 

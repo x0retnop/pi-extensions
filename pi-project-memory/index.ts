@@ -187,7 +187,7 @@ const FactTypeSchema = Type.Union([
   Type.Literal("architecture"),
   Type.Literal("bugfix"),
 ], {
-  description: "Type of fact: decision, pattern, gotcha, architecture, or bugfix.",
+  description: "Type of fact. Must be exactly one of: decision, pattern, gotcha, architecture, bugfix. Never use 'feature', 'refactor', 'task', or 'improvement'.",
 });
 
 const CategoryFilterSchema = Type.Optional(Type.Union([
@@ -431,11 +431,12 @@ export default function (pi: ExtensionAPI) {
     promptSnippet:
       "Use kind='fact' for decisions/patterns/gotchas, kind='handoff' for session summaries, kind='todo' for open tasks.",
     promptGuidelines: [
-      "FACT — kind='fact', type=decision|pattern|gotcha|architecture|bugfix. Use after architectural decisions, refactors, bugfixes, or when the user says 'remember'/'запомни'/'сохрани'.",
+      "FACT — kind='fact', fact_type=decision|pattern|gotcha|architecture|bugfix. Use after architectural decisions, refactors, bugfixes, or when the user says 'remember'/'запомни'/'сохрани'.",
       "HANDOFF — kind='handoff'. Use at the end of a meaningful session or when the user asks to save progress. Handoffs rotate (last 30 kept). Do not use for eternal facts.",
       "TODO — kind='todo'. Use when the user mentions a follow-up task or you discover unfinished work. Todos are not indexed.",
       "TOPIC — keep under 6 words. Examples: 'Runtime dep install path', 'Auth via credentials provider', 'Session 12'.",
       "WHAT — one or two concrete sentences. Not 'we discussed auth', but 'Auth uses NextAuth credentials provider with bcrypt hashing'.",
+      "FACT_TYPE MAPPING — 'we added a feature' → pattern (how it's built) or architecture (structural change). 'bug fixed' → bugfix. 'design choice' → decision. 'non-obvious trap' → gotcha. Never use 'feature', 'refactor', 'task', 'improvement'.",
       "WHY/WHERE/TAGS — only for facts. WHERE uses paths relative to the project root. WHY explains reasoning so future agents do not revert the decision.",
       "STATUS — only for todos. Default is 'active'. Use 'done' or 'archived' if the user explicitly marks it so.",
     ],
@@ -443,7 +444,7 @@ export default function (pi: ExtensionAPI) {
       kind: SaveKindSchema,
       topic: TopicSchema,
       what: WhatSchema,
-      type: Type.Optional(FactTypeSchema),
+      fact_type: Type.Optional(FactTypeSchema),
       why: WhySchema,
       where: WhereSchema,
       tags: TagsSchema,
@@ -469,11 +470,11 @@ export default function (pi: ExtensionAPI) {
 
         switch (params.kind) {
           case "fact": {
-            if (!params.type) {
-              return errorResult("'type' is required when kind='fact'. Use decision, pattern, gotcha, architecture, or bugfix.");
+            if (!params.fact_type) {
+              return errorResult("'fact_type' is required when kind='fact'. Use decision, pattern, gotcha, architecture, or bugfix.");
             }
             category = "facts";
-            type = params.type;
+            type = params.fact_type;
             why = params.why || "";
             where = params.where || [];
             tags = params.tags || [];
