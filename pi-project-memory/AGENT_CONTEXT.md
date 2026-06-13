@@ -6,7 +6,7 @@
 
 ## Status
 
-Extension refactor completed. Split the generic `project_memory_add` tool into three explicit tools (`add_fact`, `add_handoff`, `add_todo`) so the agent always knows which backend category it is writing to. Fixed `progress` so it maps to `handoffs` instead of `facts`. Recent/search previews now include `item_id`, making follow-up `project_memory_get` reliable.
+Extension tools consolidated. The three explicit write tools (`add_fact`, `add_handoff`, `add_todo`) have been merged into a single `project_memory_save` tool with a `kind` parameter. The backend remains unchanged. Extension now exposes 5 LLM tools total: `recent`, `search`, `get`, `save`, `list_todos`.
 
 ## Files
 
@@ -17,14 +17,16 @@ Extension refactor completed. Split the generic `project_memory_add` tool into t
 
 ## Recent changes
 
-- Added `project_memory_add_fact`, `project_memory_add_handoff`, `project_memory_add_todo`.
-- Kept `project_memory_add` as a legacy command alias only.
+- Replaced `project_memory_add_fact`, `project_memory_add_handoff`, `project_memory_add_todo` with `project_memory_save` (`kind: fact|handoff|todo`).
+- Fixed TypeScript typecheck: added `getTextContent()` helper, `kind`/`phase` to `ToolResultDetails`, removed unsupported `cancelable`/`hint` TUI options.
+- Updated `AGENTS.md` workflow and tool categories.
+- Updated `docs/reference/API.md` Tools section.
+- Updated `README.md` usage table.
+- Kept CLI commands unchanged (`pm-add-fact`, `pm-add-handoff`, `pm-add-todo`, etc.).
 - `project_memory_recent` limit clamped to 1-5.
 - `project_memory_search` category filter now only advertises `facts`/`handoffs`.
 - `project_memory_get` guideline softened from `ALWAYS` to conditional follow-up.
 - BASE_URL configurable via `PI_PROJECT_MEMORY_URL` or `PI_BACKEND_URL`.
-- Deduplicated command notification/error handling.
-- Updated `docs/reference/API.md` with `list_all` and `update_full`.
 
 ## Open items
 

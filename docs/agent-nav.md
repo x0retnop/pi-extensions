@@ -24,7 +24,7 @@ This doc is a compass. If you are unsure where something lives or what the rules
 
 1. **Edit in dev, test after restart.** This repo is `C:/10x001/pi extensions/`. Pi runtime is `~/.pi/agent/extensions/`. Changes only apply after the user copies them and restarts Pi.
 2. **SYSTEM.md is empty.** Persona comes from `role-sw` and `~/.pi/agent/roles/`.
-3. **AGENTS.md is auto-loaded from cwd.** When Pi starts here, the root `AGENTS.md` of this repo is part of the context.
+3. **AGENTS.md / CLAUDE.md are auto-loaded from `cwd` and all ancestor directories.** Pi walks up the filesystem root and injects every matching file it finds. Use `context-guard` with `ancestor-agents` if you only want the file directly in `cwd`.
 4. **Do not edit `~/.pi/agent/` directly** unless the user explicitly says so.
 
 ## "Which doc for which task?"

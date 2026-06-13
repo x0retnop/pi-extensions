@@ -42,9 +42,9 @@ export PI_BACKEND_URL="http://127.0.0.1:8000"
 |----------|-----|
 | Новая сессия, «где мы были» | Агент сам вызовет `project_memory_recent` — или ты `/pm` → **Recent handoffs** |
 | «Как у нас сделано X?» | Агент `project_memory_search` — или ты `/pm` → **Search** |
-| Закончил нетривиальную работу | Агент `project_memory_add_fact` — или ты `/pm` → **Add fact** |
-| Осталось todo на потом | Агент `project_memory_add_todo` — или `/pm` → **Add todo** |
-| Конец сессии, «что сделали» | Агент `project_memory_add_handoff` — или `/pm` → **Add handoff** |
+| Закончил нетривиальную работу | Агент `project_memory_save` с `kind: "fact"` — или ты `/pm` → **Add fact** |
+| Осталось todo на потом | Агент `project_memory_save` с `kind: "todo"` — или `/pm` → **Add todo** |
+| Конец сессии, «что сделали» | Агент `project_memory_save` с `kind: "handoff"` — или `/pm` → **Add handoff** |
 | Проверить/поправить старые факты | `/pm` → **Browse facts** — выбрать, редактировать или удалить |
 | Срочно, не отвлекая агента | Прямая команда: `/pm-add-fact`, `/pm-add-handoff`, `/pm-add-todo`, `/pm-handoff` |
 

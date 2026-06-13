@@ -37,6 +37,8 @@ interface ToolResultDetails {
   item_id?: string;
   count?: number;
   hits?: number;
+  kind?: string;
+  phase?: string;
   error?: string;
 }
 
@@ -137,6 +139,10 @@ function formatListPreview(items: ApiRecord[], includeScore = false): string {
 
 function renderError(theme: any, error: string) {
   return new Text(theme.fg("error", `Error: ${error}`), 0, 0);
+}
+
+function getTextContent(result: { content: Array<{ type: string; text?: string }> }): string {
+  return result.content.find((c) => c.type === "text")?.text || "";
 }
 
 function renderSummaryLine(theme: any, label: string, value: string, projectId?: string) {
@@ -278,7 +284,7 @@ export default function (pi: ExtensionAPI) {
       if (d?.error) return renderError(theme, d.error);
       const line = theme.fg("success", `${d?.count ?? 0} cards`) + theme.fg("muted", ` • ${d?.project_id ?? ""}`);
       if (!expanded) return new Text(line, 0, 0);
-      const text = result.content.find((c: any) => c.type === "text")?.text || "";
+      const text = getTextContent(result);
       const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
       return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
     },
@@ -352,7 +358,7 @@ export default function (pi: ExtensionAPI) {
       if (d?.error) return renderError(theme, d.error);
       const line = theme.fg("success", `${d?.hits ?? 0} hits`) + theme.fg("muted", ` • ${d?.project_id ?? ""}`);
       if (!expanded) return new Text(line, 0, 0);
-      const text = result.content.find((c: any) => c.type === "text")?.text || "";
+      const text = getTextContent(result);
       const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
       return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
     },
@@ -396,7 +402,7 @@ export default function (pi: ExtensionAPI) {
     renderResult(result, { expanded }, theme) {
       const d = result.details as ToolResultDetails;
       if (d?.error) return renderError(theme, d.error);
-      const text = result.content.find((c: any) => c.type === "text")?.text || "";
+      const text = getTextContent(result);
       if (!expanded) {
         const preview = text.length > 80 ? text.slice(0, 77) + "..." : text;
         return new Text(theme.fg("success", d?.item_id ?? "record") + theme.fg("dim", ` • ${preview}`), 0, 0);
@@ -407,173 +413,118 @@ export default function (pi: ExtensionAPI) {
   });
 
   // -------------------------------------------------------------------------
-  // project_memory_add_fact
+  // project_memory_save
   // -------------------------------------------------------------------------
+  const SaveKindSchema = Type.Union([
+    Type.Literal("fact"),
+    Type.Literal("handoff"),
+    Type.Literal("todo"),
+  ], {
+    description: "What to save: fact (eternal knowledge), handoff (session summary), or todo (open task).",
+  });
+
   pi.registerTool({
-    name: "project_memory_add_fact",
-    label: "Project Memory Add Fact",
+    name: "project_memory_save",
+    label: "Project Memory Save",
     description:
-      "Save a project fact, decision, pattern, architecture note, or bugfix so future sessions can find it. Call after completing non-trivial work or when the user says 'remember this'.",
+      "Save a project record: a fact/decision/pattern/gotcha, a session handoff, or an open todo. Choose the right kind and fill only the fields relevant to that kind.",
     promptSnippet:
-      "Call after making an architectural decision, discovering a non-obvious bug/gotcha, completing a refactor, or when the user says 'remember this'.",
+      "Use kind='fact' for decisions/patterns/gotchas, kind='handoff' for session summaries, kind='todo' for open tasks.",
     promptGuidelines: [
-      "TRIGGERS — call after: architectural decision, non-obvious bugfix, completed refactor, discovered gotcha, user says 'remember', 'запомни', or 'сохрани'.",
-      "TOPIC — keep under 6 words. Examples: 'Runtime dep install path', 'Auth via credentials provider'.",
+      "FACT — kind='fact', type=decision|pattern|gotcha|architecture|bugfix. Use after architectural decisions, refactors, bugfixes, or when the user says 'remember'/'запомни'/'сохрани'.",
+      "HANDOFF — kind='handoff'. Use at the end of a meaningful session or when the user asks to save progress. Handoffs rotate (last 30 kept). Do not use for eternal facts.",
+      "TODO — kind='todo'. Use when the user mentions a follow-up task or you discover unfinished work. Todos are not indexed.",
+      "TOPIC — keep under 6 words. Examples: 'Runtime dep install path', 'Auth via credentials provider', 'Session 12'.",
       "WHAT — one or two concrete sentences. Not 'we discussed auth', but 'Auth uses NextAuth credentials provider with bcrypt hashing'.",
-      "WHY — optional but valuable. Explains the reasoning so future agents do not revert the decision.",
-      "WHERE — list relevant file paths relative to the project root so future agents know where to look.",
-      "TYPE — decision (choice), pattern (recurring convention), gotcha (non-obvious trap), architecture (structural), bugfix (fixed bug).",
+      "WHY/WHERE/TAGS — only for facts. WHERE uses paths relative to the project root. WHY explains reasoning so future agents do not revert the decision.",
+      "STATUS — only for todos. Default is 'active'. Use 'done' or 'archived' if the user explicitly marks it so.",
     ],
     parameters: Type.Object({
-      type: FactTypeSchema,
+      kind: SaveKindSchema,
       topic: TopicSchema,
       what: WhatSchema,
+      type: Type.Optional(FactTypeSchema),
       why: WhySchema,
       where: WhereSchema,
       tags: TagsSchema,
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
-      const projectId = await resolveProjectId(ctx.cwd);
-      try {
-        const result = await apiPost("/api/project_memory/add", {
-          project_id: projectId,
-          category: "facts",
-          type: params.type,
-          topic: params.topic,
-          what: params.what,
-          why: params.why || "",
-          where: params.where || [],
-          tags: params.tags || [],
-        });
-        return {
-          content: [{ type: "text", text: `Saved project fact: ${params.topic} (id: ${result.item_id})` }],
-          details: { item_id: result.item_id, project_id: projectId },
-        };
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    },
-    renderCall(args, theme) {
-      const t = (args as any).topic || "";
-      const display = t.length > 30 ? t.slice(0, 27) + "..." : t;
-      return new Text(theme.fg("toolTitle", theme.bold("project_memory_add_fact ")) + theme.fg("accent", display), 0, 0);
-    },
-    renderResult(result, _options, theme) {
-      const d = result.details as ToolResultDetails;
-      if (d?.error) return renderError(theme, d.error);
-      return new Text(theme.fg("success", "saved fact") + theme.fg("muted", ` • ${d?.item_id ?? ""}`), 0, 0);
-    },
-  });
-
-  // -------------------------------------------------------------------------
-  // project_memory_add_handoff
-  // -------------------------------------------------------------------------
-  pi.registerTool({
-    name: "project_memory_add_handoff",
-    label: "Project Memory Add Handoff",
-    description:
-      "Save a session handoff — a short summary of what was done in this session and what should happen next. Use before ending a session or when the user asks to record progress.",
-    promptSnippet: "Call at the end of a meaningful session, or when the user says 'save a handoff', 'summarize the session', or 'what did we do today'.",
-    promptGuidelines: [
-      "TRIGGERS — call when: a meaningful chunk of work is done, the user is leaving, the user says 'handoff', 'save progress', 'summarize session', or 'что мы сделали'.",
-      "TOPIC — short label for the session. Examples: 'Session 12', 'Indexer refactor', 'Auth flow v2'.",
-      "WHAT — 1-3 sentences: what was done and what is next. Keep it actionable for the next session.",
-      "STORAGE — handoffs are rotated: only the last 30 are kept. Do not use this for eternal facts; use project_memory_add_fact instead.",
-    ],
-    parameters: Type.Object({
-      topic: TopicSchema,
-      what: WhatSchema,
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
-      const projectId = await resolveProjectId(ctx.cwd);
-      try {
-        const result = await apiPost("/api/project_memory/add", {
-          project_id: projectId,
-          category: "handoffs",
-          type: "progress",
-          topic: params.topic,
-          what: params.what,
-          why: "",
-          where: [],
-          tags: [],
-        });
-        return {
-          content: [{ type: "text", text: `Saved session handoff: ${params.topic} (id: ${result.item_id})` }],
-          details: { item_id: result.item_id, project_id: projectId },
-        };
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    },
-    renderCall(args, theme) {
-      const t = (args as any).topic || "";
-      const display = t.length > 30 ? t.slice(0, 27) + "..." : t;
-      return new Text(theme.fg("toolTitle", theme.bold("project_memory_add_handoff ")) + theme.fg("accent", display), 0, 0);
-    },
-    renderResult(result, _options, theme) {
-      const d = result.details as ToolResultDetails;
-      if (d?.error) return renderError(theme, d.error);
-      return new Text(theme.fg("success", "saved handoff") + theme.fg("muted", ` • ${d?.item_id ?? ""}`), 0, 0);
-    },
-  });
-
-  // -------------------------------------------------------------------------
-  // project_memory_add_todo
-  // -------------------------------------------------------------------------
-  pi.registerTool({
-    name: "project_memory_add_todo",
-    label: "Project Memory Add Todo",
-    description: "Save an open task for the current project so it is not lost between sessions.",
-    promptSnippet: "Call when the user says 'remind me to...', 'we still need to...', 'todo: ...', or when you discover a follow-up task during work.",
-    promptGuidelines: [
-      "TRIGGERS — call when: the user mentions a follow-up task, you discover unfinished work, or the user says 'todo', 'задача', 'напомни'.",
-      "TOPIC — short task name, max 6 words. Example: 'Add backend tests'.",
-      "WHAT — one concrete sentence describing what needs to be done.",
-      "STORAGE — todos are not indexed; they are stored as a simple JSONL list.",
-    ],
-    parameters: Type.Object({
-      topic: TopicSchema,
-      what: WhatSchema,
       status: Type.Optional(Type.Union([
         Type.Literal("active"),
         Type.Literal("done"),
         Type.Literal("archived"),
       ], {
         default: "active",
-        description: "Initial status. Default is active.",
+        description: "Initial status for todos. Ignored for facts and handoffs.",
       })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
       const projectId = await resolveProjectId(ctx.cwd);
       try {
+        let category: string;
+        let type: string;
+        let why = "";
+        let where: string[] = [];
+        let tags: string[] = [];
+        let status = "active";
+        let label = "";
+
+        switch (params.kind) {
+          case "fact": {
+            if (!params.type) {
+              return errorResult("'type' is required when kind='fact'. Use decision, pattern, gotcha, architecture, or bugfix.");
+            }
+            category = "facts";
+            type = params.type;
+            why = params.why || "";
+            where = params.where || [];
+            tags = params.tags || [];
+            label = "fact";
+            break;
+          }
+          case "handoff": {
+            category = "handoffs";
+            type = "progress";
+            label = "handoff";
+            break;
+          }
+          case "todo": {
+            category = "todos";
+            type = "todo_item";
+            status = params.status ?? "active";
+            label = "todo";
+            break;
+          }
+        }
+
         const result = await apiPost("/api/project_memory/add", {
           project_id: projectId,
-          category: "todos",
-          type: "todo_item",
+          category,
+          type,
           topic: params.topic,
           what: params.what,
-          why: "",
-          where: [],
-          tags: [],
-          status: params.status ?? "active",
+          why,
+          where,
+          tags,
+          status,
         });
         return {
-          content: [{ type: "text", text: `Saved todo: ${params.topic} (id: ${result.item_id})` }],
-          details: { item_id: result.item_id, project_id: projectId },
+          content: [{ type: "text", text: `Saved ${label}: ${params.topic} (id: ${result.item_id})` }],
+          details: { item_id: result.item_id, project_id: projectId, kind: params.kind },
         };
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
       }
     },
     renderCall(args, theme) {
-      const t = (args as any).topic || "";
-      const display = t.length > 30 ? t.slice(0, 27) + "..." : t;
-      return new Text(theme.fg("toolTitle", theme.bold("project_memory_add_todo ")) + theme.fg("accent", display), 0, 0);
+      const a = args as any;
+      const kind = a.kind || "?";
+      const t = a.topic || "";
+      const display = t.length > 25 ? t.slice(0, 22) + "..." : t;
+      return new Text(theme.fg("toolTitle", theme.bold(`project_memory_save ${kind} `)) + theme.fg("accent", display), 0, 0);
     },
     renderResult(result, _options, theme) {
-      const d = result.details as ToolResultDetails;
+      const d = result.details as ToolResultDetails & { kind?: string };
       if (d?.error) return renderError(theme, d.error);
-      return new Text(theme.fg("success", "saved todo") + theme.fg("muted", ` • ${d?.item_id ?? ""}`), 0, 0);
+      return new Text(theme.fg("success", `saved ${d?.kind ?? "record"}`) + theme.fg("muted", ` • ${d?.item_id ?? ""}`), 0, 0);
     },
   });
 
@@ -634,7 +585,7 @@ export default function (pi: ExtensionAPI) {
       if (d?.error) return renderError(theme, d.error);
       const line = theme.fg("success", `${d?.count ?? 0} todos`) + theme.fg("muted", ` • ${d?.project_id ?? ""}`);
       if (!expanded) return new Text(line, 0, 0);
-      const text = result.content.find((c: any) => c.type === "text")?.text || "";
+      const text = getTextContent(result);
       const preview = text.length > 400 ? text.slice(0, 400) + "..." : text;
       return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
     },
@@ -966,7 +917,7 @@ export default function (pi: ExtensionAPI) {
         "✏️ Update status",
         "🗑️ Delete record",
       ];
-      const actionLabel = await ctx.ui.select("Project Memory", menuItems, { cancelable: true });
+      const actionLabel = await ctx.ui.select("Project Memory", menuItems);
       if (!actionLabel) return;
       const action = actionLabel.split(" ").slice(1).join(" ");
 
@@ -976,7 +927,7 @@ export default function (pi: ExtensionAPI) {
           const counts = data.projects?.[projectId] || { facts: 0, handoffs: 0, todos: 0 };
           ctx.ui.notify(`Project: ${projectId}\nFacts: ${counts.facts} | Handoffs: ${counts.handoffs} | Todos: ${counts.todos}`, "info");
         } else if (action === "Recent handoffs") {
-          const raw = await ctx.ui.input("How many handoffs?", "5", { hint: "1-5" });
+          const raw = await ctx.ui.input("How many handoffs?", "5");
           const limit = Math.max(1, Math.min(parseInt(raw || "5") || 5, 5));
           const data = await apiPost("/api/project_memory/list", { project_id: projectId, category: "handoffs", limit });
           const records: ApiRecord[] = data.records || [];
@@ -985,13 +936,13 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const labels = records.map((r, i) => `${i}. ${r.item_id}: ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Recent handoffs", labels, { cancelable: true });
+          const selected = await ctx.ui.select("Recent handoffs", labels);
           if (selected) {
             const idx = parseInt(selected.split(".")[0]);
             ctx.ui.notify(formatRecordDetail(records[idx]), "info");
           }
         } else if (action === "Search") {
-          const query = await ctx.ui.input("Search query", "", { hint: "e.g. API design" });
+          const query = await ctx.ui.input("Search query", "");
           if (!query) return;
           const data = await apiPost("/api/project_memory/search", { project_id: projectId, query, limit: 10 });
           const hits: ApiRecord[] = data.hits || [];
@@ -1000,14 +951,14 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const labels = hits.map((h, i) => `${i}. ${h.item_id} [${h.category}] ${h.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Search results", labels, { cancelable: true });
+          const selected = await ctx.ui.select("Search results", labels);
           if (selected) {
             const idx = parseInt(selected.split(".")[0]);
             ctx.ui.notify(formatRecordDetail(hits[idx]), "info");
           }
         } else if (action === "Add fact") {
-          const type = (await ctx.ui.select("Type", ["decision", "pattern", "gotcha", "architecture", "bugfix"], { cancelable: true })) || "decision";
-          const topic = await ctx.ui.input("Topic (max 6 words)", "", { hint: "e.g. API style" });
+          const type = (await ctx.ui.select("Type", ["decision", "pattern", "gotcha", "architecture", "bugfix"])) || "decision";
+          const topic = await ctx.ui.input("Topic (max 6 words)", "");
           if (!topic) return;
           const what = await ctx.ui.editor("What (one concrete sentence)");
           if (!what) return;
@@ -1060,7 +1011,7 @@ export default function (pi: ExtensionAPI) {
           });
           ctx.ui.notify(`Saved todo "${topic}" (id: ${result.item_id})`, "info");
         } else if (action === "List todos") {
-          const status = (await ctx.ui.select("Status", ["active", "done", "archived"], { cancelable: true })) || "active";
+          const status = (await ctx.ui.select("Status", ["active", "done", "archived"])) || "active";
           const data = await apiPost("/api/project_memory/todos", { project_id: projectId, status, limit: 20 });
           const records: ApiRecord[] = data.records || [];
           if (!records.length) {
@@ -1068,7 +1019,7 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const labels = records.map((r, i) => `${i}. ${r.item_id}: [${r.status}] ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Todos", labels, { cancelable: true });
+          const selected = await ctx.ui.select("Todos", labels);
           if (selected) {
             const idx = parseInt(selected.split(".")[0]);
             ctx.ui.notify(formatRecordDetail(records[idx]), "info");
@@ -1081,7 +1032,7 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const labels = records.map((r, i) => `${i}. ${r.item_id} [${r.category}] ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Select a record", labels, { cancelable: true });
+          const selected = await ctx.ui.select("Select a record", labels);
           if (!selected) return;
           const idx = parseInt(selected.split(".")[0]);
           ctx.ui.notify(formatRecordDetail(records[idx]), "info");
@@ -1093,14 +1044,14 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const labels = records.map((r, i) => `${i}. ${r.item_id}: ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Facts", labels, { cancelable: true });
+          const selected = await ctx.ui.select("Facts", labels);
           if (!selected) return;
           const idx = parseInt(selected.split(".")[0]);
           const r = records[idx];
-          const action2 = await ctx.ui.select(`${r.topic.slice(0, 40)}`, ["✏️ Edit", "🗑️ Delete", "← Back"], { cancelable: true });
+          const action2 = await ctx.ui.select(`${r.topic.slice(0, 40)}`, ["✏️ Edit", "🗑️ Delete", "← Back"]);
           if (!action2) return;
           if (action2 === "✏️ Edit") {
-            const topic = await ctx.ui.input("Topic", r.topic, { hint: "max 6 words" });
+            const topic = await ctx.ui.input("Topic", r.topic);
             if (!topic) return;
             const what = await ctx.ui.editor("What", r.what);
             if (!what) return;
@@ -1129,11 +1080,11 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const labels = records.map((r, i) => `${i}. ${r.item_id} [${r.category}] ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Select a record", labels, { cancelable: true });
+          const selected = await ctx.ui.select("Select a record", labels);
           if (!selected) return;
           const idx = parseInt(selected.split(".")[0]);
           const r = records[idx];
-          const status = (await ctx.ui.select("New status", ["active", "done", "archived"], { cancelable: true })) || "active";
+          const status = (await ctx.ui.select("New status", ["active", "done", "archived"])) || "active";
           await apiPost("/api/project_memory/update", { project_id: projectId, item_id: r.item_id, status });
           ctx.ui.notify(`Updated ${r.item_id} → ${status}`, "info");
         } else if (action === "Delete record") {
@@ -1144,7 +1095,7 @@ export default function (pi: ExtensionAPI) {
             return;
           }
           const labels = records.map((r, i) => `${i}. ${r.item_id} [${r.category}] ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Select a record to delete", labels, { cancelable: true });
+          const selected = await ctx.ui.select("Select a record to delete", labels);
           if (!selected) return;
           const idx = parseInt(selected.split(".")[0]);
           const r = records[idx];

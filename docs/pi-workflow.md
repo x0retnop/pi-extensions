@@ -87,7 +87,7 @@ See `docs/pi-version-sync.md`. The short version:
 ## Runtime specifics
 
 - `~/.pi/agent/SYSTEM.md` is intentionally **empty**. The active system prompt comes from **`role-sw`**, which loads role files from `~/.pi/agent/roles/`.
-- Pi auto-loads `AGENTS.md` from the **current working directory**. When the user launches Pi from `C:/10x001/pi extensions/`, this repo's `AGENTS.md` is injected into context.
+- Pi auto-loads `AGENTS.md` / `CLAUDE.md` from the **current working directory and all ancestor directories** up to the filesystem root. When the user launches Pi from `C:/10x001/pi extensions/`, this repo's `AGENTS.md` is injected, but any `AGENTS.md` / `CLAUDE.md` in parent directories is also injected. To keep only the file in `cwd`, use `context-guard` with the `ancestor-agents` rule.
 - Extensions in `~/.pi/agent/extensions/` are loaded **once at startup**. After syncing dev → runtime, the user must **restart Pi** for changes to take effect.
 - To inspect currently active extensions or gate/workspace settings, read `~/.pi/agent/settings.json` and list `~/.pi/agent/extensions/`. Do not edit these files directly unless asked.
 

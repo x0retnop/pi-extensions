@@ -48,17 +48,17 @@ This is the operational flow the extension expects from agents. Tool-specific tr
 2. **User asks about conventions, architecture, or "how do we do X"** — call `project_memory_search` first. Only read multiple files if search returns nothing useful.
 3. **Search/recent preview is not enough** — call `project_memory_get({ item_id })` using the exact ID from the previous result.
 4. **User asks about remaining work or todos** — call `project_memory_list_todos` (todos are not searchable).
-5. **After a non-trivial decision, refactor, bugfix, or gotcha** — offer to call `project_memory_add_fact`.
-6. **At the end of a meaningful session** — offer to call `project_memory_add_handoff`.
-7. **When a follow-up task appears** — offer to call `project_memory_add_todo`.
+5. **After a non-trivial decision, refactor, bugfix, or gotcha** — offer to call `project_memory_save` with `kind: "fact"`.
+6. **At the end of a meaningful session** — offer to call `project_memory_save` with `kind: "handoff"`.
+7. **When a follow-up task appears** — offer to call `project_memory_save` with `kind: "todo"`.
 
 ## Tool categories
 
 | What to save | Tool | Backend category | Notes |
 |--------------|------|------------------|-------|
-| Decision, pattern, gotcha, architecture, bugfix | `project_memory_add_fact` | `facts` | Indexed, eternal |
-| Session summary / progress | `project_memory_add_handoff` | `handoffs` | Indexed, rotated to last 30 |
-| Open task | `project_memory_add_todo` | `todos` | Not indexed, JSONL only |
+| Decision, pattern, gotcha, architecture, bugfix | `project_memory_save` with `kind: "fact"` | `facts` | Indexed, eternal |
+| Session summary / progress | `project_memory_save` with `kind: "handoff"` | `handoffs` | Indexed, rotated to last 30 |
+| Open task | `project_memory_save` with `kind: "todo"` | `todos` | Not indexed, JSONL only |
 
 ## Where to find work
 

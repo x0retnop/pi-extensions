@@ -5,6 +5,9 @@ import type { ExtensionAPI, ExtensionContext, AgentToolUpdateCallback } from "@e
 const execFileAsync = promisify(execFile);
 
 const DEFAULT_HEAD_LIMIT = 200;
+const BROAD_CONTENT_THRESHOLD = 100;
+const BROAD_CONTEXT_THRESHOLD = 50;
+const PREFLIGHT_TIMEOUT_MS = 15000;
 
 function findRg(): string | null {
   try {
@@ -38,6 +41,7 @@ interface GrepParams {
   "-A"?: number;
   head_limit?: number;
   include_ignored?: boolean;
+  allow_broad?: boolean;
 }
 
 function resolvePath(raw: string | undefined): string {
@@ -55,6 +59,73 @@ function isRegexError(stderr: string): boolean {
     lower.includes("invalid regex") ||
     lower.includes("regex syntax error")
   );
+}
+
+async function runPreflightCount(
+  rgPath: string,
+  params: GrepParams,
+  searchPath: string,
+  cwd: string,
+): Promise<{ count: number; files: number; error?: string }> {
+  const args: string[] = ["--color", "never", "-c"];
+  if (params.fixed_strings) args.push("-F");
+  if (params.word_match) args.push("-w");
+  if (params.multiline) args.push("--multiline");
+  if (params["-i"]) args.push("-i");
+  if (params.glob) args.push("-g", params.glob);
+  if (params.type) args.push("-t", params.type);
+  if (params.include_ignored) {
+    args.push("-uu");
+    args.push("-g", "!.env");
+    args.push("-g", "!**/.env");
+  }
+  args.push("--");
+  args.push(params.pattern);
+  if (searchPath) args.push(searchPath);
+
+  try {
+    const { stdout } = await execFileAsync(rgPath, args, {
+      cwd,
+      maxBuffer: 2 * 1024 * 1024,
+      timeout: PREFLIGHT_TIMEOUT_MS,
+      windowsHide: true,
+    });
+    let count = 0;
+    let files = 0;
+    for (const line of stdout.trim().split("\n").filter(Boolean)) {
+      const m = line.match(/^(.*):(\d+)$/);
+      if (m) {
+        count += parseInt(m[2], 10);
+        files++;
+      }
+    }
+    return { count, files };
+  } catch (err: any) {
+    const exitCode = err.status ?? err.code;
+    if ((exitCode === 1 || exitCode === "1") && !err.stderr) {
+      return { count: 0, files: 0 };
+    }
+    const stderr = err.stderr || "";
+    if (isRegexError(stderr) && !params.fixed_strings) {
+      return {
+        count: 0,
+        files: 0,
+        error:
+          `Regex parse error: ${stderr}\n\n` +
+          `Hint: If you are searching for literal text/code, retry with "fixed_strings: true".`,
+      };
+    }
+    if (err.code === "ETIMEDOUT" || err.killed) {
+      return {
+        count: 0,
+        files: 0,
+        error:
+          "Preflight count timed out. The pattern may be too broad for this codebase. " +
+          "Try output_mode: 'files_with_matches' or 'count_matches', or add filters.",
+      };
+    }
+    return { count: 0, files: 0, error: `Preflight count error: ${stderr || err.message}` };
+  }
 }
 
 export default function (pi: ExtensionAPI) {
@@ -75,7 +146,11 @@ export default function (pi: ExtensionAPI) {
       "- Find all TODOs: { pattern: 'TODO', output_mode: 'files_with_matches' }\n" +
       "- Exact code snippet: { pattern: 'function foo(', fixed_strings: true }\n" +
       "- Regex + file type: { pattern: 'class\\s+User', type: 'ts' }\n" +
-      "- Whole word case-insensitive: { pattern: 'getUser', word_match: true, '-i': true }",
+      "- Whole word case-insensitive: { pattern: 'getUser', word_match: true, '-i': true }\n\n" +
+      "Broad-query guidance:\n" +
+      "- Before searching a large codebase, start with output_mode: 'files_with_matches' or 'count_matches' to orient yourself.\n" +
+      "- Avoid short, unfiltered content searches (e.g. { pattern: 'function' }) — they produce walls of text.\n" +
+      "- If a content query matches more than ~100 lines, the tool will refuse and suggest a narrower approach. Set allow_broad: true to override.",
     parameters: {
       type: "object",
       properties: {
@@ -150,6 +225,10 @@ export default function (pi: ExtensionAPI) {
           type: "boolean",
           description: "Search in files ignored by .gitignore. Still excludes .env for safety.",
         },
+        allow_broad: {
+          type: "boolean",
+          description: "Skip the broad-query guard. Only set this if you intentionally want a large content dump.",
+        },
       },
       required: ["pattern"],
     },
@@ -161,6 +240,49 @@ export default function (pi: ExtensionAPI) {
       _ctx: ExtensionContext,
     ) => {
       const cwd = process.cwd();
+      const rgPath = findRg();
+      if (!rgPath) {
+        return {
+          content: [{ type: "text", text: "ripgrep (rg) not found in PATH" }],
+          details: { error: "rg not found" },
+        };
+      }
+
+      const searchPath = resolvePath(params.path);
+      const mode = params.output_mode || "content";
+      const userLimit = params.head_limit;
+      const hasContext =
+        params["-C"] !== undefined || params["-B"] !== undefined || params["-A"] !== undefined;
+      const broadThreshold = hasContext ? BROAD_CONTEXT_THRESHOLD : BROAD_CONTENT_THRESHOLD;
+
+      if (
+        mode === "content" &&
+        !params.allow_broad &&
+        (userLimit === undefined || userLimit > broadThreshold)
+      ) {
+        const preflight = await runPreflightCount(rgPath, params, searchPath, cwd);
+        if (preflight.error) {
+          return {
+            content: [{ type: "text", text: preflight.error }],
+            details: { error: preflight.error },
+          };
+        }
+        if (preflight.count > broadThreshold) {
+          const guardText =
+            `Pattern is too broad: found ${preflight.count} matching lines across ${preflight.files} files. ` +
+            `Returning full content would create a wall of text and waste context.\n\n` +
+            `Try one of these first:\n` +
+            `- output_mode: "files_with_matches" to see which files match.\n` +
+            `- output_mode: "count_matches" to measure the scope.\n` +
+            `- Add a filter: glob (e.g. "*.ts"), type (e.g. "ts"), word_match: true, or a narrower path.\n` +
+            `- If you really need the dump, rerun with allow_broad: true.`;
+          return {
+            content: [{ type: "text", text: guardText }],
+            details: { broad: true, count: preflight.count, files: preflight.files },
+          };
+        }
+      }
+
       const args: string[] = ["--json", "--color", "never"];
 
       if (params.fixed_strings) args.push("-F");
@@ -188,17 +310,8 @@ export default function (pi: ExtensionAPI) {
       args.push("--");
       args.push(params.pattern);
 
-      const searchPath = resolvePath(params.path);
       if (searchPath) {
         args.push(searchPath);
-      }
-
-      const rgPath = findRg();
-      if (!rgPath) {
-        return {
-          content: [{ type: "text", text: "ripgrep (rg) not found in PATH" }],
-          details: { error: "rg not found" },
-        };
       }
 
       try {
@@ -243,16 +356,15 @@ export default function (pi: ExtensionAPI) {
           }
         }
 
-        const userLimit = params.head_limit;
         const effectiveLimit = userLimit ?? DEFAULT_HEAD_LIMIT;
-        const mode = params.output_mode || "content";
 
         function makeHint(count: number): string {
           if (userLimit !== undefined || count <= effectiveLimit) return "";
           return (
             `\n\n[Hint: Results limited to ${DEFAULT_HEAD_LIMIT} matches. ` +
             `The pattern may be too broad. Consider: a more specific regex, ` +
-            `a glob filter (e.g. "*.ts"), a narrower path, or word_match: true.]`
+            `a glob filter (e.g. "*.ts"), a narrower path, word_match: true, ` +
+            `or first use output_mode: "count_matches" / "files_with_matches".]`
           );
         }
 

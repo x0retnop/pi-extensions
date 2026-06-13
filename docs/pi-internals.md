@@ -43,7 +43,8 @@ The final text is assembled **in this order**:
 ### Key behavior
 - If `customPrompt` is present, the **entire default Pi block** (tools list, guidelines, docs references) is skipped. Only tool *definitions* (JSON Schema) are still sent to the provider API.
 - `appendSystemPrompt` is always appended, even with a custom prompt.
-- `contextFiles` (AGENTS.md) are **always wrapped** by Pi:
+- `contextFiles` (AGENTS.md / CLAUDE.md) are discovered by walking **from `cwd` up to the filesystem root**. Pi loads the file in `cwd` **plus every ancestor directory** that contains `AGENTS.md`/`CLAUDE.md`, then wraps them together. There is **no built-in setting** to keep only the `cwd` file — use an extension (e.g. `context-guard` with `ancestor-agents`) if you need that.
+- `contextFiles` are **always wrapped** by Pi:
   ```xml
   <project_context>
     Project-specific instructions and guidelines:
@@ -108,6 +109,7 @@ If you write a cleanup extension, register it **after** the ones you want to cle
 **Cannot be disabled by settings:**
 - `Current date: ...`
 - `Current working directory: ...`
+- Ancestor traversal for `AGENTS.md` / `CLAUDE.md` (only `--no-context-files` disables the whole block)
 - XML wrapping of AGENTS.md
 - XML wrapping of skills
 - Tool definitions sent to the provider API

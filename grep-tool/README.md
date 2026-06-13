@@ -33,6 +33,7 @@ pi install ./grep-tool
 | `multiline` | `boolean?` | Multiline matching |
 | `-C` | `number?` | Context lines around each match |
 | `include_ignored` | `boolean?` | Search files ignored by `.gitignore` |
+| `allow_broad` | `boolean?` | Skip the broad-query guard (use with care) |
 
 ## Examples
 
@@ -41,6 +42,15 @@ pi install ./grep-tool
 { "pattern": "function foo(", "fixed_strings": true, "glob": "*.ts" }
 { "pattern": "class\\s+User", "type": "ts", "output_mode": "content", "-C": 2 }
 ```
+
+## Broad-query guard
+
+In `content` mode the tool runs a quick preflight count. If the pattern matches more than ~100 lines (or ~50 lines when context is requested), it refuses the dump and tells you how to narrow it:
+
+- Use `output_mode: "files_with_matches"` to see which files contain the pattern.
+- Use `output_mode: "count_matches"` to measure scope before diving in.
+- Add `glob`, `type`, `word_match`, or a narrower `path`.
+- Set `allow_broad: true` only if you really need the full dump.
 
 ## Requirements
 

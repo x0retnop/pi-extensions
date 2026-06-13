@@ -28,9 +28,7 @@
 - `project_memory_recent` → `/api/project_memory/list` (category `handoffs`)
 - `project_memory_search` → `/api/project_memory/search`
 - `project_memory_get` → `/api/project_memory/get`
-- `project_memory_add_fact` → `/api/project_memory/add` (category `facts`)
-- `project_memory_add_handoff` → `/api/project_memory/add` (category `handoffs`, type `progress`)
-- `project_memory_add_todo` → `/api/project_memory/add` (category `todos`, type `todo_item`)
+- `project_memory_save` → `/api/project_memory/add` (category depends on `kind`: `fact`→`facts`, `handoff`→`handoffs`, `todo`→`todos`)
 - `project_memory_list_todos` → `/api/project_memory/todos`
 
 ## Commands
