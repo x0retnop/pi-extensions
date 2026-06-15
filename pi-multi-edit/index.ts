@@ -94,6 +94,11 @@ const singleEditItemSchema = Type.Object(
     newText: Type.String({
       description: "New text to replace the old text with",
     }),
+    replaceAll: Type.Optional(
+      Type.Boolean({
+        description: "If true, replace every non-overlapping occurrence of oldText in the file; otherwise only the first match is replaced",
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -110,6 +115,11 @@ const multiEditItemSchema = Type.Object(
     newText: Type.String({
       description: "New text to replace the old text with",
     }),
+    replaceAll: Type.Optional(
+      Type.Boolean({
+        description: "If true, replace every non-overlapping occurrence of oldText in the file; otherwise only the first match is replaced",
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -188,21 +198,24 @@ export default function (pi: ExtensionAPI) {
     description:
       `Atomic file editor. Three modes (mutually exclusive):
       1) Single: path + oldText + newText — one change in one file.
-      2) Single-file batch: top-level path + edits array [{oldText,newText}, ...] — many changes in ONE file. PREFERRED when editing the same file more than once.
-      3) Multi-file batch: multi array [{path,oldText,newText}, ...] — changes across DIFFERENT files.
+      2) Single-file batch: top-level path + edits array [{oldText,newText,replaceAll?}, ...] — many changes in ONE file. PREFERRED when editing the same file more than once.
+      3) Multi-file batch: multi array [{path,oldText,newText,replaceAll?}, ...] — changes across DIFFERENT files.
 
-      All batches are atomic: one failure rolls back ALL changes in that call. oldText must match exactly including whitespace.`,
+      All batches are atomic: one failure rolls back ALL changes in that call. oldText must match exactly including whitespace. As a fallback the tool tolerates curly quotes vs straight quotes, trailing whitespace, and tab vs space indentation mismatches.`,
     promptSnippet:
-      "Edit files with exact text replacement. PREFER batching: use the `edits` array for multiple changes in the SAME file, `multi` for changes across DIFFERENT files. Avoid sending many separate single-edit calls for the same file.",
+      "Edit files with exact text replacement. PREFER batching: use the `edits` array for multiple changes in the SAME file, `multi` for changes across DIFFERENT files. Set `replaceAll: true` to replace every occurrence of oldText in a file. Avoid sending many separate single-edit calls for the same file.",
     promptGuidelines: [
       "PREFER batching: if you plan 2+ changes in the same file, use ONE call with top-level path + edits array",
       "Use `multi` ONLY when editing DIFFERENT files in one call; each item MUST have its own path",
       "NEVER send multiple separate `edit` calls for the same file — batch them into one edits array",
       "Single path+oldText+newText is ONLY for trivial one-line fixes; everything else should use edits/multi",
+      "Use `replaceAll: true` when you need to replace every occurrence of oldText in the same file",
       "oldText must match exactly including whitespace, tabs, quotes, backticks, and trailing spaces. If the file uses tabs for indentation, oldText must contain tabs, not spaces (and vice versa)",
+      "The tool tolerates common mismatches as a fallback: curly quotes ↔ straight quotes, trailing whitespace, and tab↔space indentation. Still aim for an exact match",
       "If a batch preflight fails, fix ONLY the failed edit(s) and re-send the ENTIRE batch; do NOT split into separate calls",
       "If preflight fails, use the MOST RECENT read output as the only source for oldText; ignore earlier file versions from context. When copying from terminal output, verify whether indentation is shown as tabs or spaces",
       "If preflight fails, DO NOT rewrite the entire file with write. Use read with offset/limit or grep to get exact current text, then retry the whole batch",
+      "Do not include the exact same oldText→newText pair twice in one batch — the second occurrence will be skipped as redundant",
       "In preflight output \"≈ Matched\" means the text was found but NO file was modified yet; \"✓ Edited\" means the change was written",
 
       "Example single-file batch: { path: 'src/main.ts', edits: [{oldText:'const x = 1;', newText:'const x = 2;'}, {oldText:'foo()', newText:'bar()'}] }",
@@ -317,7 +330,7 @@ export default function (pi: ExtensionAPI) {
           );
         }
         for (const item of e) {
-          edits.push({ path: p, oldText: item.oldText, newText: item.newText });
+          edits.push({ path: p, oldText: item.oldText, newText: item.newText, replaceAll: item.replaceAll });
         }
       }
 
@@ -327,6 +340,7 @@ export default function (pi: ExtensionAPI) {
             path: item.path,
             oldText: item.oldText,
             newText: item.newText,
+            replaceAll: item.replaceAll,
           });
         }
       }
@@ -382,13 +396,15 @@ export default function (pi: ExtensionAPI) {
         },
       );
 
-      const succeeded = results.filter((r) => r?.success);
+      const applied = results.filter((r) => r?.success && !r?.skipped);
+      const skipped = results.filter((r) => r?.success && r?.skipped);
       const failed = results.filter((r) => r && !r.success);
 
       if (results.length === 1) {
         const r = results[0];
+        const snippet = r.diff ? `\n\n\`\`\`diff\n${clampDiff(r.diff, 30)}\n\`\`\`` : "";
         return {
-          content: [{ type: "text" as const, text: r.message }],
+          content: [{ type: "text" as const, text: r.message + snippet }],
           details: {
             diff: clampDiff(r.diff ?? ""),
             firstChangedLine: r.firstChangedLine,
@@ -410,13 +426,19 @@ export default function (pi: ExtensionAPI) {
         .map((r, i) => `${i + 1}. ${r.message}`)
         .join("\n");
 
-      const statusLine =
-        failed.length > 0
-          ? `Applied ${succeeded.length}/${results.length} edit(s). ${failed.length} failed:\n${summary}`
-          : `Applied ${results.length} edit(s) successfully.\n${summary}`;
+      let statusLine: string;
+      if (failed.length > 0) {
+        statusLine = `Applied ${applied.length}/${results.length} edit(s). ${failed.length} failed, ${skipped.length} skipped.\n${summary}`;
+      } else if (skipped.length > 0) {
+        statusLine = `Applied ${applied.length} edit(s), skipped ${skipped.length} redundant edit(s).\n${summary}`;
+      } else {
+        statusLine = `Applied ${results.length} edit(s) successfully.\n${summary}`;
+      }
+
+      const snippet = combinedDiff ? `\n\n\`\`\`diff\n${combinedDiff}\n\`\`\`` : "";
 
       return {
-        content: [{ type: "text" as const, text: statusLine }],
+        content: [{ type: "text" as const, text: statusLine + snippet }],
         details: {
           diff: combinedDiff,
           firstChangedLine: firstChanged,

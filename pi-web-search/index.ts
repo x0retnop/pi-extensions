@@ -589,7 +589,9 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Use for code: API methods, error messages, library usage, examples, or repository locations.",
       "Backend targets GitHub and documentation domains; do not add 'site:' unless you need a specific domain.",
+      "If no provider is specified, the backend prefers exa for code search, then brave, ollama_cloud, and ddg.",
       "Use 'max_tokens' to control output length (default: 5000). Higher values preserve more docs and snippets.",
+      "Check 'details.providers_tried' and 'details.provider_used' to see which provider actually served the request.",
       "If results are poor, fall back to web_search with a broader query.",
     ],
     parameters: Type.Object({

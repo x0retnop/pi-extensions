@@ -2,6 +2,8 @@ export interface EditItem {
   path: string;
   oldText: string;
   newText: string;
+  /** Replace every non-overlapping occurrence of oldText instead of only the first. */
+  replaceAll?: boolean;
 }
 
 export interface EditResult {

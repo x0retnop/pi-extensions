@@ -445,6 +445,22 @@ export async function applyClassicEdits(
   return results;
 }
 
+function findAllOccurrences(
+  content: string,
+  oldText: string,
+  offset: number,
+): { pos: number; actualOldText: string }[] {
+  const matches: { pos: number; actualOldText: string }[] = [];
+  let searchFrom = offset;
+  while (true) {
+    const match = findActualString(content, oldText, searchFrom);
+    if (!match) break;
+    matches.push(match);
+    searchFrom = match.pos + Math.max(1, match.actualOldText.length);
+  }
+  return matches;
+}
+
 function applyGroupToContent(
   group: IndexedEdit[],
   originalContent: string,
@@ -464,6 +480,51 @@ function applyGroupToContent(
   for (const { index, edit } of group) {
     throwIfAborted(signal);
 
+    if (edit.replaceAll) {
+      const matches = findAllOccurrences(content, edit.oldText, searchOffset);
+
+      if (matches.length === 0) {
+        failedInFile = true;
+        const candidates = findTopCandidates(content, edit.oldText, 2);
+        const suggestion = candidates.length > 0
+          ? "Did you mean " + candidates.map(({ idx, line }) => `line ${idx}: \`${line}\``).join(", ") + "?"
+          : undefined;
+        const hint = diagnoseMismatch(edit.oldText, candidates);
+
+        results[index] = {
+          path: edit.path,
+          success: false,
+          message: `Could not find the exact text in ${edit.path}.` +
+            (hint ? ` ${hint}` : "") +
+            (suggestion ? ` ${suggestion}` : ""),
+        };
+
+        if (continueOnError) continue;
+
+        markRemainingSkipped(group, index, results);
+        throw new Error(formatResults(results.filter(Boolean), totalEdits, isPreflight));
+      }
+
+      // Replace from right to left so earlier positions remain valid.
+      for (let k = matches.length - 1; k >= 0; k--) {
+        const { pos, actualOldText } = matches[k];
+        content = content.slice(0, pos) + edit.newText + content.slice(pos + actualOldText.length);
+      }
+      searchOffset = matches[matches.length - 1].pos + edit.newText.length;
+      appliedPairs.add(pairKey(edit));
+
+      const count = matches.length;
+      results[index] = {
+        path: edit.path,
+        success: true,
+        preflight: isPreflight,
+        message: isPreflight
+          ? `Matched ${count} occurrence${count === 1 ? "" : "s"} in ${edit.path}.`
+          : `Replaced ${count} occurrence${count === 1 ? "" : "s"} in ${edit.path}.`,
+      };
+      continue;
+    }
+
     const match = findActualString(content, edit.oldText, searchOffset);
 
     if (match === undefined) {
@@ -473,7 +534,8 @@ function applyGroupToContent(
         results[index] = {
           path: edit.path,
           success: true,
-          message: `Skipped redundant edit in ${edit.path} (already replaced all occurrences).`,
+          skipped: true,
+          message: `Skipped duplicate edit in ${edit.path} (same oldText→newText pair already applied in this batch).`,
         };
         continue;
       }
