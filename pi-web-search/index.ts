@@ -7,6 +7,8 @@ const WEB_TOOLS = ["web_search", "fetch_content", "code_search"] as const;
 const GATE_TOOL = "web_access";
 const WEB_ACCESS_STATE_TYPE = "web-access-state";
 const PROVIDER_NAMES = ["exa", "brave", "ollama_cloud", "ddg"] as const;
+const PROVIDER_DESCRIPTION =
+  "Preferred provider: 'exa', 'brave', 'ollama_cloud', 'ddg'. Backend falls back to its configured chain.";
 
 const BASE_URL = process.env.PI_WEB_SEARCH_URL?.trim()
   || process.env.PI_BACKEND_URL?.trim()
@@ -356,16 +358,14 @@ export default function (pi: ExtensionAPI) {
     promptSnippet:
       "Use for current events, docs, URLs, or facts outside your training data. One call = one research round.",
     promptGuidelines: [
-      "Use for current facts, URLs, docs, news, or discussions outside your training context.",
-      "For broad or multi-angle topics, use 'queries' with 2-4 varied phrasings instead of a single 'query'.",
-      "Example: { \"queries\": [\"OpenAI GPT-5 release date\", \"GPT-5 features benchmarks\"], \"recency_filter\": \"week\", \"num_results\": 8 }.",
+      "Use for current facts, URLs, official docs, news, or discussions outside your training context.",
+      "Prefer the two-step workflow: web_search to discover sources, then fetch_content on the best URLs for detailed reading.",
+      "For broad or multi-angle topics, pass 'queries' with 2-4 varied phrasings instead of a single 'query'.",
       "Use 'depth' to choose result count: 'quick' = 5, 'standard' = 10, 'deep' = 15. 'num_results' overrides this if set.",
-      "Use 'recency_filter' for time-sensitive topics: 'day'/'week' for news, 'month'/'year' for broader context.",
-      "Use 'domain_filter' to include/exclude domains, e.g. [\"docs.python.org\"] or [\"-medium.com\"].",
-      "Use 'include_content': true only when you need full page text inline; it is slow and token-heavy.",
-      "Use 'answer_mode' for a direct answer to a specific question; 'summarize' for bullet overview. Both may be slow.",
-      "Use 'provider' to try a specific provider first: 'exa', 'brave', 'ollama_cloud', 'ddg'. " +
-      "If omitted, the backend uses its configured provider chain; the actually used provider is returned in details.provider_used.",
+      "Use 'recency_filter' for time-sensitive topics: 'day' or 'week' for news, 'month' or 'year' for broader context.",
+      "Use 'domain_filter' to include or exclude domains, e.g. ['docs.python.org'] or ['-medium.com'].",
+      "Use 'answer_mode' when you want the backend to synthesize a direct answer from results (you lose the raw source list).",
+      "Use 'summarize' for a bullet overview. Use 'include_content' only when you need full page text inline; it is slow and token-heavy.",
       "Do not use for programming examples or API docs — use code_search for those.",
     ],
     parameters: Type.Object({
@@ -397,7 +397,7 @@ export default function (pi: ExtensionAPI) {
         description: "Return direct answer synthesized by backend LLM from results.",
       })),
       provider: Type.Optional(StringEnum(PROVIDER_NAMES, {
-        description: "Preferred provider: 'exa', 'brave', 'ollama_cloud', 'ddg'. Backend falls back to chain.",
+        description: PROVIDER_DESCRIPTION,
       })),
     }),
 
@@ -495,7 +495,6 @@ export default function (pi: ExtensionAPI) {
       "Prefer one URL per call for the full article. Multi-URL calls concatenate full pages.",
       "Set 'max_chars' to cap output per page (default: 16000).",
       "GitHub /blob/ URLs are automatically fetched as raw files.",
-      "'force_clone' is reserved for future use.",
     ],
     parameters: Type.Object({
       url: Type.Optional(Type.String({
@@ -589,11 +588,8 @@ export default function (pi: ExtensionAPI) {
       "Use for code: API usage, library examples, implementations, debugging. Not for news or general facts.",
     promptGuidelines: [
       "Use for code: API methods, error messages, library usage, examples, or repository locations.",
-      "Backend targets GitHub and docs; no need to add 'site:' manually unless you want a specific domain.",
-      "Example: { \"query\": \"python asyncio create_task example\", \"num_results\": 5 }.",
-      "Use 'max_tokens' to control output length (default: 5000). Higher values preserve more docs/snippets.",
-      "Use 'provider' to try a specific provider first: 'exa', 'brave', 'ollama_cloud', 'ddg'. " +
-      "If omitted, the backend uses its configured provider chain; the actually used provider is returned in details.provider_used.",
+      "Backend targets GitHub and documentation domains; do not add 'site:' unless you need a specific domain.",
+      "Use 'max_tokens' to control output length (default: 5000). Higher values preserve more docs and snippets.",
       "If results are poor, fall back to web_search with a broader query.",
     ],
     parameters: Type.Object({
@@ -609,7 +605,7 @@ export default function (pi: ExtensionAPI) {
         description: "Approximate output budget in tokens (default: 5000).",
       })),
       provider: Type.Optional(StringEnum(PROVIDER_NAMES, {
-        description: "Preferred provider: 'exa', 'brave', 'ollama_cloud', 'ddg'. Backend falls back to chain.",
+        description: PROVIDER_DESCRIPTION,
       })),
     }),
 
