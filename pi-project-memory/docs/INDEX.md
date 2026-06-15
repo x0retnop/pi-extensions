@@ -6,8 +6,6 @@
 |------|---------|
 | `README.md` | User-facing install and commands |
 | `AGENTS.md` | Stable agent rules and backend links |
-| `AGENT_CONTEXT.md` | Current session focus |
-| `changes.txt` | Dated changelog |
 | `.project-id` | Project identity for memory binding |
 
 ## `docs/`
