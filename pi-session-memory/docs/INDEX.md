@@ -6,8 +6,6 @@
 |------|---------|
 | `README.md` | User-facing install and usage |
 | `AGENTS.md` | Stable agent rules and backend links |
-| `AGENT_CONTEXT.md` | Current session focus |
-| `changes.txt` | Dated changelog |
 
 ## `docs/`
 

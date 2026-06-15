@@ -2,7 +2,7 @@
 
 ## Role mode
 
-This project uses a **collapsed role model**: one agent handles coding, architecture, and keeper-style cleanup. The full 4-role split from 0x010 does not apply here. Keep changes minimal and reviewable.
+This project uses a **collapsed role model**: one agent handles coding, architecture, and keeper-style cleanup. Keep changes minimal and reviewable.
 
 ## What this is
 
@@ -23,20 +23,9 @@ Requirements:
 ## Backend
 
 - **Backend project:** `C:/10x001/AI comp/0x010`
-- **Canonical spec:** `0x010/docs/reference/SESSION_INDEX_SPEC.md` *(create if missing)*
+- **Canonical spec:** `0x010/docs/reference/SESSION_INDEX_SPEC.md`
 - **Backend module:** `0x010/app/session_index/`
 - **Client API summary:** `docs/reference/API.md`
-
-## Documentation map
-
-| File | Purpose |
-|------|---------|
-| `README.md` | User-facing install and usage |
-| `AGENTS.md` | This file — stable agent rules |
-| `AGENT_CONTEXT.md` | Current session focus and state |
-| `changes.txt` | Dated changelog |
-| `docs/INDEX.md` | Map of this project's docs |
-| `docs/reference/API.md` | 0x010 API contract used by this extension |
 
 ## Conventions
 
@@ -47,13 +36,18 @@ Requirements:
 
 ## Where to find work
 
-1. `AGENT_CONTEXT.md` — current focus.
-2. `README.md` — user-reported gaps in commands or workflow.
-3. `0x010/docs/reviews/CORE_REGISTRY.md` — if the issue is backend-side.
+1. `README.md` — user-reported gaps in commands or workflow.
+2. `0x010/docs/reviews/CORE_REGISTRY.md` — if the issue is backend-side.
 
-## Records keeping
+## Documentation
 
-- One session = one dated entry in `changes.txt`.
-- Update `AGENT_CONTEXT.md` when the focus or open items change.
-- Update `docs/reference/API.md` when the 0x010 endpoint contract changes.
-- Keep `README.md` user-facing only.
+Keep `AGENTS.md` and `README.md` useful and current. Update `docs/reference/API.md` when the 0x010 endpoint contract changes. Use git for local history review (`git status`, `git diff`, `git log`). There are no required agent commits or report files; commit a meaningful chunk when it is complete and stable if you want to.
+
+## Documentation map
+
+| File | Purpose |
+|------|---------|
+| `README.md` | User-facing install and usage |
+| `AGENTS.md` | This file — stable agent rules |
+| `docs/INDEX.md` | Map of this project's docs |
+| `docs/reference/API.md` | 0x010 Session Index API contract used by this extension |
