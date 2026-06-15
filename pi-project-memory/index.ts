@@ -2,7 +2,8 @@ import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@e
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import path from "node:path";
-import fs from "node:fs/promises";
+import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -53,7 +54,7 @@ type ToolResult = {
 
 async function resolveProjectId(cwd: string): Promise<string> {
   try {
-    const text = await fs.readFile(path.join(cwd, ".project-id"), "utf-8");
+    const text = await fsPromises.readFile(path.join(cwd, ".project-id"), "utf-8");
     const id = text.trim().split(/\r?\n/)[0].trim();
     if (id) return id;
   } catch {
@@ -64,13 +65,22 @@ async function resolveProjectId(cwd: string): Promise<string> {
 
 function hasProjectId(cwd: string): boolean {
   try {
-    const text = fs.readFileSync(path.join(cwd, ".project-id"), "utf-8");
+    const target = path.join(cwd, ".project-id");
+    const text = fs.readFileSync(target, "utf-8");
     const id = text.trim().split(/\r?\n/)[0].trim();
     return id.length > 0;
   } catch {
     return false;
   }
 }
+
+const PROJECT_MEMORY_TOOLS = [
+  "project_memory_recent",
+  "project_memory_search",
+  "project_memory_get",
+  "project_memory_save",
+  "project_memory_list_todos",
+];
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
@@ -234,12 +244,41 @@ export default function (pi: ExtensionAPI) {
     notify(ctx, `Error: ${msg}`, "error");
   }
 
-  // Only expose LLM tools when the current working directory has a .project-id
-  // file. This prevents agents from calling project memory tools in projects
-  // that have not opted into them. CLI commands remain available so the user
-  // can still manage memory explicitly.
-  const toolsEnabled = hasProjectId(process.cwd());
-  if (toolsEnabled) {
+  async function getProjectIdOrError(ctx: ExtensionContext): Promise<string | ToolResult> {
+    if (!hasProjectId(ctx.cwd)) {
+      return errorResult(
+        `Project memory is not configured for this directory. Create a .project-id file in ${ctx.cwd} to enable project memory tools.`,
+      );
+    }
+    return resolveProjectId(ctx.cwd);
+  }
+
+  // Hide project memory tools from the LLM when the session cwd has no
+  // .project-id file. Tools stay registered so CLI commands keep working.
+  function syncProjectMemoryTools(ctx: ExtensionContext): void {
+    const enabled = hasProjectId(ctx.cwd);
+    const active = new Set(pi.getActiveTools());
+    for (const name of PROJECT_MEMORY_TOOLS) {
+      if (enabled) {
+        active.add(name);
+      } else {
+        active.delete(name);
+      }
+    }
+    pi.setActiveTools([...active]);
+  }
+
+  pi.on("session_start", (_event, ctx) => {
+    syncProjectMemoryTools(ctx);
+    if (ctx.hasUI) {
+      const status = hasProjectId(ctx.cwd) ? "on" : "off";
+      ctx.ui.setStatus("project-memory", `pm: ${status}`);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // project_memory_recent
+  // -------------------------------------------------------------------------
   pi.registerTool({
     name: "project_memory_recent",
     label: "Project Memory Recent",
@@ -264,7 +303,8 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, _signal, onUpdate, ctx): Promise<ToolResult> {
       onUpdate?.({ content: [{ type: "text", text: "Loading recent project memory..." }], details: { phase: "load" } });
-      const projectId = await resolveProjectId(ctx.cwd);
+      const projectId = await getProjectIdOrError(ctx);
+      if (typeof projectId !== "string") return projectId;
       try {
         const data = await apiPost("/api/project_memory/list", {
           project_id: projectId,
@@ -336,7 +376,8 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, _signal, onUpdate, ctx): Promise<ToolResult> {
       onUpdate?.({ content: [{ type: "text", text: `Searching project memory: "${params.query}"...` }], details: { phase: "search" } });
-      const projectId = await resolveProjectId(ctx.cwd);
+      const projectId = await getProjectIdOrError(ctx);
+      if (typeof projectId !== "string") return projectId;
       try {
         const data = await apiPost("/api/project_memory/search", {
           query: params.query,
@@ -397,7 +438,8 @@ export default function (pi: ExtensionAPI) {
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
-      const projectId = await resolveProjectId(ctx.cwd);
+      const projectId = await getProjectIdOrError(ctx);
+      if (typeof projectId !== "string") return projectId;
       try {
         const data = await apiPost("/api/project_memory/get", { project_id: projectId, item_id: params.item_id });
         const r: ApiRecord = data.record;
@@ -471,7 +513,8 @@ export default function (pi: ExtensionAPI) {
       })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
-      const projectId = await resolveProjectId(ctx.cwd);
+      const projectId = await getProjectIdOrError(ctx);
+      if (typeof projectId !== "string") return projectId;
       try {
         let category: string;
         let type: string;
@@ -565,7 +608,8 @@ export default function (pi: ExtensionAPI) {
       })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
-      const projectId = await resolveProjectId(ctx.cwd);
+      const projectId = await getProjectIdOrError(ctx);
+      if (typeof projectId !== "string") return projectId;
       try {
         const data = await apiPost("/api/project_memory/todos", {
           project_id: projectId,
@@ -604,8 +648,6 @@ export default function (pi: ExtensionAPI) {
       return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
     },
   });
-
-  } // end toolsEnabled
 
   // -------------------------------------------------------------------------
   // Commands

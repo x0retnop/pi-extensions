@@ -16,7 +16,6 @@
     "a-rewind/**/*.ts",
     "asku/**/*.ts",
     "btw/**/*.ts",
-    "context/**/*.ts",
     "context-guard/**/*.ts",
     "ctx-manager/**/*.ts",
     "grep-tool/**/*.ts",
@@ -33,6 +32,7 @@
     "simple-gate/**/*.ts",
     "pi-multi-edit/**/*.ts",
     "pi-session-memory/**/*.ts",
+    "pi-web-search/**/*.ts",
     "pi-list-tools/**/*.ts",
     "tool-dev/**/*.ts"
   ]

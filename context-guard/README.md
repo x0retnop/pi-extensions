@@ -1,66 +1,58 @@
 # context-guard
 
-Centralized control over Pi's automatic context injections.
+Centralized control over Pi's context injections, skills, and tool gates.
 
-## What it does
+## What it controls
 
-Pi unconditionally appends several things to every LLM request:
-
-- `Current date: YYYY-MM-DD`
-- `Current working directory: <cwd>`
-- XML wrappers around `AGENTS.md` / `CLAUDE.md`
-- XML wrappers around skills (`<available_skills>`)
-- Default Pi docs / tools / guidelines block (when no `SYSTEM.md` is used)
-
-This extension lets you **inspect** and **remove** those layers per-rule, so you don't have to fight them in every other extension.
+| Area | Feature id | Description |
+|------|------------|-------------|
+| **Prompt rules** | `date` | `Current date` stamp |
+| | `cwd` | `Current working directory` stamp |
+| | `agents` | `<project_context>` wrapper for AGENTS.md / CLAUDE.md |
+| | `ancestorAgents` | Keep only the context file from the current directory |
+| | `skills` | `<available_skills>` block |
+| | `piDocs` | Default Pi docs block |
+| | `toolSnippets` | "Available tools" and "Guidelines" lists |
+| | `roleOverride` | `## Role Override` injected by `role-sw` |
+| **Skills** | `autoSkills` | Automatic skill injection |
+| **Tool gates** | `sessionMemory` | `session_memory` tool |
 
 ## Commands
 
-- **`/ctx-inspect`** — show a full breakdown of the current system prompt layers with token estimates
-- **`/ctx-guard`** — open the interactive TUI to toggle rules
-  - shows every rule with a live ON/OFF indicator
-  - pick a rule and press Enter to toggle it
-  - includes one-click **Inspect**, **Reset all**, and **Done**
-- **`/ctx-guard <rule>`** — toggle a rule directly (skips the TUI):
-  - `date` — remove `Current date`
-  - `cwd` — remove `Current working directory`
-  - `agents` — remove `<project_context>` wrapper
-  - `ancestor-agents` — keep only the `AGENTS.md` / `CLAUDE.md` from the current directory; drop parent/ancestor files
-  - `skills` — remove `<available_skills>` block
-  - `pi-docs` — remove default Pi docs block
-  - `tool-snippets` — remove "Available tools" / "Guidelines" lists from default prompt
-  - `role-override` — remove `## Role Override` injected by `role-sw`
-- **`/ctx-guard reset`** — disable all rules
+- `/ctx-guard` — interactive TUI (prompt rules, tool gates, skills, inspect, reset)
+- `/ctx-guard <id>` — toggle a feature directly, e.g. `/ctx-guard sessionMemory`
+- `/ctx-guard reset` — disable all guards
+- `/ctx-inspect` — full system prompt breakdown with token estimates
+- `/context` — compact overview of loaded context, extensions, skills, and usage
+- `/skills` — list discovered skills and auto-skill status
+- `/use-skill [name] [comment]` — manually inject a skill into the next turn
 
-## How it works
+## Settings
 
-Rules are stored in `~/.pi/agent/settings.json` under `"contextGuard"`.
-
-The extension hooks `before_agent_start` and strips matching blocks from `event.systemPrompt` **after** all other extensions have appended their pieces. This means:
-
-- `role-sw` can keep adding its role override
-- `pi-skill-guard` can keep injecting skills
-- `context-guard` sits at the end of the chain and cleans up the final prompt
-
-No more "one extension adds, another removes" — one knob for Pi's auto-injections.
-
-## Example settings.json
+Stored in `~/.pi/agent/settings.json` under `contextGuard`:
 
 ```json
 {
   "contextGuard": {
-    "removeCwd": true,
-    "removeDate": true,
-    "removeAgentsWrapper": false,
-    "removeAncestorAgents": false,
-    "removeSkills": false,
-    "removePiDocsBlock": false,
-    "removeToolSnippets": false,
-    "removeRoleOverride": false
+    "promptRules": {
+      "date": true,
+      "cwd": true,
+      "skills": false
+    },
+    "autoSkills": false,
+    "features": {
+      "sessionMemory": true
+    }
   }
 }
 ```
 
-## Why centralized?
+Missing keys default to enabled (`true`).
 
-Instead of every extension (role-sw, skill-guard, etc.) adding and removing pieces, this extension sits at the end of the `before_agent_start` chain and cleans up the final prompt. Other extensions can stay simple and additive.
+## Adding new managed features
+
+1. **Prompt rule**: add an entry to `prompt-rules.ts` with `id`, `label`, and `apply()`.
+2. **Tool gate**: add an entry to `tool-gates.ts` with `id`, `toolsOn`, and `toolsOff`.
+3. **Skill control**: already handled by `autoSkills`.
+
+No further registration is required; the TUI and `/ctx-guard <id>` command pick them up automatically.
