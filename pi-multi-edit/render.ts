@@ -1,3 +1,4 @@
+import { resolvePathFromRecord } from "./params.js";
 import type { ChangeStats, EditMode } from "./types.js";
 
 function charWidth(ch: string): number {
@@ -74,11 +75,11 @@ function collectEditEntries(args: Record<string, unknown>): unknown[] {
 
 function resolveMode(args: Record<string, unknown>): EditMode {
   const entries = collectEditEntries(args);
-  const topPath = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : undefined;
+  const topPath = resolvePathFromRecord(args);
   const paths = new Set<string>();
   for (const e of entries) {
     if (e && typeof e === "object") {
-      const p = (e as { path?: string }).path ?? topPath;
+      const p = resolvePathFromRecord(e as Record<string, unknown>) ?? topPath;
       if (p) paths.add(p);
     }
   }
@@ -89,13 +90,13 @@ function resolveMode(args: Record<string, unknown>): EditMode {
 
 function resolveTarget(args: Record<string, unknown>, mode: EditMode): string {
   const entries = collectEditEntries(args);
-  const topPath = typeof args.path === "string" ? args.path : typeof args.file_path === "string" ? args.file_path : undefined;
+  const topPath = resolvePathFromRecord(args);
 
   if (mode === "multi") {
     const paths = new Set<string>();
     for (const e of entries) {
       if (e && typeof e === "object") {
-        const p = (e as { path?: string }).path ?? topPath;
+        const p = resolvePathFromRecord(e as Record<string, unknown>) ?? topPath;
         if (p) paths.add(p);
       }
     }
@@ -103,8 +104,11 @@ function resolveTarget(args: Record<string, unknown>, mode: EditMode): string {
   }
 
   if (topPath) return shortenPath(topPath);
-  const first = entries[0] as { path?: string } | undefined;
-  if (first?.path) return shortenPath(first.path);
+  const first = entries[0];
+  if (first && typeof first === "object") {
+    const p = resolvePathFromRecord(first as Record<string, unknown>);
+    if (p) return shortenPath(p);
+  }
   return "...";
 }
 

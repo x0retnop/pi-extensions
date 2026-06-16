@@ -12,6 +12,8 @@
 
 | Path | Purpose |
 |------|---------|
+| `README.md` | Agent-facing guide for using the memory tools |
+| `README_user.md` | User-facing install and commands |
 | `docs/INDEX.md` | This map |
 | `docs/reference/API.md` | 0x010 Project Memory API contract used by this extension |
 | `docs/reference/SYSTEM_PROMPT_SNIPPETS.md` | Copy-paste system prompt blocks for other projects |

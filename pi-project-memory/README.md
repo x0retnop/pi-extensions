@@ -1,101 +1,49 @@
-# pi-project-memory
+# Agent guide: pi-project-memory
 
-**Проектная память для Pi.** Вместо длинных handoff-файлов между сессиями — поисковые «факт-карточки», которые агенты сами добывают и пополняют.
+How Pi agents use the `project_memory_*` tools. For install, commands, and user-facing docs see `README_user.md`.
 
-## Суть
+## Core idea
 
-Каждый проект получает своё хранилище: решения, паттерны, грабли — в `facts`, краткие итоги сессий — в `handoffs`, открытые задачи — в `todos`. Агенты семантически ищут по `facts` и `handoffs`, чтобы вспомнить, «как у нас сделано», а не читать 20 файлов с нуля. Ничего не сохраняется автоматически — только явный вызов tool'а или команды. Это защита от засора данными откатанных сессий.
+Project memory is a shared notebook across sessions. Agents read it before asking "where were we" and write only durable signal — decisions, gotchas, bug roots, session state, open todos.
 
-## Как это работает
+## Tool purpose map
 
-1. **`.project-id`** в корне проекта (одна строка, например `my-app`). По ней Pi понимает, к какому проекту привязать карточки.
-2. **Факты** (`facts`) — вечные: архитектура, решения, паттерны, грабли. Индексируются в sqlite-vec, доступны к семантическому поиску.
-3. **Хэндоффы** (`handoffs`) — сессионные: «Сессия X: сделали Y. Остановились на Z. Дальше W». Хранятся 30 последних, старые ротируются.
-4. **Туду** (`todos`) — задачи между сессиями. Не индексируются, только JSONL-список.
+| Tool | Read / Write | Use for |
+|------|--------------|---------|
+| `project_memory_recent` | Read | Session start or lost context. Recent handoffs. |
+| `project_memory_search` | Read | "How do we do X?" before reading 3+ files. |
+| `project_memory_get` | Read | Full record when a search/recent preview is not enough. |
+| `project_memory_list_todos` | Read | Remaining work, next steps, open tasks. |
+| `project_memory_save` | Write | Durable facts, session handoffs, open todos. |
 
-## Быстрый старт
+## Quality gate
 
-```bash
-# 1. Включить в бэкенде (0x010/.env)
-PROJECT_MEMORY_ENABLED=true
+Before saving, ask: **"Will this help a future agent in 30 days?"**
 
-# 2. Скопировать расширение
-# C:\10x001\pi extensions\pi-project-memory  →  ~/.pi/agent/extensions/
+Save:
+- Non-obvious decisions and architecture.
+- Gotchas that caused bugs or wasted time.
+- Session state another agent needs to continue.
+- Open tasks that must not be forgotten.
 
-# 3. В корне проекта
-echo "my-app" > .project-id
-```
+Skip:
+- Typo fixes, style changes, pure refactors.
+- One-off requests with no lasting trace.
+- Vague summaries like "we worked on auth".
+- Anything obvious from the next commit diff.
 
-Перезапустить Pi и бэкенд.
+## Kinds
 
-По умолчанию расширение стучится на `http://127.0.0.1:8000`. Переопределить можно через env:
+- `fact` → `facts` (indexed). Use `fact_type`: `decision`, `pattern`, `gotcha`, `architecture`, `bugfix`.
+- `handoff` → `handoffs` (indexed, last 30 kept). Session summary: what was done, what is next.
+- `todo` → `todos` (not indexed). Follow-up work.
 
-```bash
-export PI_PROJECT_MEMORY_URL="http://127.0.0.1:8000"
-# или
-export PI_BACKEND_URL="http://127.0.0.1:8000"
-```
+## Style
 
-## Когда что использовать
+- `topic`: under 6 words.
+- `what`: one or two concrete sentences. Bad: "we discussed auth". Good: "Auth uses NextAuth credentials provider with bcrypt hashing".
+- `why`, `where`, `tags`: only for facts. Paths in `where` should be relative to the project root.
 
-| Ситуация | Как |
-|----------|-----|
-| Новая сессия, «где мы были» | Агент сам вызовет `project_memory_recent` — или ты `/pm` → **Recent handoffs** |
-| «Как у нас сделано X?» | Агент `project_memory_search` — или ты `/pm` → **Search** |
-| Закончил нетривиальную работу | Агент `project_memory_save` с `kind: "fact"` — или ты `/pm` → **Add fact** |
-| Осталось todo на потом | Агент `project_memory_save` с `kind: "todo"` — или `/pm` → **Add todo** |
-| Конец сессии, «что сделали» | Агент `project_memory_save` с `kind: "handoff"` — или `/pm` → **Add handoff** |
-| Проверить/поправить старые факты | `/pm` → **Browse facts** — выбрать, редактировать или удалить |
-| Срочно, не отвлекая агента | Прямая команда: `/pm-add-fact`, `/pm-add-handoff`, `/pm-add-todo`, `/pm-handoff` |
+## System prompt snippets for other projects
 
-## Интерактивный режим (`/pm`)
-
-Одна команда — полный CRUD через меню. Не нужно помнить синтаксис.
-
-- **Browse facts** — список всех фактов → выбор → редактирование `topic/what/why/where/tags` или удаление
-- **Get record** — список всех записей (facts/handoffs/todos) → просмотр полной карточки
-- **Search** — ввод запроса → семантические результаты с score
-- **Add fact/handoff/todo** — пошаговый ввод через `input` и `editor`
-- **Update status / Delete** — выбор из списка, не нужно знать `item_id`
-
-## Прямые команды
-
-Быстрее, когда руки на клавиатуре и ты знаешь, что нужно:
-
-- `/pm-status` — статистика проекта
-- `/pm-recent [N]` — последние N хэндоффов (N ≤ 5)
-- `/pm-todos [active|done|archived]` — список задач
-- `/pm-search <query>` — быстрый семантический поиск
-- `/pm-add-fact type|topic|what` — сохранить факт
-- `/pm-add-handoff topic|what` — сохранить хэндофф
-- `/pm-add-todo topic|what` — сохранить туду
-- `/pm-handoff topic|what` — алиас для `/pm-add-handoff`
-- `/pm-add type|topic|what` — legacy: тип сам определяет категорию
-- `/pm-get <item_id>`, `/pm-update <item_id> <status>`, `/pm-delete <item_id>`
-
-Типы для `/pm-add-fact`: `decision`, `pattern`, `gotcha`, `architecture`, `bugfix`.
-
-## Мини-гайд: привыкание к процессу
-
-**Первая сессия с новым проектом:**
-1. Создать `.project-id`.
-2. Сделать значимую работу.
-3. Перед уходом: `/pm` → **Add handoff** — один абзац, что было сделано и что дальше.
-4. Если появилось решение/грабля: `/pm` → **Add fact** — агенты в будущем найдут сами.
-
-**Ежедневный ритуал (2 минуты):**
-- Сессия начинается → агент сам вызовет `project_memory_recent`.
-- Работаешь → агент предлагает сохранить факт, если видит решение. Соглашайся.
-- Уходишь → `/pm` → **Add handoff** (или агент сам предложит).
-
-**Раз в неделю:**
-- `/pm` → **Browse facts** — пролистать, убрать устаревшее, поправить неточности. Это профилактика накопления мусора.
-
-**Через 2 недели:**
-- Поиск фактов станет первым рефлексом агента при любом «а как у нас…» — и ответы будут мгновенными.
-- Хэндоффы заменят ручные заметки «что я делал вчера».
-- Туду перестанут теряться между сессиями.
-
----
-
-**Ключевое правило:** память работает только на том, что ты явно сохранил. Если агент не предложил — попроси `/pm` → **Add fact**. Если забыл сохранить — следующая сессия начнёт с нуля.
+See `docs/reference/SYSTEM_PROMPT_SNIPPETS.md` for copy-paste blocks you can add to the system prompt of other projects.

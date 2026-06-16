@@ -68,7 +68,8 @@ Keep `AGENTS.md` and `README.md` useful and current. Update `docs/reference/API.
 
 | File | Purpose |
 |------|---------|
-| `README.md` | User-facing install and commands |
+| `README.md` | Agent-facing guide for using the memory tools |
+| `README_user.md` | User-facing install and commands |
 | `AGENTS.md` | Stable agent rules for this project |
 | `.project-id` | Project identity for memory binding |
 | `docs/INDEX.md` | Map of this project's docs |

@@ -2,10 +2,38 @@ import { type Static, Type } from "typebox";
 
 import type { EditItem } from "./types.js";
 
+/** Keys models use instead of path (native edit uses path; read/write use path too). */
+export const PATH_KEYS = [
+  "path",
+  "file_path",
+  "filePath",
+  "filepath",
+  "file",
+  "filename",
+] as const;
+
+export function resolvePathFromRecord(
+  obj: Record<string, unknown> | undefined,
+): string | undefined {
+  if (!obj) return undefined;
+  for (const key of PATH_KEYS) {
+    const v = obj[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+const pathAliasProps = {
+  path: Type.Optional(Type.String({ description: "File path for this edit" })),
+  file_path: Type.Optional(Type.String({ description: "Alias for path" })),
+  filePath: Type.Optional(Type.String({ description: "Alias for path" })),
+  filepath: Type.Optional(Type.String({ description: "Alias for path" })),
+  file: Type.Optional(Type.String({ description: "Alias for path" })),
+  filename: Type.Optional(Type.String({ description: "Alias for path" })),
+};
+
 const editItemSchema = Type.Object({
-  path: Type.Optional(
-    Type.String({ description: "File path for this edit (required when editing multiple files)" }),
-  ),
+  ...pathAliasProps,
   oldText: Type.String({ description: "Exact text to find" }),
   newText: Type.String({ description: "Replacement text" }),
   replaceAll: Type.Optional(
@@ -14,7 +42,7 @@ const editItemSchema = Type.Object({
 });
 
 const multiItemSchema = Type.Object({
-  path: Type.String({ description: "File path for this edit" }),
+  ...pathAliasProps,
   oldText: Type.String({ description: "Exact text to find" }),
   newText: Type.String({ description: "Replacement text" }),
   replaceAll: Type.Optional(
@@ -28,11 +56,16 @@ const multiItemSchema = Type.Object({
  */
 export const editParameters = Type.Object({
   path: Type.Optional(
-    Type.String({ description: "Target file when all edits are in the same file" }),
+    Type.String({
+      description:
+        "Target file (relative or absolute). REQUIRED for single-file edits unless each edits[] item has path.",
+    }),
   ),
-  file_path: Type.Optional(
-    Type.String({ description: "Alias for path (some models send file_path)" }),
-  ),
+  file_path: Type.Optional(Type.String({ description: "Alias for path" })),
+  filePath: Type.Optional(Type.String({ description: "Alias for path" })),
+  filepath: Type.Optional(Type.String({ description: "Alias for path" })),
+  file: Type.Optional(Type.String({ description: "Alias for path" })),
+  filename: Type.Optional(Type.String({ description: "Alias for path" })),
   oldText: Type.Optional(
     Type.String({ description: "Single-edit shorthand — prefer edits[].oldText" }),
   ),
@@ -73,9 +106,43 @@ function asEditItem(path: string, e: RawEdit): EditItem | undefined {
 }
 
 function resolveTopPath(args: Record<string, unknown>): string | undefined {
-  if (typeof args.path === "string" && args.path) return args.path;
-  if (typeof args.file_path === "string" && args.file_path) return args.file_path;
-  return undefined;
+  return resolvePathFromRecord(args);
+}
+
+function normalizeEditPaths(edits: RawEdit[]): RawEdit[] {
+  return edits.map((e) => {
+    if (!e || typeof e !== "object") return e;
+    const rec = e as Record<string, unknown>;
+    const p = resolvePathFromRecord(rec);
+    if (!p) return e;
+    return { ...e, path: p };
+  });
+}
+
+function hoistSharedFilePath(args: Record<string, unknown>, edits: RawEdit[]): void {
+  if (resolveTopPath(args)) return;
+
+  const paths = edits
+    .map((e) => (e && typeof e === "object" ? resolvePathFromRecord(e as Record<string, unknown>) : undefined))
+    .filter((p): p is string => !!p);
+  const unique = [...new Set(paths)];
+  if (unique.length === 1) args.path = unique[0];
+}
+
+function pathMissingMessage(index: number, editCount: number): string {
+  if (editCount === 1) {
+    return (
+      "Missing path. Single-file edit needs top-level path (or file/file_path). " +
+      'Example: {"path":"src/foo.py","edits":[{"oldText":"...","newText":"..."}]}'
+    );
+  }
+  if (index === 0 && editCount > 1) {
+    return (
+      "Missing path. Same-file batch: set top-level path once. " +
+      'Example: {"path":"src/foo.py","edits":[{"oldText":"a","newText":"b"},{"oldText":"c","newText":"d"}]}'
+    );
+  }
+  return `edits[${index}] needs path — set top-level path for one file, or path on each edit for multi-file.`;
 }
 
 function parseEditsJsonString(value: unknown): RawEdit[] | undefined {
@@ -90,14 +157,26 @@ function parseEditsJsonString(value: unknown): RawEdit[] | undefined {
 
 function normalizeMulti(multi: unknown): RawEdit[] {
   if (!Array.isArray(multi)) return [];
-  return multi.filter(
-    (m) =>
-      m &&
-      typeof m === "object" &&
-      typeof (m as RawEdit).path === "string" &&
-      typeof (m as RawEdit).oldText === "string" &&
-      typeof (m as RawEdit).newText === "string",
-  ) as RawEdit[];
+  const out: RawEdit[] = [];
+  for (const m of multi) {
+    if (!m || typeof m !== "object") continue;
+    const rec = m as Record<string, unknown>;
+    const path = resolvePathFromRecord(rec);
+    if (
+      !path ||
+      typeof rec.oldText !== "string" ||
+      typeof rec.newText !== "string"
+    ) {
+      continue;
+    }
+    out.push({
+      path,
+      oldText: rec.oldText,
+      newText: rec.newText,
+      replaceAll: rec.replaceAll === true ? true : undefined,
+    });
+  }
+  return out;
 }
 
 export function prepareArguments(input: unknown): EditToolInput {
@@ -108,14 +187,14 @@ export function prepareArguments(input: unknown): EditToolInput {
   const raw = input as Record<string, unknown>;
   const args: Record<string, unknown> = { ...raw };
 
-  if (typeof args.file_path === "string" && typeof args.path !== "string") {
-    args.path = args.file_path;
-  }
+  const topPath = resolvePathFromRecord(args);
+  if (topPath) args.path = topPath;
 
   const parsedEdits = parseEditsJsonString(args.edits);
   if (parsedEdits) args.edits = parsedEdits;
 
   let edits = Array.isArray(args.edits) ? [...(args.edits as RawEdit[])] : [];
+  edits = normalizeEditPaths(edits);
 
   const fromMulti = normalizeMulti(args.multi);
   if (fromMulti.length > 0) {
@@ -134,8 +213,12 @@ export function prepareArguments(input: unknown): EditToolInput {
     delete args.replaceAll;
   }
 
-  if (edits.length > 0) args.edits = edits;
-  else delete args.edits;
+  if (edits.length > 0) {
+    hoistSharedFilePath(args, edits);
+    args.edits = normalizeEditPaths(edits);
+  } else {
+    delete args.edits;
+  }
 
   delete args.multi;
   delete args.oldText;
@@ -164,9 +247,7 @@ export function parseEdits(params: Record<string, unknown>): EditItem[] {
     }
     const path = typeof e.path === "string" && e.path ? e.path : topPath;
     if (!path) {
-      throw new Error(
-        `edits[${i}] needs a path — set top-level path or path on each edit for multi-file.`,
-      );
+      throw new Error(pathMissingMessage(i, editsArr.length));
     }
     const item = asEditItem(path, e);
     if (!item) {

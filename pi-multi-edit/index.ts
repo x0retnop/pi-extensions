@@ -15,12 +15,13 @@ export default function (pi: ExtensionAPI) {
     name: "edit",
     label: "edit",
     description:
-      "Exact text replacement in files. Preferred: {path, edits:[{oldText,newText},...]} (native shape). " +
-      "Also accepted: {path, oldText, newText} for one edit, or multi:[{path,oldText,newText},...] for cross-file. " +
+      "Exact text replacement in files. Always set path (top-level) for single-file edits — same as native edit. " +
+      "Shape: {path, edits:[{oldText,newText},...]}. Also: {path, oldText, newText} or multi:[{path,oldText,newText},...]. " +
       "Each oldText matches the original file. Atomic preflight.",
     promptSnippet:
-      "Preferred: path + edits[]. Single: path + oldText + newText. Multi-file: edits[{path,...}] or multi[].",
+      "Single/batch: top-level path + edits[]. Multi-file: path on each edit (or multi[]). path is separate from oldText.",
     promptGuidelines: [
+      "Always set top-level path for single-file edits — path is a separate field, not inside oldText",
       "Preferred shape: top-level path + edits[{oldText,newText}, ...]",
       "Batch related changes in one edits[] call instead of many single-edit calls",
       "Single edit shortcut: top-level path + oldText + newText",
