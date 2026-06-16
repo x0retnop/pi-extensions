@@ -283,15 +283,13 @@ export default function (pi: ExtensionAPI) {
     name: "project_memory_recent",
     label: "Project Memory Recent",
     description:
-      "Get the latest session handoffs and progress for the current project. Use to catch up when a new session starts or the user wants to continue past work.",
+      "Get the latest session handoffs and progress for the current project.",
     promptSnippet:
-      "Call at the start of a new session or when the user says 'continue', 'where did we stop', 'what was I doing'.",
+      "Returns recent handoff cards. Use at session start or when the user lost context.",
     promptGuidelines: [
-      "TRIGGERS — call when: a new session starts, the user says 'continue', 'where did we stop', 'what was I doing', 'catch me up', or 'напомни где мы были'.",
-      "SCOPE — uses the current working directory to resolve project_id. Never pass a project_id parameter.",
-      "OUTPUT — returns up to 5 short handoff cards. Each card shows its item_id. Read them before asking the user what to do next.",
+      "Returns up to 5 recent handoff cards. Each card shows its item_id.",
       "FOLLOW-UP — if a handoff is unclear, call project_memory_get({ item_id: '...' }) using the exact item_id from the card.",
-      "NEVER call this when the user asks a specific technical question unrelated to recent work. Use project_memory_search instead.",
+      "NEVER pass a project_id parameter; the tool resolves it from the current working directory.",
     ],
     parameters: Type.Object({
       limit: Type.Optional(Type.Integer({
@@ -350,14 +348,13 @@ export default function (pi: ExtensionAPI) {
     name: "project_memory_search",
     label: "Project Memory Search",
     description:
-      "Semantic search across accumulated project facts, decisions, patterns, and handoffs. Use when the user asks about conventions, architecture, or 'how do we do X here'.",
+      "Semantic search across accumulated project facts, decisions, patterns, and handoffs.",
     promptSnippet:
-      "Call when the user asks about project conventions, past decisions, architecture, or when you are about to read 3+ files just to understand project structure.",
+      "Use before reading 3+ files to understand a convention, pattern, or 'how do we do X'.",
     promptGuidelines: [
-      "TRIGGERS — call when: the user asks 'how do we handle X', 'what is our pattern for Y', 'where do we put Z', or 'как у нас сделано'.",
-      "SCOPE — searches facts and handoffs only. Todos are NOT indexed; use project_memory_list_todos for tasks.",
+      "Searches facts and handoffs only. Todos are NOT indexed; use project_memory_list_todos for tasks.",
       "CATEGORY FILTER — use only when the user explicitly asks for decisions (facts) or session summaries (handoffs). Otherwise leave it empty.",
-      "WORKFLOW — one call returns preview hits with item_id and score. Call project_memory_get({ item_id }) only if the preview is not detailed enough.",
+      "WORKFLOW — returns preview hits with item_id and score. Call project_memory_get({ item_id }) only if the preview is not detailed enough.",
       "QUERY QUALITY — use specific technical terms, file names, or framework names. 'TypeBox validation' is better than 'validation'.",
     ],
     parameters: Type.Object({
@@ -424,11 +421,11 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "project_memory_get",
     label: "Project Memory Get",
-    description: "Read the full detail of a specific project memory record by item_id. Use as a follow-up to search or recent.",
-    promptSnippet: "Second step after project_memory_search or project_memory_recent. Use the exact item_id from the previous result.",
+    description: "Read the full detail of a specific project memory record by item_id.",
+    promptSnippet: "Follow-up to project_memory_search or project_memory_recent. Use the exact item_id from the previous result.",
     promptGuidelines: [
-      "TRIGGERS — call when the preview from project_memory_search or project_memory_recent is not detailed enough to answer or act.",
-      "INPUT — pass the exact item_id string shown in the previous result. Do not guess IDs.",
+      "Use when the preview from project_memory_search or project_memory_recent is not detailed enough.",
+      "Pass the exact item_id string shown in the previous result. Do not guess IDs.",
       "NEVER call this without a concrete item_id from a previous tool result.",
     ],
     parameters: Type.Object({
@@ -482,16 +479,17 @@ export default function (pi: ExtensionAPI) {
     name: "project_memory_save",
     label: "Project Memory Save",
     description:
-      "Save a project record: a fact/decision/pattern/gotcha, a session handoff, or an open todo. Choose the right kind and fill only the fields relevant to that kind.",
+      "Save a durable project record: a fact, a session handoff, or an open todo. Only save what would help a future agent in 30 days.",
     promptSnippet:
-      "Use kind='fact' for decisions/patterns/gotchas, kind='handoff' for session summaries, kind='todo' for open tasks.",
+      "Save kind='fact' for durable knowledge, kind='handoff' for session state, kind='todo' for follow-up work. Skip anything not useful in 30 days.",
     promptGuidelines: [
-      "FACT — kind='fact', fact_type=decision|pattern|gotcha|architecture|bugfix. Use after architectural decisions, refactors, bugfixes, or when the user says 'remember'/'запомни'/'сохрани'.",
-      "HANDOFF — kind='handoff'. Use at the end of a meaningful session or when the user asks to save progress. Handoffs rotate (last 30 kept). Do not use for eternal facts.",
-      "TODO — kind='todo'. Use when the user mentions a follow-up task or you discover unfinished work. Todos are not indexed.",
+      "FACT — kind='fact', fact_type=decision|pattern|gotcha|architecture|bugfix. Use for non-obvious decisions, patterns, traps, or bug roots.",
+      "HANDOFF — kind='handoff'. Use at the end of a meaningful session to capture state and next steps. Handoffs rotate (last 30 kept). Do not use for eternal facts.",
+      "TODO — kind='todo'. Use for follow-up work that must not be forgotten. Todos are not indexed.",
+      "QUALITY GATE — only save what would help a future agent in 30 days. Skip obvious code, style fixes, vague summaries, and one-off requests.",
       "TOPIC — keep under 6 words. Examples: 'Runtime dep install path', 'Auth via credentials provider', 'Session 12'.",
       "WHAT — one or two concrete sentences. Not 'we discussed auth', but 'Auth uses NextAuth credentials provider with bcrypt hashing'.",
-      "FACT_TYPE MAPPING — 'we added a feature' → pattern (how it's built) or architecture (structural change). 'bug fixed' → bugfix. 'design choice' → decision. 'non-obvious trap' → gotcha. Never use 'feature', 'refactor', 'task', 'improvement'.",
+      "FACT_TYPE MAPPING — 'we added a feature' → pattern or architecture. 'bug fixed' → bugfix. 'design choice' → decision. 'non-obvious trap' → gotcha. Never use 'feature', 'refactor', 'task', 'improvement'.",
       "WHY/WHERE/TAGS — only for facts. WHERE uses paths relative to the project root. WHY explains reasoning so future agents do not revert the decision.",
       "STATUS — only for todos. Default is 'active'. Use 'done' or 'archived' if the user explicitly marks it so.",
     ],
@@ -591,10 +589,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "project_memory_list_todos",
     label: "Project Memory Todos",
-    description: "List open (or done) todo items for the current project. Use when the user asks what else needs to be done.",
-    promptSnippet: "Call when the user asks 'what else needs to be done', 'what was left', 'show todos', or 'что осталось'.",
+    description: "List open (or done) todo items for the current project.",
+    promptSnippet: "Use when the user asks about remaining work, next steps, or open tasks.",
     promptGuidelines: [
-      "TRIGGERS — call when: the user asks about remaining work, what's next, open tasks, or todos.",
       "STATUS — default 'active'. Use 'done' only if the user explicitly asks for completed todos.",
       "SCOPE — todos are not searchable via project_memory_search. Use this tool for all todo queries.",
     ],

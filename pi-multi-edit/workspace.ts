@@ -2,7 +2,6 @@ import { constants } from "fs";
 import {
   access as fsAccess,
   readFile as fsReadFile,
-  unlink as fsUnlink,
   writeFile as fsWriteFile,
 } from "fs/promises";
 import { dirname } from "path";
@@ -23,18 +22,6 @@ export function createRealWorkspace(): Workspace {
       if (existing === content) return;
       readCache.delete(absolutePath);
       await fsWriteFile(absolutePath, content, "utf-8");
-    },
-    deleteFile: async (absolutePath: string) => {
-      readCache.delete(absolutePath);
-      await fsUnlink(absolutePath);
-    },
-    exists: async (absolutePath: string) => {
-      try {
-        await fsAccess(absolutePath, constants.F_OK);
-        return true;
-      } catch {
-        return false;
-      }
     },
     checkWriteAccess: async (absolutePath: string) => {
       try {
@@ -70,17 +57,6 @@ export function createVirtualWorkspace(cwd: string): Workspace {
     },
     writeText: async (absolutePath, content) => {
       state.set(absolutePath, content);
-    },
-    deleteFile: async (absolutePath) => {
-      await ensureLoaded(absolutePath);
-      if (state.get(absolutePath) === null) {
-        throw new Error(`File not found: ${absolutePath.replace(`${cwd}/`, "")}`);
-      }
-      state.set(absolutePath, null);
-    },
-    exists: async (absolutePath) => {
-      await ensureLoaded(absolutePath);
-      return state.get(absolutePath) !== null;
     },
     checkWriteAccess: async (absolutePath: string) => {
       try {

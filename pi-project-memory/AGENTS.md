@@ -31,23 +31,29 @@ Cross-session project memory for Pi agents. Replaces long handoff files with sea
 
 ## Agent workflow
 
-This is the operational flow the extension expects from agents. Tool-specific triggers and examples live in each tool's `promptGuidelines` inside `index.ts`.
+Use the `project_memory_*` tools so future agents do not rediscover the same facts. Tool-specific usage details live in each tool's `promptGuidelines` inside `index.ts`.
 
-1. **Start of a new session** — call `project_memory_recent` to catch up. Do not ask the user "where did we stop" before reading recent handoffs.
-2. **User asks about conventions, architecture, or "how do we do X"** — call `project_memory_search` first. Only read multiple files if search returns nothing useful.
-3. **Search/recent preview is not enough** — call `project_memory_get({ item_id })` using the exact ID from the previous result.
-4. **User asks about remaining work or todos** — call `project_memory_list_todos` (todos are not searchable).
-5. **After a non-trivial decision, refactor, bugfix, or gotcha** — offer to call `project_memory_save` with `kind: "fact"`.
-6. **At the end of a meaningful session** — offer to call `project_memory_save` with `kind: "handoff"`.
-7. **When a follow-up task appears** — offer to call `project_memory_save` with `kind: "todo"`.
+1. **Start / lost context** — call `project_memory_recent` before asking "where were we" / "где мы были".
+2. **Understand patterns** — call `project_memory_search` before reading 3+ files to answer "how do we do X".
+3. **Need detail** — call `project_memory_get({ item_id })` using the exact ID from a previous result.
+4. **Remaining work** — call `project_memory_list_todos` for open tasks.
+5. **Save durable signal** — call `project_memory_save` for decisions, gotchas, bug roots, session state, and open todos. Skip obvious code, style fixes, and vague summaries.
 
-## Tool categories
+## What to save
 
-| What to save | Tool | Backend category | Notes |
-|--------------|------|------------------|-------|
-| Decision, pattern, gotcha, architecture, bugfix | `project_memory_save` with `kind: "fact"` | `facts` | Indexed, eternal |
-| Session summary / progress | `project_memory_save` with `kind: "handoff"` | `handoffs` | Indexed, rotated to last 30 |
-| Open task | `project_memory_save` with `kind: "todo"` | `todos` | Not indexed, JSONL only |
+| Kind | Backend category | Use for | Notes |
+|------|------------------|---------|-------|
+| `fact` | `facts` | Decision, pattern, gotcha, architecture, bugfix | Indexed, eternal |
+| `handoff` | `handoffs` | Session summary / progress | Indexed, rotated to last 30 |
+| `todo` | `todos` | Open task | Not indexed, JSONL only |
+
+## Quality test
+
+Before saving, ask: "Will this help a future agent in 30 days?" If yes, write one concrete sentence in `what`, keep `topic` under 6 words, and pick the right `kind` and `fact_type`.
+
+## System prompt snippets
+
+Ready-to-copy blocks for other projects live in `docs/reference/SYSTEM_PROMPT_SNIPPETS.md`.
 
 ## Where to find work
 
@@ -63,7 +69,8 @@ Keep `AGENTS.md` and `README.md` useful and current. Update `docs/reference/API.
 | File | Purpose |
 |------|---------|
 | `README.md` | User-facing install and commands |
-| `AGENTS.md` | This file — stable agent rules |
+| `AGENTS.md` | Stable agent rules for this project |
 | `.project-id` | Project identity for memory binding |
 | `docs/INDEX.md` | Map of this project's docs |
 | `docs/reference/API.md` | 0x010 Project Memory API contract used by this extension |
+| `docs/reference/SYSTEM_PROMPT_SNIPPETS.md` | Copy-paste system prompt blocks for other projects |

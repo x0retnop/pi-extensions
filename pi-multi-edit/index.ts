@@ -1,449 +1,72 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 
-import { applyClassicEdits, formatResults } from "./classic.js";
-import type { EditItem } from "./types.ts";
+import { applyEdits } from "./engine.js";
+import { buildPreflightError, buildSuccessResponse } from "./messages.js";
+import { editParameters, parseEdits, prepareArguments } from "./params.js";
+import {
+  formatCallHeader,
+  formatResultLines,
+  makeTextComponent,
+} from "./render.js";
 import { createRealWorkspace, createVirtualWorkspace } from "./workspace.js";
-
-// Safe truncation that handles ANSI escapes, surrogate pairs, and wide Unicode.
-// Pi TUI requires no rendered line exceeds terminal width.
-function charDisplayWidth(ch: string): number {
-  const cp = ch.codePointAt(0) ?? 0;
-  if (cp < 0x1000) return 1;
-  if (cp >= 0x2E80 && cp <= 0xA4CF) return 2;
-  if (cp >= 0xAC00 && cp <= 0xD7AF) return 2;
-  if (cp >= 0x1100 && cp <= 0x11FF) return 2;
-  if (cp >= 0xFF01 && cp <= 0xFF60) return 2;
-  if (cp >= 0xFFE0 && cp <= 0xFFE6) return 2;
-  if (cp >= 0x1F000) return 2;
-  if (cp >= 0x2600 && cp <= 0x27BF) return 2;
-  return 1;
-}
-
-function buildResultBody(result: any, context: any): string {
-  if (context?.isError) {
-    const text = result?.content?.[0]?.text ?? "";
-    const m = text.match(/(\d+)\/(\d+)\s*(?:unmatched|failed)/i);
-    if (m) return `${m[1]}/${m[2]} failed`;
-    return "failed";
-  }
-
-  const diff = result?.details?.diff;
-  if (!diff || typeof diff !== "string") return "done";
-
-  let added = 0;
-  let removed = 0;
-  for (const line of diff.split("\n")) {
-    if (line.startsWith("+") && !line.startsWith("+++")) added++;
-    else if (line.startsWith("-") && !line.startsWith("---")) removed++;
-  }
-
-  if (added === 0 && removed === 0) return "done";
-  return `+${added} / -${removed}`;
-}
-
-function safeTruncate(str: string, maxWidth: number, suffix = "..."): string {
-  if (maxWidth <= 0) return "";
-  if (maxWidth <= suffix.length) return suffix.slice(0, maxWidth);
-  str = str.replace(/\t/g, " ").replace(/\r/g, "");
-  let visible = 0;
-  let result = "";
-  let inAnsi = false;
-  for (let i = 0; i < str.length; ) {
-    const chCode = str.charCodeAt(i);
-    if (chCode === 0x1b && str.charCodeAt(i + 1) === 0x5b) {
-      inAnsi = true;
-      result += str[i];
-      i++;
-      continue;
-    }
-    if (inAnsi) {
-      result += str[i];
-      if ((chCode >= 0x41 && chCode <= 0x5a) || (chCode >= 0x61 && chCode <= 0x7a)) {
-        inAnsi = false;
-      }
-      i++;
-      continue;
-    }
-    let ch: string;
-    let step: number;
-    if (chCode >= 0xD800 && chCode <= 0xDBFF && i + 1 < str.length) {
-      ch = str.slice(i, i + 2);
-      step = 2;
-    } else {
-      ch = str[i];
-      step = 1;
-    }
-    const w = charDisplayWidth(ch);
-    if (visible + w > maxWidth - suffix.length) {
-      result += suffix;
-      break;
-    }
-    result += ch;
-    visible += w;
-    i += step;
-  }
-  return result;
-}
-
-const singleEditItemSchema = Type.Object(
-  {
-    oldText: Type.String({
-      description: "Exact text to find and replace (must match exactly including whitespace, quotes, and backticks)",
-    }),
-    newText: Type.String({
-      description: "New text to replace the old text with",
-    }),
-    replaceAll: Type.Optional(
-      Type.Boolean({
-        description: "If true, replace every non-overlapping occurrence of oldText in the file; otherwise only the first match is replaced",
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
-
-const multiEditItemSchema = Type.Object(
-  {
-    path: Type.String({
-      description:
-        "Path to the file to edit (relative or absolute). REQUIRED for every item in multi.",
-    }),
-    oldText: Type.String({
-      description: "Exact text to find and replace (must match exactly)",
-    }),
-    newText: Type.String({
-      description: "New text to replace the old text with",
-    }),
-    replaceAll: Type.Optional(
-      Type.Boolean({
-        description: "If true, replace every non-overlapping occurrence of oldText in the file; otherwise only the first match is replaced",
-      }),
-    ),
-  },
-  { additionalProperties: false },
-);
-
-const multiEditSchema = Type.Object({
-  path: Type.Optional(
-    Type.String({
-      description:
-        "Path to the file to edit (relative or absolute). Required for classic mode and for the edits batch parameter.",
-    }),
-  ),
-  oldText: Type.Optional(
-    Type.String({
-      description: "Exact text to find and replace (must match exactly)",
-    }),
-  ),
-  newText: Type.Optional(
-    Type.String({ description: "New text to replace the old text with" }),
-  ),
-  multi: Type.Optional(
-    Type.Array(multiEditItemSchema, {
-      description:
-        "Multi-file batch edits. Each item MUST include its own path. Mutually exclusive with edits.",
-    }),
-  ),
-  edits: Type.Optional(
-    Type.Array(singleEditItemSchema, {
-      description:
-        "Single-file batch edits within the file specified by the top-level path. PREFERRED over multiple separate edit calls when changing the same file more than once. Mutually exclusive with multi.",
-    }),
-  ),
-
-});
-
-function shortenPath(p: string | undefined): string {
-  if (!p) return "...";
-  const home = typeof process !== "undefined" ? process.env.HOME || process.env.USERPROFILE : "";
-  if (home && p.startsWith(home)) return `~${p.slice(home.length)}`;
-  return p;
-}
-
-function clampDiff(diff: string | undefined, maxLines = 50): string {
-  if (!diff) return "";
-  const lines = diff.split("\n");
-  if (lines.length <= maxLines) return diff;
-  return lines.slice(0, maxLines).join("\n") + "\n... (diff truncated)";
-}
-
-class EditHeaderRenderer {
-  private _header = "";
-  private _body = "";
-  private _bg = "toolPendingBg";
-  private _theme: any;
-
-  setHeader(header: string) { this._header = header; }
-  setBody(body: string) { this._body = body; }
-  setBg(bg: string) { this._bg = bg; }
-  setTheme(theme: any) { this._theme = theme; }
-
-  render(width: number): string[] {
-    const headerLine = this._theme.bg(this._bg, safeTruncate(this._header, width));
-    const bodyLine = this._body ? this._theme.bg(this._bg, safeTruncate(this._body, width)) : "";
-    const lines = bodyLine ? [headerLine, bodyLine] : [headerLine];
-    return lines;
-  }
-
-  invalidate() {
-    // Pi TUI will re-render this component on next frame.
-  }
-}
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "edit",
     label: "edit",
     description:
-      `Atomic file editor. Three modes (mutually exclusive):
-      1) Single: path + oldText + newText — one change in one file.
-      2) Single-file batch: top-level path + edits array [{oldText,newText,replaceAll?}, ...] — many changes in ONE file. PREFERRED when editing the same file more than once.
-      3) Multi-file batch: multi array [{path,oldText,newText,replaceAll?}, ...] — changes across DIFFERENT files.
-
-      All batches are atomic: one failure rolls back ALL changes in that call. oldText must match exactly including whitespace. As a fallback the tool tolerates curly quotes vs straight quotes, trailing whitespace, and tab vs space indentation mismatches.`,
+      "Exact text replacement in files. Preferred: {path, edits:[{oldText,newText},...]} (native shape). " +
+      "Also accepted: {path, oldText, newText} for one edit, or multi:[{path,oldText,newText},...] for cross-file. " +
+      "Each oldText matches the original file. Atomic preflight.",
     promptSnippet:
-      "Edit files with exact text replacement. PREFER batching: use the `edits` array for multiple changes in the SAME file, `multi` for changes across DIFFERENT files. Set `replaceAll: true` to replace every occurrence of oldText in a file. Avoid sending many separate single-edit calls for the same file.",
+      "Preferred: path + edits[]. Single: path + oldText + newText. Multi-file: edits[{path,...}] or multi[].",
     promptGuidelines: [
-      "PREFER batching: if you plan 2+ changes in the same file, use ONE call with top-level path + edits array",
-      "Use `multi` ONLY when editing DIFFERENT files in one call; each item MUST have its own path",
-      "NEVER send multiple separate `edit` calls for the same file — batch them into one edits array",
-      "Single path+oldText+newText is ONLY for trivial one-line fixes; everything else should use edits/multi",
-      "Use `replaceAll: true` when you need to replace every occurrence of oldText in the same file",
-      "oldText must match exactly including whitespace, tabs, quotes, backticks, and trailing spaces. If the file uses tabs for indentation, oldText must contain tabs, not spaces (and vice versa)",
-      "The tool tolerates common mismatches as a fallback: curly quotes ↔ straight quotes, trailing whitespace, and tab↔space indentation. Still aim for an exact match",
-      "If a batch preflight fails, fix ONLY the failed edit(s) and re-send the ENTIRE batch; do NOT split into separate calls",
-      "If preflight fails, use the MOST RECENT read output as the only source for oldText; ignore earlier file versions from context. When copying from terminal output, verify whether indentation is shown as tabs or spaces",
-      "If preflight fails, DO NOT rewrite the entire file with write. Use read with offset/limit or grep to get exact current text, then retry the whole batch",
-      "Do not include the exact same oldText→newText pair twice in one batch — the second occurrence will be skipped as redundant",
-      "In preflight output \"≈ Matched\" means the text was found but NO file was modified yet; \"✓ Edited\" means the change was written",
-
-      "Example single-file batch: { path: 'src/main.ts', edits: [{oldText:'const x = 1;', newText:'const x = 2;'}, {oldText:'foo()', newText:'bar()'}] }",
-      "Example multi-file batch: { multi: [{path:'src/a.ts', oldText:'a', newText:'b'}, {path:'src/b.ts', oldText:'c', newText:'d'}] }",
+      "Preferred shape: top-level path + edits[{oldText,newText}, ...]",
+      "Batch related changes in one edits[] call instead of many single-edit calls",
+      "Single edit shortcut: top-level path + oldText + newText",
+      "Multi-file: edits[{path,oldText,newText}, ...] or multi[{path,oldText,newText}, ...]",
+      "Each oldText matches the current file — re-read after restructuring code (moving lines into functions, etc.)",
+      "Exact match: ' vs \" and indentation must match; on failure re-read, fix oldText, retry the whole call",
     ],
-    parameters: multiEditSchema,
+    parameters: editParameters,
+    prepareArguments,
 
     renderShell: "self",
 
-    renderCall(args: any, theme: any, context: any) {
-      try {
-        const mode =
-          Array.isArray(args?.multi) ? "multi" :
-          Array.isArray(args?.edits) ? "batch" :
-          "";
-
-        const count =
-          Array.isArray(args?.multi) ? `${args.multi.length} change${args.multi.length === 1 ? "" : "s"}` :
-          Array.isArray(args?.edits) ? `${args.edits.length} change${args.edits.length === 1 ? "" : "s"}` :
-          "1 change";
-
-        let target: string;
-        if (args?.path) {
-          target = shortenPath(args.path);
-        } else if (Array.isArray(args?.multi) && args.multi.length > 0) {
-          const uniquePaths = new Set(args.multi.map((m: any) => m.path).filter(Boolean));
-          target = uniquePaths.size === 1
-            ? shortenPath(args.multi[0].path)
-            : `${uniquePaths.size} files`;
-        } else {
-          target = "...";
-        }
-
-        const modeLabel = mode ? `edit:${mode}` : "edit";
-        const header = `${theme.fg("toolTitle", theme.bold(modeLabel))} ${theme.fg("accent", target)} ${theme.fg("dim", `(${count})`)}`;
-
-        const renderer = new EditHeaderRenderer();
-        renderer.setTheme(theme);
-        renderer.setHeader(header);
-        renderer.setBg("toolPendingBg");
-        if (context) {
-          context.state = context.state || {};
-          context.state.headerRenderer = renderer;
-        }
-        return renderer;
-      } catch {
-        const safeHeader = theme.fg("toolTitle", theme.bold("edit"));
-        const renderer = new EditHeaderRenderer();
-        renderer.setTheme(theme);
-        renderer.setHeader(safeHeader);
-        renderer.setBg("toolPendingBg");
-        return renderer;
-      }
+    renderCall(args: any, theme: any) {
+      return makeTextComponent(() => [formatCallHeader(args ?? {}, theme)]);
     },
 
-    renderResult(result: any, options: any, _theme: any, context: any) {
-      if (options?.isPartial) {
-        return { render(_w: number) { return []; }, invalidate() {} };
-      }
-
-      const header = context?.state?.headerRenderer;
-      if (header instanceof EditHeaderRenderer) {
-        header.setBg(context?.isError ? "toolErrorBg" : "toolSuccessBg");
-        header.setBody(buildResultBody(result, context));
-      }
-      if (typeof context?.invalidate === "function") {
-        context.invalidate();
-      }
-
-      return { render(_w: number) { return []; }, invalidate() {} };
+    renderResult(result: any, options: any, theme: any, context: any) {
+      const lines = formatResultLines(result, context, theme, !!options?.isPartial);
+      return makeTextComponent(() => lines);
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const { path, oldText, newText, multi, edits: rawEdits } = params;
+      const edits = parseEdits(params as Record<string, unknown>);
 
-      const p = path ?? undefined;
-      const o = oldText ?? undefined;
-      const n = newText ?? undefined;
-      const m = Array.isArray(multi) ? multi : undefined;
-      const e = Array.isArray(rawEdits) ? rawEdits : undefined;
+      const preflight = await applyEdits(
+        edits,
+        createVirtualWorkspace(ctx.cwd),
+        ctx.cwd,
+        signal,
+        { preflight: true, continueOnError: true },
+      );
 
-      if (m !== undefined && e !== undefined) {
-        throw new Error(
-          "Cannot use both `multi` and `edits` in the same call. Use `multi` for multi-file edits and `edits` for single-file batch edits.",
-        );
+      const fails = preflight.filter((r) => !r.success);
+      if (fails.length > 0) {
+        throw new Error(buildPreflightError(preflight, edits.length, edits.length > 1));
       }
 
-      const edits: EditItem[] = [];
-      const hasTopLevelSingle = p !== undefined && o !== undefined && n !== undefined;
-
-      if (hasTopLevelSingle) {
-        edits.push({ path: p as string, oldText: o as string, newText: n as string });
-      } else if (p !== undefined || o !== undefined || n !== undefined) {
-        const hasOnlyPath = p !== undefined && o === undefined && n === undefined;
-        if (!hasOnlyPath || (m === undefined && e === undefined)) {
-          const missing: string[] = [];
-          if (p === undefined) missing.push("path");
-          if (o === undefined) missing.push("oldText");
-          if (n === undefined) missing.push("newText");
-          throw new Error(
-            `Incomplete top-level edit: missing ${missing.join(", ")}. ` +
-            `Received: path=${typeof p}, oldText=${typeof o}, newText=${typeof n}, multi=${Array.isArray(m)}, edits=${Array.isArray(e)}. ` +
-            `Provide all three (path, oldText, newText) or use multi/edits.`,
-          );
-        }
-      }
-
-      if (e) {
-        if (!p) {
-          throw new Error(
-            "The `edits` parameter requires a top-level `path`. Set the target file path.",
-          );
-        }
-        for (const item of e) {
-          edits.push({ path: p, oldText: item.oldText, newText: item.newText, replaceAll: item.replaceAll });
-        }
-      }
-
-      if (m) {
-        for (const item of m) {
-          edits.push({
-            path: item.path,
-            oldText: item.oldText,
-            newText: item.newText,
-            replaceAll: item.replaceAll,
-          });
-        }
-      }
-
-      if (edits.length === 0) {
-        throw new Error(
-          "No edits provided. Supply path/oldText/newText, a multi array, or an edits array.",
-        );
-      }
-
-      for (let i = 0; i < edits.length; i++) {
-        if (!edits[i].path) {
-          throw new Error(
-            `Edit ${i + 1} is missing a path.`,
-          );
-        }
-      }
-
-      try {
-        const preflightResults = await applyClassicEdits(
-          edits,
-          createVirtualWorkspace(ctx.cwd),
-          ctx.cwd,
-          signal,
-          { collectDiff: false, continueOnError: true, isPreflight: true },
-        );
-        const preflightFails = preflightResults.filter((r) => !r.success);
-        if (preflightFails.length > 0) {
-          throw new Error(
-            `STOP — do not rewrite. Read exact text, fix the failed edit(s), then retry THE ENTIRE BATCH (do not split into separate calls).\n` +
-            `Preflight failed — ${preflightFails.length}/${edits.length} unmatched (no files modified).\n` +
-            formatResults(preflightResults, edits.length, true),
-          );
-        }
-      } catch (err: any) {
-        const msg = err.message ?? String(err);
-        if (msg.startsWith("STOP")) {
-          throw err;
-        }
-        throw new Error(
-          `Preflight failed before mutating files.\n${msg}`,
-        );
-      }
-
-      const results = await applyClassicEdits(
+      const results = await applyEdits(
         edits,
         createRealWorkspace(),
         ctx.cwd,
         signal,
-        {
-          collectDiff: true,
-          rollbackOnError: true,
-        },
+        { collectDiff: true },
       );
 
-      const applied = results.filter((r) => r?.success && !r?.skipped);
-      const skipped = results.filter((r) => r?.success && r?.skipped);
-      const failed = results.filter((r) => r && !r.success);
-
-      if (results.length === 1) {
-        const r = results[0];
-        const snippet = r.diff ? `\n\n\`\`\`diff\n${clampDiff(r.diff, 30)}\n\`\`\`` : "";
-        return {
-          content: [{ type: "text" as const, text: r.message + snippet }],
-          details: {
-            diff: clampDiff(r.diff ?? ""),
-            firstChangedLine: r.firstChangedLine,
-          },
-        };
-      }
-
-      const diffParts = results.filter((r) => r?.diff);
-      const combinedDiff = clampDiff(
-        diffParts.length === 1
-          ? diffParts[0].diff ?? ""
-          : diffParts.map((r) => `File: ${r.path}\n${r.diff}`).join("\n\n"),
-      );
-
-      const firstChanged = results.find(
-        (r) => r?.firstChangedLine !== undefined,
-      )?.firstChangedLine;
-      const summary = results
-        .map((r, i) => `${i + 1}. ${r.message}`)
-        .join("\n");
-
-      let statusLine: string;
-      if (failed.length > 0) {
-        statusLine = `Applied ${applied.length}/${results.length} edit(s). ${failed.length} failed, ${skipped.length} skipped.\n${summary}`;
-      } else if (skipped.length > 0) {
-        statusLine = `Applied ${applied.length} edit(s), skipped ${skipped.length} redundant edit(s).\n${summary}`;
-      } else {
-        statusLine = `Applied ${results.length} edit(s) successfully.\n${summary}`;
-      }
-
-      const snippet = combinedDiff ? `\n\n\`\`\`diff\n${combinedDiff}\n\`\`\`` : "";
-
-      return {
-        content: [{ type: "text" as const, text: statusLine + snippet }],
-        details: {
-          diff: combinedDiff,
-          firstChangedLine: firstChanged,
-        },
-      };
+      return buildSuccessResponse(results, edits);
     },
   });
 }

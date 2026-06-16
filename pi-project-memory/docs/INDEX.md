@@ -14,6 +14,7 @@
 |------|---------|
 | `docs/INDEX.md` | This map |
 | `docs/reference/API.md` | 0x010 Project Memory API contract used by this extension |
+| `docs/reference/SYSTEM_PROMPT_SNIPPETS.md` | Copy-paste system prompt blocks for other projects |
 
 ## Backend
 
