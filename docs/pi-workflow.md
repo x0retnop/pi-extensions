@@ -24,20 +24,23 @@ Pi CLI bundles its own core packages. When an extension runs inside Pi, these im
 
 ### Dev type-checking setup
 
-For `npx tsc --noEmit` to resolve `@earendil-works/*` types, the dev repo uses **symbolic links** inside `node_modules/@earendil-works/` that point to the globally installed Pi CLI packages:
+For `npx tsc --noEmit` to resolve `@earendil-works/*` types, the dev repo lists them as dev dependencies in the root `package.json` and installs them into the local `node_modules/` with `npm install`:
 
-- `pi-coding-agent` → `C:/Users/user/AppData/Roaming/npm/node_modules/@earendil-works/pi-coding-agent`
-- `pi-ai`, `pi-tui`, `pi-agent-core` → nested inside `pi-coding-agent/node_modules/@earendil-works/`
+- `node_modules/@earendil-works/pi-coding-agent`
+- `node_modules/@earendil-works/pi-ai`
+- `node_modules/@earendil-works/pi-tui`
+- `node_modules/typebox`
 
 This means:
-- `@earendil-works/*` are **not** listed in the root `package.json`.
-- `typebox` is kept locally in `devDependencies` because it is not installed globally as a standalone package.
-- When Pi CLI is updated globally, the linked types are automatically refreshed — no `npm update` needed in the dev repo.
-- If the links break (e.g., after a Node/npm reinstallation), recreate them with `ln -s` from the global `node_modules` paths.
-
-### The `@mariozechner/` alias
-
-Old extensions may still import `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`, etc. Pi CLI currently maps these to the same bundled code as `@earendil-works/*`. This is a **backward-compatibility alias** that may be removed in a future Pi release. Do not introduce `@mariozechner/` imports in new code; migrate to `@earendil-works/*` when touching a legacy file.
+- `@earendil-works/*` **are** listed in the root `package.json` as `devDependencies`.
+- When Pi CLI is updated globally, the local dev types are **not** automatically refreshed. Run `npm install` in the dev repo if you want the type-checker to match the new global version.
+- If `node_modules` is stale, corrupted, or missing, recreate it from the repo root:
+  ```bash
+  cd "C:/10x001/pi extensions"
+  rm -rf node_modules package-lock.json
+  npm install
+  npm run typecheck
+  ```
 
 ### Regular npm dependencies
 
@@ -63,7 +66,7 @@ Managed by `~/.pi/agent/package.json`.
 ## Sync checklist (dev → runtime)
 
 1. Edit code in `C:/10x001/pi extensions/<extension>/`.
-2. Run `npx tsc --noEmit` from the repo root to verify types.
+2. Run `npm run typecheck` from the repo root to verify types.
 3. Copy changed files to `~/.pi/agent/extensions/<extension>/`.
    - Copy `package.json` if dependencies changed.
    - Copy `.ts` source files.
@@ -78,11 +81,6 @@ See `docs/pi-version-sync.md`. The short version:
 2. Decide whether the upgrade is worth it.
 3. If yes, fix extensions in dev repo, type-check, sync, smoke-test.
 4. Only then bump the `BASELINE` comment in `docs/pi-version-sync.md`.
-
-## Current known legacy
-
-- `pi-tool-codex` is an external package originally written for the old `@mariozechner/` scope. It has been migrated to `@earendil-works/` in this repo. If Pi ever drops the backward-compat alias, this extension is already safe.
-- `pi-kimi` previously used `compat.reasoningEffortMap` (deprecated in Pi 0.72.0). It now uses `thinkingLevelMap`.
 
 ## Runtime specifics
 

@@ -9,13 +9,6 @@ export default function (pi: ExtensionAPI) {
       delete payload.prompt_cache_retention;
     }
 
-    if (typeof payload.model === "string" && payload.model.includes("{{")) {
-      const rawId = event.model?.id;
-      if (rawId) {
-        payload.model = rawId.includes("/") ? rawId.split("/").pop() : rawId;
-      }
-    }
-
     return payload;
   });
 }

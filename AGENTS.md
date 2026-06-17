@@ -24,33 +24,78 @@ They are **not** installed via `pi install`.
 
 Only type-check after editing **code** (`.ts`, `.js`, `.tsx`, `.jsx`, `.json` files such as `package.json`). There is no need to run `tsc` for documentation-only changes (`.md`, `.txt`, etc.).
 
-Run this from the repo root to verify all included extensions compile:
+Type-checking tells you whether the extension source is compatible with the Pi API types declared in the local `node_modules`.
+
+Run the project type-check from the repo root:
 
 ```bash
 cd "C:/10x001/pi extensions"
-npx tsc --noEmit
+npm run typecheck
+# or equivalently:
+# npx tsc --noEmit
 ```
 
-Why this works:
-- `tsconfig.json` in this repo lists every active extension in `include`.
-- Pi core packages (`@earendil-works/*`) are resolved through symlinks in `node_modules/@earendil-works/`, which point to the globally installed Pi CLI.
-- `typebox` is a local `devDependency` in this repo.
+What this checks:
+- All active extensions listed in `tsconfig.json` `include`.
+- All imports against `node_modules/@earendil-works/*`, `typebox`, and `@types/node`.
+- `npm run typecheck` and `npx tsc --noEmit` are equivalent; use whichever you prefer.
 
-Do **not** run `npx tsc --noEmit <files>` with explicit file arguments unless you also pass `--ignoreConfig` — otherwise the project-wide type resolution is bypassed and Pi core imports will fail. Prefer `npx tsc --noEmit` from the repo root.
+What it does **not** check:
+- Runtime behavior inside Pi.
+- Whether the extension loads correctly after copy/restart.
+- Whether runtime npm dependencies are installed in `~/.pi/agent/`.
 
-If a single extension has errors that are hard to read in the full project output, you can type-check just that extension while keeping the config:
+### When type-checking fails
+
+1. Read the error path and message.
+2. If the error is about a missing property or changed event shape, the installed Pi API types have diverged from the code. Fix the code to match the type.
+3. If the error mentions broken `node_modules/@earendil-works/*` resolution, the local dev dependencies may be stale or corrupted. Recreate them:
+   ```bash
+   cd "C:/10x001/pi extensions"
+   rm -rf node_modules package-lock.json
+   npm install
+   npm run typecheck
+   ```
+
+### Checking a single extension
+
+If a single extension has errors that are hard to read in the full project output, you can type-check just that extension while keeping the same compiler settings:
 
 ```bash
 cd "C:/10x001/pi extensions"
 npx tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck --types node pi-extension-folder/index.ts
 ```
 
-## Runtime dependencies reminder
+This bypasses `tsconfig.json` `include`, so you must pass the full compiler flags manually.
 
-If you add a **new extension** or **new runtime dependency** to an existing extension:
+## Dependencies
 
-1. Add the npm package to the extension's `package.json` `dependencies`.
-2. After the user copies the extension to `~/.pi/agent/extensions/`, the dependency must be installed in the shared runtime:
+### Dev dependencies (root `package.json`)
+
+The root `package.json` lists only dev-time dependencies needed for type-checking:
+
+- `@earendil-works/pi-ai`, `pi-coding-agent`, `pi-tui` — Pi API types.
+- `@types/node` — Node.js built-in types.
+- `typebox` — schema types used by Pi tools.
+- `typescript` — compiler.
+
+These are installed into the local `node_modules/` by `npm install`.
+
+### Extension dependencies
+
+Each extension is a Pi package. It should use `peerDependencies` for Pi core packages:
+
+```json
+"peerDependencies": {
+  "@earendil-works/pi-coding-agent": "*",
+  "typebox": "*"
+}
+```
+
+If an extension needs a normal npm package at runtime (e.g. `linkedom`):
+
+1. Add it to the extension's `package.json` `dependencies`.
+2. After the user copies the extension to `~/.pi/agent/extensions/`, install it in the shared runtime:
    ```bash
    cd ~/.pi/agent
    npm install <package>
