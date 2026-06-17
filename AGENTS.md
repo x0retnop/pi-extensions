@@ -92,7 +92,7 @@ Each extension is a Pi package. It should use `peerDependencies` for Pi core pac
 }
 ```
 
-If an extension needs a normal npm package at runtime (e.g. `linkedom`):
+If an extension needs a normal npm package at runtime (e.g. `p-limit`):
 
 1. Add it to the extension's `package.json` `dependencies`.
 2. After the user copies the extension to `~/.pi/agent/extensions/`, install it in the shared runtime:

@@ -44,7 +44,7 @@ This means:
 
 ### Regular npm dependencies
 
-Some extensions need normal npm packages (e.g. `linkedom`, `@mozilla/readability`, `p-limit`). These are **not** bundled by Pi.
+Some extensions need normal npm packages (e.g. `p-limit`). These are **not** bundled by Pi.
 
 They are installed once in the shared runtime directory:
 
