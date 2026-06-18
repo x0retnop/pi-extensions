@@ -136,7 +136,7 @@ function matchEditsInFile(
       const occurrences = findAllMatches(baseContent, ne.oldText);
       if (occurrences.length === 0) {
         fileFailed = true;
-        const hint = buildMismatchHint(normalized, ne.oldText);
+        const hint = buildMismatchHint(normalized, ne.oldText, ne.newText);
         byIndex.set(index, {
           path: displayPath,
           success: false,
@@ -167,7 +167,7 @@ function matchEditsInFile(
     const match = findText(baseContent, ne.oldText);
     if (!match) {
       fileFailed = true;
-      const hint = buildMismatchHint(normalized, ne.oldText);
+      const hint = buildMismatchHint(normalized, ne.oldText, ne.newText);
       byIndex.set(index, {
         path: displayPath,
         success: false,

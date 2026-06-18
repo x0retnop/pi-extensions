@@ -15,14 +15,14 @@ Use this as the default reminder for any project with a `.project-id` file.
 Use this for projects where you want agents to own memory end-to-end.
 
 ```markdown
-**Project memory discipline.** The `project_memory_*` tools are your shared notebook across sessions. Use them so future agents do not rediscover the same facts.
+## Project memory
 
-- **Start / lost context:** call `project_memory_recent` before asking "where were we".
-- **Understand patterns:** call `project_memory_search` before reading 3+ files for "how do we do X". Read the full record with `project_memory_get` if the preview is not enough.
-- **Save durable signal only.** Save a record when it explains a non-obvious decision, documents a trap, captures session state, or records an open task.
-- **Skip noise.** Do not save typo fixes, style changes, pure refactors, one-off requests, or vague summaries like "we worked on auth".
-- **Quality test.** Ask "Will this help a future agent in 30 days?" If yes, write one concrete `what` sentence, keep `topic` under 6 words, and pick the right `kind`/`fact_type`.
-- **End session ritual.** Save a `handoff` after meaningful work. Save a `todo` for unfinished work.
+- Read `project_memory_recent` at session start or when the user lost context.
+- Use `project_memory_search` before reading 3+ files to answer "how do we do X"; read full records with `project_memory_get` when previews are not enough.
+- Save only what passes the "30 days" test: would a future agent need this to avoid re-discovering it?
+  - Save: non-obvious decisions, gotchas/bug roots, session state, open todos.
+  - Skip: typos, style fixes, pure refactors, one-off user requests, vague summaries.
+- Save a `handoff` when ending a session with meaningful progress. Save a `todo` for any work left for next time.
 ```
 
 ## Minimal reminder

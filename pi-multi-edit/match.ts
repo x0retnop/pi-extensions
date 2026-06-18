@@ -145,11 +145,23 @@ function quoteStyleDiffers(a: string, b: string): boolean {
   return strip(a) === strip(b) && a !== b && /['"]/.test(a + b);
 }
 
-export function buildMismatchHint(fileContent: string, oldText: string): string {
+export function buildMismatchHint(
+  fileContent: string,
+  oldText: string,
+  newText?: string,
+): string {
   const candidates = findCandidates(fileContent, oldText, 1);
   const survivingIds = identifiersStillInFile(fileContent, oldText);
 
+  const isDeletion = newText === "";
+
   if (candidates.length === 0) {
+    if (isDeletion) {
+      return (
+        "delete failed — oldText block not found. Include the full block to remove with exact " +
+        "indentation and trailing newlines; re-read the file and copy verbatim."
+      );
+    }
     if (survivingIds.length > 0) {
       const sample = survivingIds.slice(0, 3).join(", ");
       return (

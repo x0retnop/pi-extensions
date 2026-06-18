@@ -15,19 +15,26 @@ export default function (pi: ExtensionAPI) {
     name: "edit",
     label: "edit",
     description:
-      "Exact text replacement in files. Always set path (top-level) for single-file edits — same as native edit. " +
-      "Shape: {path, edits:[{oldText,newText},...]}. Also: {path, oldText, newText} or multi:[{path,oldText,newText},...]. " +
-      "Each oldText matches the original file. Atomic preflight.",
+      "Atomic exact text replacement. Three mutually exclusive modes: " +
+      "(1) single edit: {path, oldText, newText}; " +
+      "(2) same-file batch: {path, edits:[{oldText, newText}, ...]}; " +
+      "(3) multi-file batch: {multi:[{path, oldText, newText}, ...]}. " +
+      "oldText must match exactly. newText \"\" deletes the matched block. Atomic preflight.",
     promptSnippet:
-      "Single/batch: top-level path + edits[]. Multi-file: path on each edit (or multi[]). path is separate from oldText.",
+      'Same file: {\"path\":\"src/app.py\",\"edits\":[{\"oldText\":\"foo\",\"newText\":\"bar\"}]}. ' +
+      'Several files: {\"multi\":[{\"path\":\"a.py\",\"oldText\":\"x\",\"newText\":\"y\"},{\"path\":\"b.py\",\"oldText\":\"p\",\"newText\":\"q\"}]}.',
     promptGuidelines: [
-      "Always set top-level path for single-file edits — path is a separate field, not inside oldText",
-      "Preferred shape: top-level path + edits[{oldText,newText}, ...]",
-      "Batch related changes in one edits[] call instead of many single-edit calls",
-      "Single edit shortcut: top-level path + oldText + newText",
-      "Multi-file: edits[{path,oldText,newText}, ...] or multi[{path,oldText,newText}, ...]",
-      "Each oldText matches the current file — re-read after restructuring code (moving lines into functions, etc.)",
-      "Exact match: ' vs \" and indentation must match; on failure re-read, fix oldText, retry the whole call",
+      "Use `edits[]` ONLY for multiple changes in the SAME file; top-level `path` is required",
+      'Example same-file batch: {\"path\":\"src/app.py\",\"edits\":[{\"oldText\":\"foo\",\"newText\":\"bar\"},{\"oldText\":\"baz\",\"newText\":\"qux\"}]}',
+      "Use `multi[]` ONLY when editing DIFFERENT files in one call; each item MUST have its own `path`",
+      'Example multi-file batch: {\"multi\":[{\"path\":\"a.py\",\"oldText\":\"x\",\"newText\":\"y\"},{\"path\":\"b.py\",\"oldText\":\"p\",\"newText\":\"q\"}]}',
+      "`edits[]` and `multi[]` are mutually exclusive — never use both in one call",
+      "PREFER batching multiple same-file changes into one `edits[]` call instead of many separate `edit` calls",
+      "NEVER send multiple separate `edit` calls for the same file — batch them",
+      "`path` is always a top-level or per-item field; NEVER put `path` inside `oldText` or `newText`",
+      "oldText MUST match exactly including indentation (tabs vs spaces), quotes (' vs \"), backticks, and trailing whitespace. Copy verbatim from `read` output",
+      "If preflight fails: re-read the exact current block, fix oldText, then retry the WHOLE call. Do NOT split the batch into separate calls",
+      'To delete a block: set newText to "" and oldText to the exact block including trailing newlines',
     ],
     parameters: editParameters,
     prepareArguments,

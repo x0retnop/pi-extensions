@@ -2,7 +2,7 @@ import { type Static, Type } from "typebox";
 
 import type { EditItem } from "./types.js";
 
-/** Keys models use instead of path (native edit uses path; read/write use path too). */
+/** Keys models sometimes send instead of `path`. Kept only for normalization; schemas expose `path`. */
 export const PATH_KEYS = [
   "path",
   "file_path",
@@ -23,68 +23,89 @@ export function resolvePathFromRecord(
   return undefined;
 }
 
-const pathAliasProps = {
+const itemPathProp = {
   path: Type.Optional(Type.String({ description: "File path for this edit" })),
-  file_path: Type.Optional(Type.String({ description: "Alias for path" })),
-  filePath: Type.Optional(Type.String({ description: "Alias for path" })),
-  filepath: Type.Optional(Type.String({ description: "Alias for path" })),
-  file: Type.Optional(Type.String({ description: "Alias for path" })),
-  filename: Type.Optional(Type.String({ description: "Alias for path" })),
 };
 
-const editItemSchema = Type.Object({
-  ...pathAliasProps,
-  oldText: Type.String({ description: "Exact text to find" }),
-  newText: Type.String({ description: "Replacement text" }),
-  replaceAll: Type.Optional(
-    Type.Boolean({ description: "Replace every occurrence instead of requiring uniqueness" }),
-  ),
-});
+const editItemSchema = Type.Object(
+  {
+    ...itemPathProp,
+    oldText: Type.String({
+      description:
+        "Exact text to find. MUST match whitespace, tabs, quotes, and trailing spaces exactly.",
+    }),
+    newText: Type.String({
+      description:
+        'Replacement text. Use "" (empty string) to delete the matched oldText block.',
+    }),
+    replaceAll: Type.Optional(
+      Type.Boolean({
+        description: "Replace every occurrence instead of requiring uniqueness",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-const multiItemSchema = Type.Object({
-  ...pathAliasProps,
-  oldText: Type.String({ description: "Exact text to find" }),
-  newText: Type.String({ description: "Replacement text" }),
-  replaceAll: Type.Optional(
-    Type.Boolean({ description: "Replace every occurrence instead of requiring uniqueness" }),
-  ),
-});
+const multiItemSchema = Type.Object(
+  {
+    path: Type.String({ description: "File path for this edit" }),
+    oldText: Type.String({
+      description:
+        "Exact text to find. MUST match whitespace, tabs, quotes, and trailing spaces exactly.",
+    }),
+    newText: Type.String({
+      description:
+        'Replacement text. Use "" (empty string) to delete the matched oldText block.',
+    }),
+    replaceAll: Type.Optional(
+      Type.Boolean({
+        description: "Replace every occurrence instead of requiring uniqueness",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 /**
  * Permissive input schema: provider JSON-schema validation must accept every shape
  * models actually send. prepareArguments normalizes to edits[] before execute().
  */
-export const editParameters = Type.Object({
-  path: Type.Optional(
-    Type.String({
-      description:
-        "Target file (relative or absolute). REQUIRED for single-file edits unless each edits[] item has path.",
-    }),
-  ),
-  file_path: Type.Optional(Type.String({ description: "Alias for path" })),
-  filePath: Type.Optional(Type.String({ description: "Alias for path" })),
-  filepath: Type.Optional(Type.String({ description: "Alias for path" })),
-  file: Type.Optional(Type.String({ description: "Alias for path" })),
-  filename: Type.Optional(Type.String({ description: "Alias for path" })),
-  oldText: Type.Optional(
-    Type.String({ description: "Single-edit shorthand — prefer edits[].oldText" }),
-  ),
-  newText: Type.Optional(
-    Type.String({ description: "Single-edit shorthand — prefer edits[].newText" }),
-  ),
-  replaceAll: Type.Optional(Type.Boolean({ description: "Single-edit shorthand for replaceAll" })),
-  edits: Type.Optional(
-    Type.Array(editItemSchema, {
-      description:
-        "Preferred: one or more replacements. Each oldText matches the original file. Multi-file: set path on each item.",
-    }),
-  ),
-  multi: Type.Optional(
-    Type.Array(multiItemSchema, {
-      description: "Legacy multi-file shorthand — prefer edits[] with path per item.",
-    }),
-  ),
-});
+export const editParameters = Type.Object(
+  {
+    path: Type.Optional(
+      Type.String({
+        description:
+          "Target file for single-file edits (relative or absolute). Copy from your last read. Omit only for multi-file calls.",
+      }),
+    ),
+    file_path: Type.Optional(
+      Type.String({ description: "Alias for path — prefer top-level path" }),
+    ),
+    oldText: Type.Optional(
+      Type.String({ description: "Single-edit shorthand — prefer edits[].oldText" }),
+    ),
+    newText: Type.Optional(
+      Type.String({ description: "Single-edit shorthand — prefer edits[].newText" }),
+    ),
+    replaceAll: Type.Optional(
+      Type.Boolean({ description: "Single-edit shorthand for replaceAll" }),
+    ),
+    edits: Type.Optional(
+      Type.Array(editItemSchema, {
+        description:
+          "Batch edits in ONE file. Requires top-level path. Each item is {oldText, newText}. Mutually exclusive with multi.",
+      }),
+    ),
+    multi: Type.Optional(
+      Type.Array(multiItemSchema, {
+        description:
+          "Multi-file batch edits. Each item MUST have its own path: {path, oldText, newText}. Mutually exclusive with edits.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 export type EditToolInput = Static<typeof editParameters>;
 
@@ -132,8 +153,8 @@ function hoistSharedFilePath(args: Record<string, unknown>, edits: RawEdit[]): v
 function pathMissingMessage(index: number, editCount: number): string {
   if (editCount === 1) {
     return (
-      "Missing path. Single-file edit needs top-level path (or file/file_path). " +
-      'Example: {"path":"src/foo.py","edits":[{"oldText":"...","newText":"..."}]}'
+      "Missing path — add top-level path (copy from the file you just read). " +
+      'Example: {"path":"tests/test_foo.py","edits":[{"oldText":"...","newText":"..."}]}'
     );
   }
   if (index === 0 && editCount > 1) {
@@ -142,7 +163,7 @@ function pathMissingMessage(index: number, editCount: number): string {
       'Example: {"path":"src/foo.py","edits":[{"oldText":"a","newText":"b"},{"oldText":"c","newText":"d"}]}'
     );
   }
-  return `edits[${index}] needs path — set top-level path for one file, or path on each edit for multi-file.`;
+  return `edits[${index}] needs path — set top-level path for one file, or use multi[] for several files.`;
 }
 
 function parseEditsJsonString(value: unknown): RawEdit[] | undefined {
@@ -197,6 +218,15 @@ export function prepareArguments(input: unknown): EditToolInput {
   edits = normalizeEditPaths(edits);
 
   const fromMulti = normalizeMulti(args.multi);
+
+  // Mutually exclusive: keep the explicit choice the model made.
+  if (edits.length > 0 && fromMulti.length > 0) {
+    throw new Error(
+      "Cannot use both `edits` and `multi` in the same call. " +
+      "Use `edits` for one file and `multi` for several files.",
+    );
+  }
+
   if (fromMulti.length > 0) {
     edits.push(...fromMulti);
     delete args.multi;
