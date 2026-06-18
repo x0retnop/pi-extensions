@@ -124,13 +124,68 @@ function convertIndent(
     .join("\n");
 }
 
+function convertIndentByFirstLineRatio(
+  oldText: string,
+  fileContent: string,
+): string | undefined {
+  const fileLines = fileContent.split("\n");
+  const oldLines = oldText.split("\n");
+  if (oldLines.length === 0) return undefined;
+
+  const anchor = oldLines[0].trim();
+  if (!anchor) return undefined;
+
+  const fileAnchorIdx = fileLines.findIndex((l) => l.trim() === anchor);
+  if (fileAnchorIdx === -1) return undefined;
+
+  const oldIndent = oldLines[0].length - oldLines[0].trimStart().length;
+  const fileIndent = fileLines[fileAnchorIdx].length - fileLines[fileAnchorIdx].trimStart().length;
+  if (oldIndent === 0 || fileIndent === 0 || oldIndent === fileIndent) return undefined;
+
+  const ratio = fileIndent / oldIndent;
+  const converted = oldLines
+    .map((line) => {
+      const trimmed = line.trimStart();
+      const indent = line.slice(0, line.length - trimmed.length);
+      const spaces = [...indent].filter((c) => c === " ").length;
+      const tabs = [...indent].filter((c) => c === "\t").length;
+      const newSpaces = Math.round(spaces * ratio);
+      return " ".repeat(newSpaces) + "\t".repeat(tabs) + trimmed;
+    })
+    .join("\n");
+
+  return converted === oldText ? undefined : converted;
+}
+
 export function convertIndentToMatchFile(oldText: string, fileContent: string): string | undefined {
   const fileStyle = detectIndentUnit(fileContent);
   const oldStyle = detectIndentUnit(oldText);
-  if (!fileStyle || !oldStyle || fileStyle === oldStyle) return undefined;
 
   const tabWidth =
     fileStyle === "\t" || oldStyle === "\t" ? detectTabWidth(fileContent) : 2;
-  const converted = convertIndent(oldText, oldStyle, fileStyle, tabWidth);
-  return converted === oldText ? undefined : converted;
+
+  // Direct style conversion (e.g. tabs -> spaces, 2-space -> 4-space).
+  if (fileStyle && oldStyle && fileStyle !== oldStyle) {
+    const converted = convertIndent(oldText, oldStyle, fileStyle, tabWidth);
+    if (converted !== oldText) return converted;
+  }
+
+  // Fallback: oldText may have mixed indentation that masks its real unit,
+  // or it may use a consistent multiple of the file's unit. Try common
+  // space-unit ratios regardless of what detectIndentUnit guessed.
+  if (typeof fileStyle === "number") {
+    const fromUnits = [2, 4, 8];
+    for (const fromUnit of fromUnits) {
+      if (oldStyle === fromUnit && fileStyle === fromUnit) continue;
+      const converted = convertIndent(oldText, fromUnit, fileStyle, tabWidth);
+      if (converted !== oldText) return converted;
+    }
+  }
+
+  // Last resort: scale indentation based on the first matching line.
+  const ratioConverted = convertIndentByFirstLineRatio(oldText, fileContent);
+  if (ratioConverted !== undefined) return ratioConverted;
+
+  return undefined;
 }
+

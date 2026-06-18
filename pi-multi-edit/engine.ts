@@ -4,13 +4,14 @@ import { computeChangeStats, firstChangedLine } from "./diff.js";
 import {
   buildMismatchHint,
   countOccurrences,
+  findActualString,
   findAllMatches,
   findText,
   normalizeEditText,
+  pairKey,
 } from "./match.js";
 import {
   detectLineEnding,
-  normalizeForFuzzyMatch,
   normalizeToLF,
   restoreLineEndings,
   stripBom,
@@ -20,12 +21,6 @@ import type { EditItem, EditResult, Workspace } from "./types.js";
 interface IndexedEdit {
   index: number;
   edit: EditItem;
-}
-
-interface MatchedEdit {
-  matchIndex: number;
-  matchLength: number;
-  newText: string;
 }
 
 interface ApplyOptions {
@@ -49,23 +44,25 @@ function groupByPath(edits: EditItem[], cwd: string): Map<string, IndexedEdit[]>
   return groups;
 }
 
-function pairKey(edit: EditItem): string {
-  return `${edit.oldText}\0${edit.newText}`;
+function applySingleEdit(
+  content: string,
+  match: { index: number; length: number },
+  newText: string,
+): string {
+  return content.slice(0, match.index) + newText + content.slice(match.index + match.length);
 }
 
-function applyMatchedToContent(
-  baseContent: string,
-  matched: MatchedEdit[],
-): string {
-  const sorted = [...matched].sort((a, b) => b.matchIndex - a.matchIndex);
-  let content = baseContent;
-  for (const m of sorted) {
-    content =
-      content.slice(0, m.matchIndex) +
-      m.newText +
-      content.slice(m.matchIndex + m.matchLength);
+function sortGroupByPosition(
+  group: IndexedEdit[],
+  content: string,
+): IndexedEdit[] {
+  if (group.length < 2) return group;
+  const positions = new Map<IndexedEdit, number>();
+  for (const entry of group) {
+    const match = findText(content, normalizeEditText(entry.edit.oldText), 0);
+    positions.set(entry, match?.index ?? Number.MAX_SAFE_INTEGER);
   }
-  return content;
+  return [...group].sort((a, b) => positions.get(a)! - positions.get(b)!);
 }
 
 function matchEditsInFile(
@@ -81,36 +78,29 @@ function matchEditsInFile(
 
   const { bom, text } = stripBom(rawContent);
   const lineEnding = detectLineEnding(text);
-  const normalized = normalizeToLF(text);
+  let normalized = normalizeToLF(text);
 
-  const normalizedEdits = group.map(({ edit }) => ({
-    oldText: normalizeEditText(edit.oldText),
-    newText: normalizeEditText(edit.newText),
-    replaceAll: edit.replaceAll ?? false,
-  }));
+  const appliedPairs = new Set<string>();
+  let fileFailed = false;
+  let searchOffset = 0;
 
-  for (let gi = 0; gi < normalizedEdits.length; gi++) {
-    if (!normalizedEdits[gi].oldText) {
+  const sortedGroup = sortGroupByPosition(group, normalized);
+
+  for (const { index, edit } of sortedGroup) {
+    const ne = {
+      oldText: normalizeEditText(edit.oldText),
+      newText: normalizeEditText(edit.newText),
+      replaceAll: edit.replaceAll ?? false,
+    };
+
+    if (!ne.oldText) {
       const msg = `oldText must not be empty in ${displayPath}.`;
       if (continueOnError) {
-        byIndex.set(group[gi].index, { path: displayPath, success: false, message: msg });
+        byIndex.set(index, { path: displayPath, success: false, message: msg });
         continue;
       }
       throw new Error(msg);
     }
-  }
-
-  const initialMatches = normalizedEdits.map((e) => findText(normalized, e.oldText));
-  const useFuzzySpace = initialMatches.some((m) => m?.usedFuzzy);
-  const baseContent = useFuzzySpace ? normalizeForFuzzyMatch(normalized) : normalized;
-
-  const appliedPairs = new Set<string>();
-  const matched: MatchedEdit[] = [];
-  let fileFailed = false;
-
-  for (let gi = 0; gi < group.length; gi++) {
-    const { index, edit } = group[gi];
-    const ne = normalizedEdits[gi];
 
     if (appliedPairs.has(pairKey(edit))) {
       byIndex.set(index, {
@@ -133,7 +123,7 @@ function matchEditsInFile(
     }
 
     if (ne.replaceAll) {
-      const occurrences = findAllMatches(baseContent, ne.oldText);
+      const occurrences = findAllMatches(normalized, ne.oldText, searchOffset);
       if (occurrences.length === 0) {
         fileFailed = true;
         const hint = buildMismatchHint(normalized, ne.oldText, ne.newText);
@@ -146,13 +136,12 @@ function matchEditsInFile(
         throw new Error(formatResults([...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, r]) => r), totalEdits, isPreflight));
       }
 
-      for (const occ of occurrences) {
-        matched.push({
-          matchIndex: occ.index,
-          matchLength: occ.length,
-          newText: ne.newText,
-        });
+      let localContent = normalized;
+      for (let i = occurrences.length - 1; i >= 0; i--) {
+        const occ = occurrences[i];
+        localContent = applySingleEdit(localContent, occ, ne.newText);
       }
+      normalized = localContent;
       appliedPairs.add(pairKey(edit));
       byIndex.set(index, {
         path: displayPath,
@@ -164,7 +153,7 @@ function matchEditsInFile(
       continue;
     }
 
-    const match = findText(baseContent, ne.oldText);
+    const match = findActualString(normalized, ne.oldText);
     if (!match) {
       fileFailed = true;
       const hint = buildMismatchHint(normalized, ne.oldText, ne.newText);
@@ -177,7 +166,7 @@ function matchEditsInFile(
       throw new Error(formatResults([...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, r]) => r), totalEdits, isPreflight));
     }
 
-    const occurrences = countOccurrences(baseContent, ne.oldText);
+    const occurrences = countOccurrences(normalized, ne.oldText);
     if (occurrences > 1) {
       fileFailed = true;
       const msg =
@@ -188,18 +177,15 @@ function matchEditsInFile(
       throw new Error(formatResults([...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, r]) => r), totalEdits, isPreflight));
     }
 
-    matched.push({
-      matchIndex: match.index,
-      matchLength: match.length,
-      newText: ne.newText,
-    });
+    normalized = applySingleEdit(normalized, match, ne.newText);
+    // Continue searching from the replacement start so later edits can match
+    // content introduced by earlier edits in the same batch.
+    searchOffset = match.index;
     appliedPairs.add(pairKey(edit));
     byIndex.set(index, {
       path: displayPath,
       success: true,
-      message: isPreflight
-        ? `Matched ${displayPath}.`
-        : `Edited ${displayPath}.`,
+      message: isPreflight ? `Matched ${displayPath}.` : `Edited ${displayPath}.`,
     });
   }
 
@@ -207,41 +193,7 @@ function matchEditsInFile(
     return { byIndex, changed: false };
   }
 
-  const sorted = [...matched].sort((a, b) => a.matchIndex - b.matchIndex);
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1];
-    const cur = sorted[i];
-    if (prev.matchIndex + prev.matchLength > cur.matchIndex) {
-      const msg = `Edits overlap in ${displayPath} — merge them into one edit.`;
-      if (continueOnError) {
-        for (const { index } of group) {
-          const r = byIndex.get(index);
-          if (!r || r.success) {
-            byIndex.set(index, { path: displayPath, success: false, message: msg });
-          }
-        }
-        return { byIndex, changed: false };
-      }
-      throw new Error(msg);
-    }
-  }
-
-  const newNormalized = applyMatchedToContent(baseContent, matched);
-  if (newNormalized === baseContent) {
-    const msg = `No changes in ${displayPath}.`;
-    if (continueOnError) {
-      for (const { index } of group) {
-        const r = byIndex.get(index);
-        if (r?.success && !r.skipped) {
-          byIndex.set(index, { path: displayPath, success: false, message: msg });
-        }
-      }
-      return { byIndex, changed: false };
-    }
-    throw new Error(msg);
-  }
-
-  const restored = restoreLineEndings(newNormalized, lineEnding);
+  const restored = restoreLineEndings(normalized, lineEnding);
   const newRaw = bom + restored;
   return { byIndex, newRawContent: newRaw, changed: newRaw !== rawContent };
 }
@@ -321,4 +273,3 @@ export async function applyEdits(
 
   return allResults;
 }
-
