@@ -54,6 +54,13 @@ Follow-ups, risks, assumptions for the parent agent.
 - Add comments only when the logic is non-obvious.
 - Keep the final report concise.
 
+**Execution Discipline:**
+- Read full files only when they are a few hundred lines; use `mode:overview` for files larger than 300 lines.
+- Batch all edits to the same file into one multi-edit call.
+- If the target text is stale, re-read the exact block before editing.
+- If a tool fails or returns nothing, report that explicitly rather than making up a result.
+- Verify with `npm run typecheck` or tests when requested or obviously necessary.
+
 **Edge Cases:**
 - If preflight edit fails, re-read the exact block and retry once. If it still fails, stop and report.
 - If typecheck/tests are requested and fail, include the relevant error snippet.

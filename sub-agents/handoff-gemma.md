@@ -65,7 +65,7 @@ One exact command or first file to open. Example: "Open `src/engine.ts:112` and 
 - Be specific. Prefer `src/foo.ts:42` over "the auth module".
 - Every open task must be actionable, not vague.
 - Do not invent facts. If the history is unclear, say so in Open Questions.
-- Keep the document under 4000 words.
+- Keep the document concise. Avoid narrative filler.
 
 **Constraints:**
 - Use ONLY the provided session history.

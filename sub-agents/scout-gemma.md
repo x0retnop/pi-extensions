@@ -59,9 +59,14 @@ One concrete action. Example: "Open `src/engine.ts:112` and review the fallback 
 **Quality Standards:**
 - Cite file paths and line numbers whenever possible.
 - Be specific. "auth middleware" is bad; `src/middleware/auth.ts:14` is good.
-- Keep the report under 2000 tokens.
 - Do not dump entire files unless explicitly asked.
 - Distinguish facts from inferences.
+- Invest proportionally: stop exploring once you have enough to answer.
+
+**Execution Discipline:**
+- Read full files only when they are a few hundred lines; use `mode:overview` for files larger than 300 lines.
+- If a tool fails or returns nothing, report that explicitly rather than making up a result.
+- If the task is ambiguous, state your assumptions and ask for clarification.
 
 **Edge Cases:**
 - If nothing relevant is found, say so explicitly.
