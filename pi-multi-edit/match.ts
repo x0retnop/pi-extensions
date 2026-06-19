@@ -180,6 +180,55 @@ function describeIndent(line: string): string {
   return parts.join(" + ") || "none";
 }
 
+interface DiffPosition {
+  index: number;
+  actual: string;
+  expected: string;
+}
+
+function findFirstDiff(actual: string, expected: string): DiffPosition | undefined {
+  const len = Math.min(actual.length, expected.length);
+  for (let i = 0; i < len; i++) {
+    if (actual[i] !== expected[i]) {
+      return { index: i, actual: actual[i], expected: expected[i] };
+    }
+  }
+  if (actual.length !== expected.length) {
+    const idx = len;
+    return actual.length > expected.length
+      ? { index: idx, actual: actual[idx] ?? "", expected: "<end>" }
+      : { index: idx, actual: "<end>", expected: expected[idx] ?? "" };
+  }
+  return undefined;
+}
+
+function wordAt(text: string, index: number): { word: string; start: number; end: number } {
+  let start = index;
+  while (start > 0 && /\S/.test(text[start - 1] ?? "")) start--;
+  let end = index;
+  while (end < text.length && /\S/.test(text[end] ?? "")) end++;
+  return { word: text.slice(start, end), start, end };
+}
+
+function describeFirstWordDiff(actual: string, expected: string): string | undefined {
+  const diff = findFirstDiff(actual, expected);
+  if (!diff) return undefined;
+
+  const expectedWord = wordAt(expected, diff.index);
+  const actualWord = wordAt(actual, diff.index);
+  const contextRadius = 40;
+  const ctxStart = Math.max(0, diff.index - contextRadius);
+  const ctxEnd = Math.min(actual.length, diff.index + contextRadius);
+  const actualSnippet = actual.slice(ctxStart, ctxEnd);
+  const expectedSnippet = expected.slice(ctxStart, ctxEnd);
+
+  let msg = `first difference at character ${diff.index}: expected "${expectedWord.word}", got "${actualWord.word}"`;
+  if (actualSnippet.length > 80 || expectedSnippet.length > 80) {
+    msg += ` (around: file "${actualSnippet}", oldText "${expectedSnippet}")`;
+  }
+  return msg;
+}
+
 function diagnoseDetailedMismatch(
   fileContent: string,
   oldText: string,
@@ -260,6 +309,9 @@ export function buildMismatchHint(
   } else {
     parts.push(`closest: line ${best.lineNum}: \`${best.line}\``);
   }
+
+  const firstDiff = describeFirstWordDiff(best.line, oldText.split("\n")[0] ?? "");
+  if (firstDiff) parts.push(firstDiff);
 
   if (anchor === bestTrimmed) {
     const detailed = diagnoseDetailedMismatch(fileContent, oldText, best.line);

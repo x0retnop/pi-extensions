@@ -68,8 +68,9 @@ const multiItemSchema = Type.Object(
 );
 
 /**
- * Permissive input schema: provider JSON-schema validation must accept every shape
- * models actually send. prepareArguments normalizes to edits[] before execute().
+ * Input schema. `path` is optional at validation time because models sometimes
+ * place it inside `edits[]` or use aliases; `prepareArguments` normalizes to
+ * a valid shape before `execute()` is called.
  */
 export const editParameters = Type.Object(
   {
@@ -90,6 +91,12 @@ export const editParameters = Type.Object(
     ),
     replaceAll: Type.Optional(
       Type.Boolean({ description: "Single-edit shorthand for replaceAll" }),
+    ),
+    partialApply: Type.Optional(
+      Type.Boolean({
+        description:
+          "When true, apply edits that match and report failures separately instead of aborting the whole batch.",
+      }),
     ),
     edits: Type.Optional(
       Type.Array(editItemSchema, {
@@ -127,7 +134,24 @@ function asEditItem(path: string, e: RawEdit): EditItem | undefined {
 }
 
 function resolveTopPath(args: Record<string, unknown>): string | undefined {
-  return resolvePathFromRecord(args);
+  const top = resolvePathFromRecord(args);
+  if (top) return top;
+
+  // Some callers put path inside every edits[] item; if all items share one
+  // path, treat it as the top-level path.
+  const editsArr = Array.isArray(args.edits) ? args.edits : undefined;
+  if (editsArr && editsArr.length > 0) {
+    const paths = editsArr
+      .map((e) =>
+        e && typeof e === "object"
+          ? resolvePathFromRecord(e as Record<string, unknown>)
+          : undefined,
+      )
+      .filter((p): p is string => !!p);
+    const unique = [...new Set(paths)];
+    if (unique.length === 1) return unique[0];
+  }
+  return undefined;
 }
 
 function normalizeEditPaths(edits: RawEdit[]): RawEdit[] {
@@ -258,7 +282,7 @@ export function prepareArguments(input: unknown): EditToolInput {
   return args as EditToolInput;
 }
 
-export function parseEdits(params: Record<string, unknown>): EditItem[] {
+export function parseEdits(params: Record<string, unknown>): { edits: EditItem[]; partialApply: boolean } {
   const normalized = prepareArguments(params);
   const topPath = resolveTopPath(normalized as Record<string, unknown>);
   const editsArr = Array.isArray(normalized.edits) ? normalized.edits : null;
@@ -286,5 +310,5 @@ export function parseEdits(params: Record<string, unknown>): EditItem[] {
     items.push(item);
   }
 
-  return items;
+  return { edits: items, partialApply: normalized.partialApply === true };
 }

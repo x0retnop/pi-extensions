@@ -17,6 +17,7 @@ export interface EditResult {
   stats?: ChangeStats;
   firstChangedLine?: number;
   skipped?: boolean;
+  index?: number;
 }
 
 export interface Workspace {
