@@ -11,10 +11,16 @@ const SETTINGS_KEY = "subAgents";
 const HISTORY_DIR = path.join(os.homedir(), ".pi", "agent", "sub-agents-history");
 const EXTENSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "extensions");
 
+export interface AgentExtensionSettings {
+  policy?: "inherit" | "none" | "custom";
+  extensions?: string[];
+}
+
 export interface SubAgentsSettings {
   defaultCwd?: string;
   defaultExtensionsPolicy?: "inherit" | "none" | "custom";
   defaultCustomExtensions?: string[];
+  agentExtensions?: Record<string, AgentExtensionSettings>;
   historyRetentionDays?: number;
   lastAgent?: string;
   lastMode?: SubagentMode;
@@ -147,6 +153,22 @@ function listInstalledExtensions(): string[] {
   }
 }
 
+function getAgentExtensionDefaults(
+  settings: SubAgentsSettings,
+  agentName: string,
+): { policy: "inherit" | "none" | "custom"; extensions: string[] } {
+  const perAgent = settings.agentExtensions?.[agentName];
+  const policy = perAgent?.policy ?? settings.defaultExtensionsPolicy ?? "inherit";
+  const extensions = perAgent?.extensions ?? settings.defaultCustomExtensions ?? [];
+  return { policy, extensions };
+}
+
+function formatPolicyLabel(policy: string, extensions: string[]): string {
+  if (policy === "custom" && extensions.length > 0) return `custom (${extensions.join(", ")})`;
+  if (policy === "custom") return "custom (none selected)";
+  return policy;
+}
+
 async function editString(ctx: ExtensionCommandContext, title: string, current: string): Promise<string | undefined> {
   const result = await ctx.ui.editor(title, current);
   if (result === undefined) return undefined;
@@ -169,7 +191,7 @@ async function pickMany(
       const mark = selected.has(opt) ? "[x]" : "[ ]";
       return `${mark} ${opt}`;
     });
-    const choice = await ctx.ui.select(`${title} (pick, then choose Done)`, [...items, "Done"]);
+    const choice = await ctx.ui.select(`${title} (toggle, then Done)`, [...items, "Done"]);
     if (choice === undefined) return undefined;
     if (choice === "Done") return Array.from(selected);
     const opt = choice.replace(/^\[[x ]\] /, "");
@@ -217,6 +239,85 @@ interface Step {
   task: string;
 }
 
+async function collectSteps(
+  ctx: ExtensionCommandContext,
+  mode: SubagentMode,
+  agents: AgentConfig[],
+  agentNames: string[],
+): Promise<Step[] | undefined> {
+  const steps: Step[] = [];
+  if (mode === "single") {
+    const task = await editString(ctx, "Task (one or more lines)", "");
+    if (task === undefined) return undefined;
+    return [{ agent: agents[0], task }];
+  }
+
+  while (true) {
+    const title = mode === "parallel" ? "Parallel tasks" : "Chain steps";
+    const choice = await pickOne(ctx, `${title} (${steps.length} added)`, ["Add step", "Done", "Cancel"]);
+    if (!choice || choice === "Cancel") return undefined;
+    if (choice === "Done") {
+      if (steps.length === 0) {
+        ctx.ui.notify("Add at least one step.", "error");
+        continue;
+      }
+      return steps;
+    }
+
+    const stepAgentName = await pickOne(ctx, "Agent for this step", agentNames);
+    if (!stepAgentName) continue;
+    const stepAgent = agents.find((a) => a.name === stepAgentName)!;
+    const task = await editString(ctx, `Task for ${stepAgentName}`, "");
+    if (task === undefined) continue;
+    steps.push({ agent: stepAgent, task });
+  }
+}
+
+async function configureRunOverrides(
+  ctx: ExtensionCommandContext,
+  settings: SubAgentsSettings,
+  agents: AgentConfig[],
+  initialPolicy: "inherit" | "none" | "custom",
+  initialExtensions: string[],
+  initialCwd: string,
+): Promise<{ policy: "inherit" | "none" | "custom"; extensions: string[]; cwd: string } | undefined> {
+  let policy = initialPolicy;
+  let extensions = [...initialExtensions];
+  let cwd = initialCwd;
+
+  while (true) {
+    const options = [
+      `Extensions: ${formatPolicyLabel(policy, extensions)}`,
+      `Working directory: ${cwd || "(current project)"}`,
+      "Save and run",
+      "Cancel",
+    ];
+    const choice = await pickOne(ctx, "Override run settings", options);
+    if (!choice || choice === "Cancel") return undefined;
+    if (choice === "Save and run") return { policy, extensions, cwd };
+
+    if (choice.startsWith("Extensions:")) {
+      const policies = ["inherit", "none", "custom"];
+      const policyLabels = ["inherit (all active extensions)", "none (isolated)", "custom (select extensions)"];
+      const selected = await pickOne(ctx, "Extensions policy", policyLabels);
+      if (!selected) continue;
+      policy = policies[policyLabels.indexOf(selected)] as "inherit" | "none" | "custom";
+      if (policy === "custom") {
+        const installed = listInstalledExtensions();
+        const picked = await pickMany(ctx, "Select extensions", installed, extensions);
+        if (picked === undefined) continue;
+        extensions = picked;
+      } else {
+        extensions = [];
+      }
+    } else if (choice.startsWith("Working directory:")) {
+      const value = await editString(ctx, "Working directory (empty = current project)", cwd);
+      if (value === undefined) continue;
+      cwd = value.trim();
+    }
+  }
+}
+
 async function executeSteps(
   ctx: ExtensionCommandContext,
   steps: Step[],
@@ -239,10 +340,7 @@ async function executeSteps(
       undefined,
       ctx.signal,
       undefined,
-      (results) => ({
-        mode: "single",
-        results,
-      }),
+      (results) => ({ mode: "single", results }),
     );
     results = [result];
   } else if (mode === "parallel") {
@@ -260,10 +358,7 @@ async function executeSteps(
           index + 1,
           ctx.signal,
           undefined,
-          (results) => ({
-            mode: "parallel",
-            results,
-          }),
+          (results) => ({ mode: "parallel", results }),
         );
       },
     );
@@ -283,10 +378,7 @@ async function executeSteps(
         i + 1,
         ctx.signal,
         undefined,
-        (results) => ({
-          mode: "chain",
-          results,
-        }),
+        (results) => ({ mode: "chain", results }),
       );
       results.push(result);
       previousOutput = getResultOutput(result);
@@ -310,9 +402,7 @@ async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> 
   const agents = await discoverAgents(ctx.cwd);
   if (agents.length === 0) {
     const builtin = await loadBuiltinAgents();
-    if (builtin.length > 0) {
-      agents.push(...builtin);
-    }
+    if (builtin.length > 0) agents.push(...builtin);
   }
   if (agents.length === 0) {
     ctx.ui.notify("No agents found.", "error");
@@ -329,67 +419,29 @@ async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> 
   const mode = (await pickOne(ctx, "Select mode", modes)) as SubagentMode | undefined;
   if (!mode) return;
 
-  const steps: Step[] = [];
-  if (mode === "single") {
-    const task = await editString(ctx, "Task (one or more lines)", "");
-    if (task === undefined) return;
-    steps.push({ agent, task });
-  } else {
-    while (true) {
-      const menuTitle = mode === "parallel" ? "Parallel tasks" : "Chain steps";
-      const choice = await pickOne(ctx, menuTitle, ["Add step", "Done", "Cancel"]);
-      if (!choice || choice === "Cancel") return;
-      if (choice === "Done") {
-        if (steps.length === 0) {
-          ctx.ui.notify("Add at least one step before running.", "error");
-          continue;
-        }
-        break;
-      }
+  const steps = await collectSteps(ctx, mode, agents, agentNames);
+  if (!steps) return;
 
-      const stepAgentName = await pickOne(ctx, "Select agent for this step", agentNames);
-      if (!stepAgentName) continue;
-      const stepAgent = agents.find((a) => a.name === stepAgentName)!;
-      const task = await editString(ctx, `Task for ${stepAgentName} (one or more lines)`, "");
-      if (task === undefined) continue;
-      steps.push({ agent: stepAgent, task });
-    }
-  }
-
-  const policies = ["inherit", "none", "custom"];
-  const policyLabels = ["inherit (all active extensions)", "none (isolated)", "custom (select extensions)"];
-  const defaultPolicy = settings.defaultExtensionsPolicy ?? "inherit";
-  const selectedPolicyLabel = await pickOne(ctx, "Extensions policy", policyLabels);
-  if (!selectedPolicyLabel) return;
-  const extensionsPolicy = policies[policyLabels.indexOf(selectedPolicyLabel)];
-
-  let customExtensions: string[] = [];
-  if (extensionsPolicy === "custom") {
-    const installed = listInstalledExtensions();
-    const initial = settings.defaultCustomExtensions?.filter((e) => installed.includes(e)) ?? [];
-    const picked = await pickMany(ctx, "Select extensions to load", installed, initial);
-    if (picked === undefined) return;
-    customExtensions = picked;
-  }
-
+  const defaults = getAgentExtensionDefaults(settings, selectedAgentName);
   const defaultCwd = settings.defaultCwd ?? ctx.cwd;
-  const cwd = await editString(ctx, `Working directory (empty = current: ${ctx.cwd})`, defaultCwd);
-  if (cwd === undefined) return;
 
-  const effectiveCwd = cwd.trim() || ctx.cwd;
+  const overrides = await configureRunOverrides(ctx, settings, agents, defaults.policy, defaults.extensions, defaultCwd);
+  if (!overrides) return;
+
+  const effectiveCwd = overrides.cwd || ctx.cwd;
 
   const cliPreview =
     steps.length === 1
-      ? formatCliPreview(steps[0].agent, mode, steps[0].task, effectiveCwd, extensionsPolicy, customExtensions)
+      ? formatCliPreview(steps[0].agent, mode, steps[0].task, effectiveCwd, overrides.policy, overrides.extensions)
       : steps
           .map((step, i) =>
-            [`# Step ${i + 1}: ${step.agent.name}`, formatCliPreview(step.agent, mode, step.task, effectiveCwd, extensionsPolicy, customExtensions)].join(
+            [`# Step ${i + 1}: ${step.agent.name}`, formatCliPreview(step.agent, mode, step.task, effectiveCwd, overrides.policy, overrides.extensions)].join(
               "\n",
             ),
           )
           .join("\n\n");
 
-  const action = await pickOne(ctx, "Preview / Run", ["Copy CLI", "Run", "Cancel"]);
+  const action = await pickOne(ctx, "Ready", ["Run", "Copy CLI", "Cancel"]);
   if (action === "Copy CLI") {
     await copyToClipboard(cliPreview);
     ctx.ui.notify("CLI copied to clipboard", "info");
@@ -397,15 +449,19 @@ async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> 
   }
   if (action !== "Run") return;
 
-  await logger.info("TUI run agent", { agent: steps.map((s) => s.agent.name).join(", "), mode, cwd: effectiveCwd, extensionsPolicy }, ctx.cwd);
+  await logger.info(
+    "TUI run agent",
+    { agent: steps.map((s) => s.agent.name).join(", "), mode, cwd: effectiveCwd, extensionsPolicy: overrides.policy },
+    ctx.cwd,
+  );
 
   const { results, finalOutput, failedResults } = await executeSteps(
     ctx,
     steps,
     mode,
     effectiveCwd,
-    extensionsPolicy,
-    customExtensions,
+    overrides.policy,
+    overrides.extensions,
   );
 
   const historyEntry: HistoryEntry = {
@@ -414,8 +470,8 @@ async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> 
     mode,
     task: steps.map((s) => s.task).join("\n---\n"),
     cwd: effectiveCwd,
-    extensionsPolicy,
-    customExtensions: extensionsPolicy === "custom" ? customExtensions : undefined,
+    extensionsPolicy: overrides.policy,
+    customExtensions: overrides.policy === "custom" ? overrides.extensions : undefined,
     cliCommand: cliPreview,
     steps: steps.map((s) => ({ agent: s.agent.name, task: s.task })),
     result: {
@@ -434,7 +490,7 @@ async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> 
   if (failedResults.length > 0) {
     ctx.ui.notify(`${failedResults.length} of ${results.length} step(s) failed.`, "error");
   } else {
-    ctx.ui.notify(`${mode === "single" ? "Agent" : mode === "parallel" ? "All parallel agents" : "Chain"} completed`, "info");
+    ctx.ui.notify(`${mode === "single" ? "Agent" : mode === "parallel" ? "Parallel run" : "Chain"} completed`, "info");
   }
 
   const view = await ctx.ui.confirm("View result?", finalOutput.slice(0, 500));
@@ -547,7 +603,7 @@ async function showRecentRuns(ctx: ExtensionCommandContext): Promise<void> {
     if (failedResults.length > 0) {
       ctx.ui.notify(`${failedResults.length} of ${results.length} step(s) failed.`, "error");
     } else {
-      ctx.ui.notify(`${entry.mode === "single" ? "Agent" : entry.mode === "parallel" ? "All parallel agents" : "Chain"} completed`, "info");
+      ctx.ui.notify(`${entry.mode === "single" ? "Agent" : entry.mode === "parallel" ? "Parallel run" : "Chain"} completed`, "info");
     }
   } else if (action === "Delete") {
     deleteHistoryFile(fileName);
@@ -555,39 +611,94 @@ async function showRecentRuns(ctx: ExtensionCommandContext): Promise<void> {
   }
 }
 
-async function showSettings(ctx: ExtensionCommandContext): Promise<void> {
-  const settings = getSettings();
-
-  const cwd = await editString(
-    ctx,
-    "Default working directory (empty = use current project cwd)",
-    settings.defaultCwd ?? "",
-  );
-  if (cwd === undefined) return;
+async function editAgentExtensions(
+  ctx: ExtensionCommandContext,
+  settings: SubAgentsSettings,
+  agentName: string,
+): Promise<void> {
+  const perAgent = settings.agentExtensions ?? {};
+  const current = perAgent[agentName] ?? {};
+  const installed = listInstalledExtensions();
 
   const policies = ["inherit", "none", "custom"];
   const policyLabels = ["inherit (all active extensions)", "none (isolated)", "custom (select extensions)"];
-  const selectedPolicyLabel = await pickOne(ctx, "Default extensions policy", policyLabels);
-  if (!selectedPolicyLabel) return;
-  const extensionsPolicy = policies[policyLabels.indexOf(selectedPolicyLabel)];
+  const selected = await pickOne(ctx, `${agentName} extensions policy`, policyLabels);
+  if (!selected) return;
 
-  let customExtensions: string[] = settings.defaultCustomExtensions ?? [];
-  if (extensionsPolicy === "custom") {
-    const installed = listInstalledExtensions();
-    const picked = await pickMany(ctx, "Default custom extensions", installed, customExtensions);
+  const policy = policies[policyLabels.indexOf(selected)] as "inherit" | "none" | "custom";
+  let extensions: string[] = current.extensions ?? [];
+  if (policy === "custom") {
+    const picked = await pickMany(ctx, `${agentName} extensions`, installed, extensions);
     if (picked === undefined) return;
-    customExtensions = picked;
+    extensions = picked;
   }
 
-  const retention = await editString(ctx, "History retention days (0 = keep forever)", String(settings.historyRetentionDays ?? 30));
-  if (retention === undefined) return;
+  settings.agentExtensions = { ...perAgent, [agentName]: { policy, extensions } };
+}
 
-  settings.defaultCwd = cwd.trim() || undefined;
-  settings.defaultExtensionsPolicy = extensionsPolicy as SubAgentsSettings["defaultExtensionsPolicy"];
-  settings.defaultCustomExtensions = extensionsPolicy === "custom" ? customExtensions : undefined;
-  settings.historyRetentionDays = Math.max(0, Number(retention) || 0);
-  await saveSettings(settings);
-  ctx.ui.notify("Settings saved", "info");
+async function showSettings(ctx: ExtensionCommandContext): Promise<void> {
+  const settings = getSettings();
+  const agents = await discoverAgents(ctx.cwd);
+  if (agents.length === 0) {
+    const builtin = await loadBuiltinAgents();
+    if (builtin.length > 0) agents.push(...builtin);
+  }
+  const agentNames = agents.map((a) => a.name);
+
+  while (true) {
+    const globalPolicy = formatPolicyLabel(settings.defaultExtensionsPolicy ?? "inherit", settings.defaultCustomExtensions ?? []);
+
+    const perAgentLabels = agentNames.map((name) => {
+      const { policy, extensions } = getAgentExtensionDefaults(settings, name);
+      return `${name} extensions: ${formatPolicyLabel(policy, extensions)}`;
+    });
+
+    const options = [
+      `Default cwd: ${settings.defaultCwd || "(current project)"}`,
+      `Global extensions: ${globalPolicy}`,
+      ...perAgentLabels,
+      `History retention: ${settings.historyRetentionDays ?? 30} days`,
+      "Save and exit",
+      "Discard",
+    ];
+
+    const choice = await pickOne(ctx, "Settings", options);
+    if (!choice || choice === "Discard") return;
+    if (choice === "Save and exit") {
+      await saveSettings(settings);
+      ctx.ui.notify("Settings saved", "info");
+      return;
+    }
+
+    if (choice.startsWith("Default cwd:")) {
+      const value = await editString(ctx, "Default cwd (empty = current project)", settings.defaultCwd ?? "");
+      if (value === undefined) continue;
+      settings.defaultCwd = value.trim() || undefined;
+    } else if (choice.startsWith("Global extensions:")) {
+      const policies = ["inherit", "none", "custom"];
+      const policyLabels = ["inherit (all active extensions)", "none (isolated)", "custom (select extensions)"];
+      const selected = await pickOne(ctx, "Global extensions policy", policyLabels);
+      if (!selected) continue;
+      settings.defaultExtensionsPolicy = policies[policyLabels.indexOf(selected)] as SubAgentsSettings["defaultExtensionsPolicy"];
+      if (settings.defaultExtensionsPolicy === "custom") {
+        const installed = listInstalledExtensions();
+        const picked = await pickMany(ctx, "Global custom extensions", installed, settings.defaultCustomExtensions ?? []);
+        if (picked === undefined) continue;
+        settings.defaultCustomExtensions = picked;
+      } else {
+        settings.defaultCustomExtensions = undefined;
+      }
+    } else if (choice.startsWith("History retention:")) {
+      const value = await editString(ctx, "History retention days (0 = keep forever)", String(settings.historyRetentionDays ?? 30));
+      if (value === undefined) continue;
+      settings.historyRetentionDays = Math.max(0, Number(value) || 0);
+    } else {
+      const agentName = agentNames.find((name) => choice.startsWith(`${name} extensions:`));
+      if (agentName) {
+        await editAgentExtensions(ctx, settings, agentName);
+      }
+    }
+  }
 }
 
 export async function runSubAgentsTUI(ctx: ExtensionCommandContext): Promise<void> {
@@ -611,9 +722,9 @@ export async function runSubAgentsTUI(ctx: ExtensionCommandContext): Promise<voi
         const help = [
           "Sub-agents TUI help:",
           "",
-          "Run agent — pick an agent, mode, task, extensions and run or copy CLI.",
+          "Run agent — pick an agent, mode, task, and run with per-agent defaults.",
           "Recent runs — view, rerun or delete previous subagent invocations.",
-          "Settings — default cwd, extensions policy and history retention.",
+          "Settings — default cwd, global extensions, and per-agent extension policies.",
           "",
           "Settings are saved in ~/.pi/agent/settings.json under the \"subAgents\" key.",
           "History is stored as one JSON file per run in ~/.pi/agent/sub-agents-history/.",

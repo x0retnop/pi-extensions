@@ -265,7 +265,6 @@ export default function (pi: ExtensionAPI) {
       "The {previous} placeholder is replaced with the previous chain step's final output. In the next step's task, explicitly tell the agent to treat {previous} as authoritative context and not to re-read sources already covered by it.",
       "Every subagent starts with zero context. Include file paths, decisions, and expected output format in the task.",
       "Keep the main agent in control: delegate work, but synthesize results and verify key decisions yourself.",
-      "If you need a handoff file, use the /handoff slash command instead of the subagent tool.",
     ],
     parameters: SubagentParams,
 

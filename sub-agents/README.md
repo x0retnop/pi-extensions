@@ -31,13 +31,29 @@ Frontmatter fields:
 
 ## Interactive TUI
 
-Run `/sub-agents` to open a TUI for manual subagent invocation:
+Run `/sub-agents` to open a flat, two-level TUI for manual subagent invocation:
 
-- **Run agent** — pick an agent, mode, task, extensions policy and either run or copy the generated CLI.
-- **Recent runs** — view, rerun or delete previous invocations stored in `~/.pi/agent/sub-agents-history/`.
-- **Settings** — default cwd, default extensions policy and history retention days.
+- **Run agent** — pick agent, mode (`single`/`parallel`/`chain`), and task(s). The run uses per-agent extension defaults from settings, with an optional override screen for cwd and extensions before launching.
+- **Recent runs** — view, rerun, or delete previous invocations stored in `~/.pi/agent/sub-agents-history/`.
+- **Settings** —
+  - Default cwd
+  - Global extensions policy
+  - Per-agent extensions policy (e.g. isolate `scout-gemma`/`handoff-gemma`, enable helpers for `flash-worker`)
+  - History retention days
 
-Settings are saved in `~/.pi/agent/settings.json` under the `"subAgents"` key.
+Settings are saved in `~/.pi/agent/settings.json` under the `"subAgents"` key. Per-agent extension settings are stored under `subAgents.agentExtensions.<agentName>`.
+
+## Extension isolation per agent
+
+In addition to the frontmatter fields above, the TUI and settings file support per-agent extension policies:
+
+| Policy | Effect |
+|---|---|
+| `inherit` | Child loads all active parent extensions. |
+| `none` | Child runs isolated (only built-in tools). |
+| `custom` | Child loads only the selected extensions from `~/.pi/agent/extensions/`. |
+
+This lets `scout-gemma` stay read-only, `handoff-gemma` stay isolated, and `flash-worker` load helpers like `pi-multi-edit` only when needed.
 
 ## Debug logging
 
