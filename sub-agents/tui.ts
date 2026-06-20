@@ -1,3 +1,4 @@
+import * as child_process from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -397,6 +398,124 @@ async function executeSteps(
   return { results, finalOutput, summary, failedResults };
 }
 
+function runGitCommand(cwd: string, args: string[]): { stdout: string; stderr: string; exitCode: number } {
+  try {
+    const result = child_process.spawnSync("git", args, {
+      cwd,
+      encoding: "utf-8",
+      shell: false,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return {
+      stdout: result.stdout || "",
+      stderr: result.stderr || "",
+      exitCode: result.status ?? 1,
+    };
+  } catch (err) {
+    return {
+      stdout: "",
+      stderr: err instanceof Error ? err.message : String(err),
+      exitCode: 1,
+    };
+  }
+}
+
+function isGitRepo(cwd: string): boolean {
+  return runGitCommand(cwd, ["rev-parse", "--is-inside-work-tree"]).exitCode === 0;
+}
+
+function getGitDiff(cwd: string, source: string): string {
+  switch (source) {
+    case "last-commit":
+      return runGitCommand(cwd, ["diff", "HEAD~1..HEAD"]).stdout;
+    case "staged":
+      return runGitCommand(cwd, ["diff", "--cached"]).stdout;
+    default:
+      return "";
+  }
+}
+
+async function pickFile(ctx: ExtensionCommandContext, cwd: string, title: string): Promise<string | undefined> {
+  const result = await ctx.ui.input(title, "path relative to project root");
+  if (result === undefined) return undefined;
+  const fullPath = path.join(cwd, result);
+  if (!fs.existsSync(fullPath)) {
+    ctx.ui.notify(`File not found: ${result}`, "error");
+    return undefined;
+  }
+  return fullPath;
+}
+
+async function runCriticInteractive(ctx: ExtensionCommandContext): Promise<void> {
+  const agents = await discoverAgents(ctx.cwd);
+  if (agents.length === 0) {
+    const builtin = await loadBuiltinAgents();
+    if (builtin.length > 0) agents.push(...builtin);
+  }
+  const agent = agents.find((a) => a.name === "critic");
+  if (!agent) {
+    ctx.ui.notify("critic agent not found.", "error");
+    return;
+  }
+
+  const hasGit = isGitRepo(ctx.cwd);
+  const sourceOptions = hasGit
+    ? ["Last commit", "Staged", "Current file", "Custom text/diff"]
+    : ["Current file", "Custom text/diff"];
+
+  const source = await pickOne(ctx, "Review source", sourceOptions);
+  if (!source) return;
+
+  let content = "";
+  let sourceLabel = source;
+
+  if (source === "Last commit") {
+    content = getGitDiff(ctx.cwd, "last-commit");
+    sourceLabel = "last commit";
+  } else if (source === "Staged") {
+    content = getGitDiff(ctx.cwd, "staged");
+    sourceLabel = "staged changes";
+  } else if (source === "Current file") {
+    const filePath = await pickFile(ctx, ctx.cwd, "File to review");
+    if (!filePath) return;
+    try {
+      content = fs.readFileSync(filePath, "utf-8");
+      sourceLabel = path.relative(ctx.cwd, filePath);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.ui.notify(`Failed to read file: ${message}`, "error");
+      return;
+    }
+  } else if (source === "Custom text/diff") {
+    const custom = await editString(ctx, "Paste diff or text to review", "");
+    if (custom === undefined || custom.trim() === "") return;
+    content = custom;
+    sourceLabel = "custom input";
+  }
+
+  if (content.trim() === "") {
+    ctx.ui.notify("Nothing to review.", "error");
+    return;
+  }
+
+  const focus = await editString(ctx, "Optional review focus (or leave empty)", "");
+  if (focus === undefined) return;
+
+  const task = [
+    "Review the following code and return a prioritized list of issues.",
+    `Source: ${sourceLabel}`,
+    focus.trim() ? `Focus areas: ${focus.trim()}` : "",
+    "",
+    "```",
+    content,
+    "```",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  await runSingleTask(ctx, agent, task, "review");
+}
+
 async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> {
   const agents = await discoverAgents(ctx.cwd);
   if (agents.length === 0) {
@@ -785,7 +904,7 @@ export async function runSubAgentsTUI(ctx: ExtensionCommandContext): Promise<voi
   }
 
   while (true) {
-    const choice = await pickOne(ctx, "Sub-agents", ["Run task", "Run agent", "Recent runs", "Settings", "Help", "Exit"]);
+    const choice = await pickOne(ctx, "Sub-agents", ["Run task", "Run agent", "Review / Critic", "Recent runs", "Settings", "Help", "Exit"]);
     if (!choice || choice === "Exit") return;
 
     try {
@@ -793,6 +912,8 @@ export async function runSubAgentsTUI(ctx: ExtensionCommandContext): Promise<voi
         await runTaskInteractive(ctx);
       } else if (choice === "Run agent") {
         await runAgentInteractive(ctx);
+      } else if (choice === "Review / Critic") {
+        await runCriticInteractive(ctx);
       } else if (choice === "Recent runs") {
         await showRecentRuns(ctx);
       } else if (choice === "Settings") {
@@ -802,7 +923,8 @@ export async function runSubAgentsTUI(ctx: ExtensionCommandContext): Promise<voi
           "Sub-agents TUI help:",
           "",
           "Run task — pick a predefined task file, fill optional input, and run.",
-          "Run agent — pick an agent, mode, task, and run with per-agent defaults.",
+          "Run agent — pick an agent and write a task.",
+          "Review / Critic — review last commit, staged changes, a file, or custom diff/text.",
           "Recent runs — view, rerun or delete previous subagent invocations.",
           "Settings — default cwd, global extensions, and per-agent extension policies.",
           "",

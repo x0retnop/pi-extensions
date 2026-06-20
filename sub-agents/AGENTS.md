@@ -6,13 +6,14 @@ This document describes the specialized subagents shipped with `pi-sub-agents`, 
 
 `pi-sub-agents` adds two slash commands (`/handoff`, `/sub-agents`) to Pi CLI. The extension spawns isolated child `pi` processes for manual work. Each child loads a single agent definition (a markdown file with YAML frontmatter) and runs one task. There is no agent-facing tool; everything is controlled by the user through the TUI.
 
-There are three built-in agents:
+There are four built-in agents:
 
 | Agent | Purpose | Model | Tools | Extensions |
 |---|---|---|---|---|
 | `scout-gemma` | Fast read-only reconnaissance | local-llama/gemma-4-e4b-it-xl | read, grep, find, ls, bash | inherited from parent |
 | `flash-worker` | Coding/refactoring tasks | opencode-go/deepseek-v4-flash | read, grep, find, ls, bash, edit, write | inherited from parent |
 | `handoff-gemma` | Summarize current session into a handoff file | local-llama/gemma-4-e4b-it-xl | read | none (isolated) |
+| `critic` | Review diffs or files for bugs, security, and maintainability | inherited from parent | read, grep, find, ls, bash | none (isolated) |
 
 ## How agents are loaded
 
