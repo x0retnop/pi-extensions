@@ -4,7 +4,7 @@ This document describes the specialized subagents shipped with `pi-sub-agents`, 
 
 ## Overview
 
-`pi-sub-agents` adds a `subagent` tool and two slash commands (`/handoff`, `/sub-agents`) to Pi CLI. The extension spawns isolated child `pi` processes for delegated work. Each child loads a single agent definition (a markdown file with YAML frontmatter) and runs one task.
+`pi-sub-agents` adds two slash commands (`/handoff`, `/sub-agents`) to Pi CLI. The extension spawns isolated child `pi` processes for manual work. Each child loads a single agent definition (a markdown file with YAML frontmatter) and runs one task. There is no agent-facing tool; everything is controlled by the user through the TUI.
 
 There are three built-in agents:
 
@@ -23,39 +23,9 @@ Agents are discovered in this order:
 
 Each `.md` file contains YAML frontmatter followed by the system prompt body. See `README.md` for the full list of frontmatter fields.
 
-## How the `subagent` tool works
-
-The parent agent calls `subagent` with one of three modes:
-
-- **single**: `{ agent, task, cwd? }`
-- **parallel**: `{ tasks: [{ agent, task, cwd? }, ...] }`
-- **chain**: `{ chain: [{ agent, task, cwd? }, ...] }`
-
-In chain mode, the string `{previous}` in a task is replaced with the previous step's final text output.
-
-The child process is spawned with:
-
-```
-pi --mode json -p --no-session --exclude-tools subagent \
-  --model <agent.model> \
-  --tools <agent.tools> \
-  [--no-extensions | --extension <path> ...] \
-  --append-system-prompt <temp-prompt-file>
-```
-
-The task is written to stdin. The child streams JSON events back; `runner.ts` parses them into `SingleResult`.
-
 ## Agent system prompts
 
-System prompts live in two places:
-
-1. **Agent definition files** (`handoff-gemma.md`, `scout-gemma.md`, `flash-worker.md`) — the frontmatter plus the prompt body that is appended to the child's system prompt.
-2. **`prompts/` directory** — source-of-truth documents used during development:
-   - `handoff-gemma-prompt.md`
-   - `scout-gemma-prompt.md`
-   - `flash-worker-prompt.md`
-   - `tool-description.md` — the `description` and `promptGuidelines` for the parent-facing `subagent` tool.
-   - `workflow-recipes.md` — concrete delegation patterns.
+System prompts live in the agent definition files (`handoff-gemma.md`, `scout-gemma.md`, `flash-worker.md`) in the extension root. Each `.md` file contains YAML frontmatter followed by the system prompt body.
 
 The prompts are structured into sections: Role, Responsibilities, Process, Output Structure, Tool Usage Rules, Quality Standards, Edge Cases, and Hard Constraints.
 
@@ -92,4 +62,4 @@ The `/sub-agents` slash command opens an interactive TUI for manual agent invoca
 - `flash-worker`: best for small-to-medium edits, refactors, and adding safety fixes.
 - `handoff-gemma`: best invoked via `/handoff [short-title]`.
 
-When testing chain mode, explicitly instruct the downstream agent to treat `{previous}` as authoritative. This is now encoded in `scout-gemma.md` and in the `subagent` tool's `promptGuidelines`.
+When testing chain mode, explicitly instruct the downstream agent to treat `{previous}` as authoritative. This is now encoded in `scout-gemma.md`.

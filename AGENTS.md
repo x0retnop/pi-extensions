@@ -114,6 +114,23 @@ When the user asks about upgrading Pi, version compatibility, or whether to upda
 
 **Do NOT start with web search.** The local script is the single source of truth for what is actually installed and what patterns exist in this collection.
 
+## Analyzing Pi session logs
+
+For post-mortem analysis of tool failures and edit errors across Pi sessions, use [`scripts/pi_session_inspect.py`](scripts/pi_session_inspect.py). It scans `~/.pi/agent/sessions/*.jsonl` and can list calls, results, and error reports.
+
+Quick examples:
+
+```bash
+# Report edit errors in the last 30 sessions
+python scripts/pi_session_inspect.py --edit-errors --recent 30
+
+# Show all tool calls in a specific session
+python scripts/pi_session_inspect.py /path/to/session.jsonl --calls
+
+# Edit tool calls + error results
+python scripts/pi_session_inspect.py /path/to/session.jsonl --tool edit --calls --results --errors
+```
+
 ## When you are unsure — follow this order
 
 1. **Check agent docs first.** Look at the tables in this file and `docs/agent-nav.md` for the topic.  
@@ -135,6 +152,7 @@ When the user asks about upgrading Pi, version compatibility, or whether to upda
 | Copy-paste snippets | `docs/patterns.md` |
 | Current active extensions / settings | `~/.pi/agent/extensions/`, `~/.pi/agent/settings.json` |
 | Custom tool rendering (renderCall / renderResult pitfalls) | `docs/tool-rendering.md` |
+| Analyze Pi session logs / edit failures | `scripts/pi_session_inspect.py` |
 | Lost? Not sure which doc to open | `docs/agent-nav.md` |
 
 ## Style

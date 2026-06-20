@@ -177,6 +177,10 @@ def inspect_edit_errors(recent: int = 50, max_chars: int = 800):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except AttributeError:
+        pass
     parser = argparse.ArgumentParser(description="Inspect Pi agent session logs.")
     parser.add_argument("session", nargs="?", help="Path to session .jsonl file")
     parser.add_argument("--tool", help="Filter by tool name")

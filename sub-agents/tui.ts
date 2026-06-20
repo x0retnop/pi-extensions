@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { copyToClipboard } from "@earendil-works/pi-coding-agent";
-import { discoverAgents, loadBuiltinAgents, type AgentConfig } from "./agents.js";
+import { discoverAgents, loadBuiltinAgents, loadBuiltinTasks, type AgentConfig, type TaskConfig } from "./agents.js";
 import * as logger from "./logger.js";
 import { getResultOutput, isFailedResult, mapWithConcurrencyLimit, runSingleAgent, type SingleResult, type SubagentMode } from "./runner.js";
 
@@ -398,7 +398,6 @@ async function executeSteps(
 }
 
 async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> {
-  const settings = getSettings();
   const agents = await discoverAgents(ctx.cwd);
   if (agents.length === 0) {
     const builtin = await loadBuiltinAgents();
@@ -415,87 +414,165 @@ async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> 
 
   const agent = agents.find((a) => a.name === selectedAgentName)!;
 
-  const modes: SubagentMode[] = ["single", "parallel", "chain"];
-  const mode = (await pickOne(ctx, "Select mode", modes)) as SubagentMode | undefined;
-  if (!mode) return;
+  const task = await editString(ctx, `Task for ${selectedAgentName}`, "");
+  if (task === undefined || task.trim() === "") return;
 
-  const steps = await collectSteps(ctx, mode, agents, agentNames);
-  if (!steps) return;
+  await runSingleTask(ctx, agent, task);
+}
 
-  const defaults = getAgentExtensionDefaults(settings, selectedAgentName);
+async function runTaskInteractive(ctx: ExtensionCommandContext): Promise<void> {
+  const tasks = await loadBuiltinTasks();
+  if (tasks.length === 0) {
+    ctx.ui.notify("No task files found in extension tasks/ folder.", "error");
+    return;
+  }
+
+  const taskLabels = tasks.map((t) => `${t.name}: ${t.description}`);
+  const selectedLabel = await pickOne(ctx, "Select task", taskLabels);
+  if (!selectedLabel) return;
+
+  const taskConfig = tasks.find((t) => selectedLabel.startsWith(`${t.name}:`))!;
+
+  let prompt = taskConfig.prompt;
+  if (prompt.includes("{input}")) {
+    const input = await editString(ctx, `Input for "${taskConfig.name}"`, "");
+    if (input === undefined) return;
+    prompt = prompt.replace(/\{input\}/g, input);
+  }
+
+  const agents = await discoverAgents(ctx.cwd);
+  if (agents.length === 0) {
+    const builtin = await loadBuiltinAgents();
+    if (builtin.length > 0) agents.push(...builtin);
+  }
+  const agent = agents.find((a) => a.name === taskConfig.agent);
+  if (!agent) {
+    ctx.ui.notify(`Agent "${taskConfig.agent}" not found for task "${taskConfig.name}".`, "error");
+    return;
+  }
+
+  await runSingleTask(ctx, agent, prompt, taskConfig.name);
+}
+
+async function runSingleTask(
+  ctx: ExtensionCommandContext,
+  agent: AgentConfig,
+  task: string,
+  taskName?: string,
+): Promise<void> {
+  const settings = getSettings();
+  const defaults = getAgentExtensionDefaults(settings, agent.name);
   const defaultCwd = settings.defaultCwd ?? ctx.cwd;
 
-  const overrides = await configureRunOverrides(ctx, settings, agents, defaults.policy, defaults.extensions, defaultCwd);
+  const overrides = await configureRunOverrides(ctx, settings, [agent], defaults.policy, defaults.extensions, defaultCwd);
   if (!overrides) return;
 
   const effectiveCwd = overrides.cwd || ctx.cwd;
 
-  const cliPreview =
-    steps.length === 1
-      ? formatCliPreview(steps[0].agent, mode, steps[0].task, effectiveCwd, overrides.policy, overrides.extensions)
-      : steps
-          .map((step, i) =>
-            [`# Step ${i + 1}: ${step.agent.name}`, formatCliPreview(step.agent, mode, step.task, effectiveCwd, overrides.policy, overrides.extensions)].join(
-              "\n",
-            ),
-          )
-          .join("\n\n");
-
-  const action = await pickOne(ctx, "Ready", ["Run", "Copy CLI", "Cancel"]);
-  if (action === "Copy CLI") {
-    await copyToClipboard(cliPreview);
-    ctx.ui.notify("CLI copied to clipboard", "info");
-    return;
-  }
-  if (action !== "Run") return;
+  const cliPreview = formatCliPreview(agent, "single", task, effectiveCwd, overrides.policy, overrides.extensions);
 
   await logger.info(
-    "TUI run agent",
-    { agent: steps.map((s) => s.agent.name).join(", "), mode, cwd: effectiveCwd, extensionsPolicy: overrides.policy },
+    "TUI run task",
+    { agent: agent.name, task: taskName || "(custom)", cwd: effectiveCwd, extensionsPolicy: overrides.policy },
     ctx.cwd,
   );
 
-  const { results, finalOutput, failedResults } = await executeSteps(
-    ctx,
-    steps,
-    mode,
+  const runAgent = buildAgentForRun(agent, overrides.policy, overrides.extensions);
+  const result = await runSingleAgent(
     effectiveCwd,
-    overrides.policy,
-    overrides.extensions,
+    [runAgent],
+    agent.name,
+    task,
+    undefined,
+    undefined,
+    ctx.signal,
+    undefined,
+    (results) => ({ mode: "single", results }),
   );
+
+  const failed = isFailedResult(result);
+  const output = getResultOutput(result);
 
   const historyEntry: HistoryEntry = {
     timestamp: new Date().toISOString(),
-    agent: steps.map((s) => s.agent.name).join(", "),
-    mode,
-    task: steps.map((s) => s.task).join("\n---\n"),
+    agent: agent.name,
+    mode: "single",
+    task,
     cwd: effectiveCwd,
     extensionsPolicy: overrides.policy,
     customExtensions: overrides.policy === "custom" ? overrides.extensions : undefined,
     cliCommand: cliPreview,
-    steps: steps.map((s) => ({ agent: s.agent.name, task: s.task })),
+    steps: [{ agent: agent.name, task }],
     result: {
-      exitCode: failedResults.length > 0 ? 1 : 0,
-      outputPreview: finalOutput.slice(0, 2000),
-      stderrPreview: results.map((r) => r.stderr).join("\n").slice(0, 1000),
-      stopReason: results.map((r) => r.stopReason).filter(Boolean).join(", ") || undefined,
+      exitCode: failed ? 1 : 0,
+      outputPreview: output.slice(0, 2000),
+      stderrPreview: result.stderr.slice(0, 1000),
+      stopReason: result.stopReason,
     },
   };
   writeHistoryFile(historyEntry);
 
-  settings.lastAgent = steps[0].agent.name;
-  settings.lastMode = mode;
+  settings.lastAgent = agent.name;
+  settings.lastMode = "single";
   await saveSettings(settings);
 
-  if (failedResults.length > 0) {
-    ctx.ui.notify(`${failedResults.length} of ${results.length} step(s) failed.`, "error");
+  if (failed) {
+    ctx.ui.notify(`Agent failed: ${result.errorMessage || result.stopReason || "unknown error"}`, "error");
   } else {
-    ctx.ui.notify(`${mode === "single" ? "Agent" : mode === "parallel" ? "Parallel run" : "Chain"} completed`, "info");
+    ctx.ui.notify("Run completed", "info");
   }
 
-  const view = await ctx.ui.confirm("View result?", finalOutput.slice(0, 500));
-  if (view) {
-    await ctx.ui.editor("Result", finalOutput);
+  await showResultMenu(ctx, agent.name, taskName, output);
+}
+
+function formatCompactDate(d = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}-${pad(d.getMinutes())}`;
+}
+
+function sanitizeFilename(name: string): string {
+  const cleaned = name
+    .toLowerCase()
+    .replace(/[^\w\-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 30);
+  return cleaned ? `-${cleaned}` : "";
+}
+
+async function showResultMenu(
+  ctx: ExtensionCommandContext,
+  agentName: string,
+  taskName: string | undefined,
+  output: string,
+): Promise<void> {
+  while (true) {
+    const choice = await pickOne(ctx, "Result", ["View", "Copy to clipboard", "Save to file", "Send to chat", "Close"]);
+    if (!choice || choice === "Close") return;
+
+    if (choice === "View") {
+      await ctx.ui.editor("Result", output);
+    } else if (choice === "Copy to clipboard") {
+      await copyToClipboard(output);
+      ctx.ui.notify("Copied to clipboard", "info");
+    } else if (choice === "Save to file") {
+      const date = formatCompactDate();
+      const suffix = taskName ? sanitizeFilename(taskName) : sanitizeFilename(agentName);
+      const fileName = `report-${date}${suffix}.md`;
+      const filePath = path.join(ctx.cwd, fileName);
+      try {
+        fs.writeFileSync(filePath, output, "utf-8");
+        ctx.ui.notify(`Saved to ${filePath}`, "info");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(`Failed to save: ${message}`, "error");
+      }
+    } else if (choice === "Send to chat") {
+      const label = taskName ? `${agentName} (${taskName})` : agentName;
+      const message = `Result from ${label}:\n\n${output}`;
+      await copyToClipboard(message);
+      ctx.ui.notify("Message copied to clipboard — paste into chat.", "info");
+    }
   }
 }
 
@@ -708,11 +785,13 @@ export async function runSubAgentsTUI(ctx: ExtensionCommandContext): Promise<voi
   }
 
   while (true) {
-    const choice = await pickOne(ctx, "Sub-agents", ["Run agent", "Recent runs", "Settings", "Help", "Exit"]);
+    const choice = await pickOne(ctx, "Sub-agents", ["Run task", "Run agent", "Recent runs", "Settings", "Help", "Exit"]);
     if (!choice || choice === "Exit") return;
 
     try {
-      if (choice === "Run agent") {
+      if (choice === "Run task") {
+        await runTaskInteractive(ctx);
+      } else if (choice === "Run agent") {
         await runAgentInteractive(ctx);
       } else if (choice === "Recent runs") {
         await showRecentRuns(ctx);
@@ -722,6 +801,7 @@ export async function runSubAgentsTUI(ctx: ExtensionCommandContext): Promise<voi
         const help = [
           "Sub-agents TUI help:",
           "",
+          "Run task — pick a predefined task file, fill optional input, and run.",
           "Run agent — pick an agent, mode, task, and run with per-agent defaults.",
           "Recent runs — view, rerun or delete previous subagent invocations.",
           "Settings — default cwd, global extensions, and per-agent extension policies.",

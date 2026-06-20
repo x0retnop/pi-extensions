@@ -24,6 +24,7 @@
     "read-mode/**/*.ts",
     "role-sw/**/*.ts",
     "simple-gate/**/*.ts",
+    "sub-agents/**/*.ts",
     "tool-dev/**/*.ts",
     "tests/**/*.ts",
     "strip-cache-retention.ts"

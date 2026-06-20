@@ -16,6 +16,14 @@ export interface AgentConfig {
   filePath: string;
 }
 
+export interface TaskConfig {
+  name: string;
+  agent: string;
+  description: string;
+  prompt: string;
+  filePath: string;
+}
+
 interface Frontmatter {
   name?: string;
   description?: string;
@@ -30,6 +38,7 @@ interface Frontmatter {
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const BUILTIN_AGENTS_DIR = EXTENSION_DIR;
+const BUILTIN_TASKS_DIR = join(EXTENSION_DIR, "tasks");
 // Agents are loaded directly from cwd (*.md) or from the extension root as fallback.
 
 function parseFrontmatter(content: string): { frontmatter: Frontmatter; body: string } {
@@ -115,6 +124,45 @@ async function loadAgentsFromDir(dir: string, source: "project" | "builtin"): Pr
 
 export async function loadBuiltinAgents(): Promise<AgentConfig[]> {
   return loadAgentsFromDir(BUILTIN_AGENTS_DIR, "builtin");
+}
+
+export async function loadBuiltinTasks(): Promise<TaskConfig[]> {
+  return loadTasksFromDir(BUILTIN_TASKS_DIR);
+}
+
+async function loadTasksFromDir(dir: string): Promise<TaskConfig[]> {
+  const tasks: TaskConfig[] = [];
+  if (!(await isDirectory(dir))) return tasks;
+
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return tasks;
+  }
+
+  for (const name of entries.filter((f) => f.endsWith(".md"))) {
+    const filePath = join(dir, name);
+    let content: string;
+    try {
+      content = await readFile(filePath, "utf-8");
+    } catch {
+      continue;
+    }
+
+    const { frontmatter, body } = parseFrontmatter(content);
+    if (!frontmatter.name || !frontmatter.agent || !frontmatter.description) continue;
+
+    tasks.push({
+      name: frontmatter.name,
+      agent: frontmatter.agent,
+      description: frontmatter.description,
+      prompt: body.trim(),
+      filePath,
+    });
+  }
+
+  return tasks;
 }
 
 export async function discoverAgents(cwd: string): Promise<AgentConfig[]> {

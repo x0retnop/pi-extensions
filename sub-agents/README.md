@@ -4,11 +4,13 @@ Hybrid local/cloud subagent delegation for Pi CLI.
 
 ## What it does
 
-- `subagent` tool — delegate isolated tasks to specialized agents:
+- `/sub-agents` — interactive TUI for manually running specialized agents:
   - `scout-gemma` — read-only recon using local Gemma-4.
   - `flash-worker` — coding/refactoring using DeepSeek V4 Flash via OpenCode Go.
   - `handoff-gemma` — session summarizer for `/handoff`.
 - `/handoff [title]` — generate `handoff-YYYY-MM-DD-[title].md` in the current working directory.
+
+There is no agent-facing tool; the user controls every subagent run through the TUI.
 
 ## Install
 
@@ -22,7 +24,7 @@ Frontmatter fields:
 
 | Field | Description |
 |---|---|
-| `name` | Agent identifier used in tool calls. |
+| `name` | Agent identifier used in the TUI and history. |
 | `description` | Short purpose. |
 | `model` | Pi model selector, e.g. `local-llama/gemma-4-e4b-it-xl`. |
 | `tools` | Comma-separated allowlist of built-in tools. |
@@ -65,22 +67,10 @@ PI_SUB_AGENTS_LOG_DIR=/path/to/logs pi
 
 ## Usage examples
 
-Single:
+Open the TUI and run a scout:
 
 ```
-Use subagent to run scout-gemma: find all auth-related code.
-```
-
-Parallel:
-
-```
-Run two scouts in parallel: one for models, one for providers.
-```
-
-Chain:
-
-```
-Chain: first scout-gemma gathers auth code, then flash-worker refactors it based on {previous}.
+/sub-agents
 ```
 
 Handoff:
