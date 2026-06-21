@@ -51,7 +51,7 @@ async function getBackendStatus(signal?: AbortSignal): Promise<BackendStatus | n
       default_provider: data.default_provider == null ? null : String(data.default_provider),
       summarizer_mode: typeof data.summarizer_mode === "string" ? data.summarizer_mode : "none",
       max_results: typeof data.max_results === "number" ? data.max_results : 10,
-      fetch_max_chars: typeof data.fetch_max_chars === "number" ? data.fetch_max_chars : 16000,
+      fetch_max_chars: typeof data.fetch_max_chars === "number" ? data.fetch_max_chars : 32000,
       providers: data.providers && typeof data.providers === "object" && !Array.isArray(data.providers)
         ? Object.fromEntries(Object.entries(data.providers as Record<string, unknown>).map(([k, v]) => [k, Boolean(v)]))
         : {},
@@ -487,14 +487,16 @@ export default function (pi: ExtensionAPI) {
     name: "fetch_content",
     label: "Fetch Content",
     description:
-      "Fetch the readable markdown content of one or more known URLs. Best for reading docs, articles, or GitHub pages found by web_search or provided by the user.",
+      "Fetch the readable markdown content of one or more known URLs. Best for reading docs, articles, or GitHub pages found by web_search or provided by the user. " +
+      "Default max_chars is 32000; use save_full to persist truncated full text to %TEMP%.",
     promptSnippet:
       "Use when you already have a URL and need its full text. Prefer one URL per call for complete content.",
     promptGuidelines: [
       "Use when the user provides a URL, or when web_search found a URL that needs detailed reading.",
       "Prefer one URL per call for the full article. Multi-URL calls concatenate full pages.",
-      "Set 'max_chars' to cap output per page (default: 16000).",
+      "Do not set 'max_chars' below 1000; omit it to use the default (32000). Use higher values only when you need more content.",
       "GitHub /blob/ URLs are automatically fetched as raw files.",
+      "Use 'save_full' when you expect truncation and need the complete markdown written to %TEMP%.",
     ],
     parameters: Type.Object({
       url: Type.Optional(Type.String({
@@ -504,10 +506,14 @@ export default function (pi: ExtensionAPI) {
         description: "Multiple URLs to fetch in parallel.",
       })),
       max_chars: Type.Optional(Type.Number({
-        description: "Per-page character cap (default: 16000).",
+        minimum: 1000,
+        description: "Per-page character cap (default: 32000, minimum: 1000).",
       })),
       force_clone: Type.Optional(Type.Boolean({
         description: "Reserved for future use.",
+      })),
+      save_full: Type.Optional(Type.Boolean({
+        description: "Save full fetched markdown to %TEMP% if truncated.",
       })),
     }),
 
@@ -526,14 +532,26 @@ export default function (pi: ExtensionAPI) {
       });
 
       try {
+        const maxChars = Math.max(params.max_chars ?? 32000, 1000);
         const { content, details } = await callTool("fetch_content", {
           urls: urlList,
-          max_chars: params.max_chars ?? 16000,
+          max_chars: maxChars,
           force_clone: params.force_clone ?? false,
+          save_full: params.save_full ?? false,
         }, signal);
 
+        let finalContent = content;
+        if (details.save_full && Array.isArray(details.full_content_paths) && details.full_content_paths.length > 0) {
+          const paths = details.full_content_paths.filter((p): p is string => typeof p === "string" && p.length > 0);
+          if (paths.length > 0) {
+            const pathLines = paths.map((p) => `- ${p}`).join("\n");
+            const curlLines = paths.map((p) => `curl -s file://${p} | head -c ${maxChars}`).join("\n");
+            finalContent += `\n\n---\nFull content saved to:\n${pathLines}\n\n${curlLines}`;
+          }
+        }
+
         return {
-          content: [{ type: "text" as const, text: content }],
+          content: [{ type: "text" as const, text: finalContent }],
           details,
         };
       } catch (err) {
@@ -559,6 +577,8 @@ export default function (pi: ExtensionAPI) {
         error?: string;
         urls?: string[];
         max_chars?: number;
+        save_full?: boolean;
+        full_content_paths?: (string | null)[];
         results?: Array<{ url: string; title?: string; chars_returned?: number; truncated?: boolean }>;
       } | undefined;
       if (details?.error) {
@@ -566,16 +586,24 @@ export default function (pi: ExtensionAPI) {
       }
       const results = details?.results ?? [];
       const count = results.length || details?.urls?.length || 1;
-      const limit = details?.max_chars ?? 16000;
+      const limit = details?.max_chars ?? 32000;
       const truncatedCount = results.filter((r) => r.truncated).length;
       let line = theme.fg("success", `${count} URL(s) fetched`) + theme.fg("muted", ` • limit ${limit} chars`);
       if (truncatedCount > 0) {
         line += theme.fg("warning", ` • ${truncatedCount} truncated`);
       }
+      if (details?.save_full) {
+        line += theme.fg("accent", " • save_full");
+      }
       if (!expanded) return new Text(line, 0, 0);
       const text = result.content.find((c) => c.type === "text")?.text || "";
+      let extra = "";
+      const savedPaths = (details?.full_content_paths ?? []).filter((p): p is string => typeof p === "string" && p.length > 0);
+      if (savedPaths.length > 0) {
+        extra = "\n" + theme.fg("dim", savedPaths.map((p) => `full: ${p}`).join("\n"));
+      }
       const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
-      return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
+      return new Text(line + "\n" + theme.fg("dim", preview) + extra, 0, 0);
     },
   });
 
