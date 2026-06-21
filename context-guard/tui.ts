@@ -1,4 +1,4 @@
-import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { MANAGED_FEATURES, getFeatureById } from "./features.js";
 import type { GuardSettings } from "./types.js";
 import { buildInspectReport } from "./inspect.js";
@@ -17,6 +17,12 @@ export interface TUIDeps {
   settings: GuardSettings;
   saveSettings: (s: GuardSettings) => void;
   syncTools: () => void;
+}
+
+export interface TUIContext {
+  pi: ExtensionAPI;
+  ctx: ExtensionCommandContext;
+  deps: TUIDeps;
 }
 
 export function buildStatusText(settings: GuardSettings): string {
@@ -39,23 +45,22 @@ export function buildStatusText(settings: GuardSettings): string {
   lines.push(`  ${settings.autoSkills !== false ? "✓" : "✗"} Automatic skill injection`);
 
   lines.push("\nCommands:");
-  lines.push("  /ctx-guard          interactive TUI");
-  lines.push("  /ctx-guard <id>     toggle a feature");
-  lines.push("  /ctx-guard reset    disable all guards");
-  lines.push("  /ctx-inspect        full prompt breakdown");
-  lines.push("  /context            context overview");
-  lines.push("  /skills             skill status");
+  lines.push("  /context-guard      interactive TUI (inspect, overview, dump, rules, gates, skills)");
+  lines.push("  /context-guard <id>  toggle a feature");
+  lines.push("  /context-guard reset  disable all guards");
   lines.push("  /use-skill <name>   inject a skill manually");
 
   return lines.join("\n");
 }
 
-export async function runGuardTUI(ctx: ExtensionCommandContext, deps: TUIDeps) {
+export async function runGuardTUI(ctx: ExtensionCommandContext, pi: ExtensionAPI, deps: TUIDeps) {
   const mainOptions = [
     "🎛  Prompt rules",
     "🔧 Tool gates",
     "📦 Skills",
     "🔍 Inspect prompt breakdown",
+    "📊 Context overview",
+    "💾 Dump full context",
     "↺ Reset all guards",
     "✓ Done",
   ];
@@ -70,6 +75,18 @@ export async function runGuardTUI(ctx: ExtensionCommandContext, deps: TUIDeps) {
       const entries = (ctx as any).sessionManager?.getEntries?.() ?? [];
       const report = buildInspectReport(prompt, options, deps.settings, entries);
       await ctx.ui.editor("ctx-inspect", report);
+      continue;
+    }
+
+    if (choice === "📊 Context overview") {
+      const { runContextOverview } = await import("./overview.js");
+      await runContextOverview(ctx, pi);
+      continue;
+    }
+
+    if (choice === "💾 Dump full context") {
+      const { runContextDump } = await import("./dump.js");
+      await runContextDump(ctx, pi);
       continue;
     }
 

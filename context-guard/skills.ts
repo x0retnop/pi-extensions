@@ -146,16 +146,7 @@ export function notify(ctx: ExtensionContext, message: string, level: "info" | "
   }
 }
 
-export function registerSkillCommands(pi: ExtensionAPI): void {
-  pi.registerCommand("skills", {
-    description: "Show skill guard status and loaded skills",
-    handler: async (_args, ctx) => {
-      ensureSkillsDiscovered(ctx.cwd);
-      // autoSkills state is held in guard settings; we emit what we know from the current runtime state via notify.
-      notify(ctx, buildSkillStatus(true), "info");
-    },
-  });
-
+export function registerUseSkillCommand(pi: ExtensionAPI): void {
   pi.registerCommand("use-skill", {
     description: "Inject a skill into the next turn. Run without args for an interactive picker.",
     getArgumentCompletions: (prefix: string) => {
@@ -183,7 +174,7 @@ export function registerSkillCommands(pi: ExtensionAPI): void {
       const comment = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
 
       if (!skillMap.has(name)) {
-        notify(ctx, `Skill not found: "${name}". Run /skills to see loaded skills.`, "error");
+        notify(ctx, `Skill not found: "${name}".`, "error");
         return;
       }
 
@@ -198,4 +189,9 @@ export function registerSkillCommands(pi: ExtensionAPI): void {
       }
     },
   });
+}
+
+/** @deprecated Kept only for backwards compatibility; use the unified /context-guard TUI instead. */
+export function registerSkillCommands(pi: ExtensionAPI): void {
+  registerUseSkillCommand(pi);
 }

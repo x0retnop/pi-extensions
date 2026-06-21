@@ -1,6 +1,6 @@
 # context-guard
 
-Centralized control over Pi's context injections, skills, and tool gates.
+Centralized control over Pi's context injections, skills, tool gates, and full-context inspection.
 
 ## What it controls
 
@@ -19,13 +19,37 @@ Centralized control over Pi's context injections, skills, and tool gates.
 
 ## Commands
 
-- `/ctx-guard` — interactive TUI (prompt rules, tool gates, skills, inspect, reset)
-- `/ctx-guard <id>` — toggle a feature directly, e.g. `/ctx-guard sessionMemory`
-- `/ctx-guard reset` — disable all guards
-- `/ctx-inspect` — full system prompt breakdown with token estimates
-- `/context` — compact overview of loaded context, extensions, skills, and usage
-- `/skills` — list discovered skills and auto-skill status
+Only two slash commands are exposed:
+
+- `/context-guard` — unified interactive TUI with everything inside:
+  - Prompt rules
+  - Tool gates
+  - Skills
+  - Inspect prompt breakdown
+  - Context overview
+  - Dump full LLM context
+  - Reset all guards
+- `/context-guard <id>` — toggle a feature directly, e.g. `/context-guard sessionMemory`
+- `/context-guard reset` — disable all guards
 - `/use-skill [name] [comment]` — manually inject a skill into the next turn
+
+No other `/` aliases are registered, so the command list stays minimal.
+
+## Full context dump
+
+The extension captures real data as Pi builds each LLM request:
+
+- `before_agent_start` — final system prompt, options, user prompt, images
+- `context` — messages that will be sent to the LLM
+- `before_provider_request` — raw provider payload
+- `pi.getAllTools()` / `pi.getActiveTools()` — actual active/inactive tools
+
+In the TUI: `/context-guard` → "Dump full context". Choose:
+
+- **File (full/brief)** — writes `pi-context-dump-<cwd-basename>-<timestamp>.md` into the current working directory (`ctx.cwd`)
+- **Editor (full/brief)** — opens the report in Pi's built-in editor
+
+The dump reflects the current state **after** all extensions and guard settings have been applied, not a static catalog.
 
 ## Settings
 
@@ -55,4 +79,4 @@ Missing keys default to enabled (`true`).
 2. **Tool gate**: add an entry to `tool-gates.ts` with `id`, `toolsOn`, and `toolsOff`.
 3. **Skill control**: already handled by `autoSkills`.
 
-No further registration is required; the TUI and `/ctx-guard <id>` command pick them up automatically.
+No further registration is required; the TUI and `/context-guard <id>` command pick them up automatically.

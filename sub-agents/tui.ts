@@ -514,6 +514,23 @@ async function runCriticInteractive(ctx: ExtensionCommandContext): Promise<void>
     .join("\n");
 
   await runSingleTask(ctx, agent, task, "review");
+
+  const historyEntry: HistoryEntry = {
+    timestamp: new Date().toISOString(),
+    agent: agent.name,
+    mode: "single",
+    task,
+    cwd: ctx.cwd,
+    extensionsPolicy: "inherit",
+    cliCommand: formatCliPreview(agent, "single", task, ctx.cwd, "inherit", []),
+    steps: [{ agent: agent.name, task }],
+    result: {
+      exitCode: 0,
+      outputPreview: "Review result shown in result menu.",
+      stderrPreview: "",
+    },
+  };
+  writeHistoryFile(historyEntry);
 }
 
 async function runAgentInteractive(ctx: ExtensionCommandContext): Promise<void> {

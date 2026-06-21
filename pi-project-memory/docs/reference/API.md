@@ -5,47 +5,113 @@
 ## Backend
 
 - **Project:** `C:/10x001/AI comp/0x010`
-- **Module:** `app/project_memory/`
+- **Module:** `0x010/app/project_memory/`
 - **Base URL:** `http://127.0.0.1:8000` (override with `PI_PROJECT_MEMORY_URL` or `PI_BACKEND_URL` env var)
+- **Prompts:** `0x010/app/project_memory/prompts/`
 
 ## Endpoints used
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/project_memory/status` | GET | Registry of projects + counts |
-| `/api/project_memory/search` | POST | Semantic search over facts and handoffs |
+| `/api/project_memory/status` | GET | Registry of projects + counts (TUI dashboard only) |
+| `/api/project_memory/search` | POST | Semantic search over facts |
 | `/api/project_memory/list` | POST | Recent records by category and date |
 | `/api/project_memory/list_all` | POST | Recent records across all categories |
 | `/api/project_memory/todos` | POST | List todos |
-| `/api/project_memory/get` | POST | Full record detail |
+| `/api/project_memory/get` | POST | Full record detail (used by TUI) |
 | `/api/project_memory/add` | POST | Save a new record |
-| `/api/project_memory/update` | POST | Update record status |
+| `/api/project_memory/update` | POST | Update record status (handoffs only) |
 | `/api/project_memory/update_full` | POST | Update editable fields of a record |
 | `/api/project_memory/delete` | POST | Delete record + vector entry |
+| `/api/project_memory/merge` | POST | Merge source into target and delete source |
+| `/api/project_memory/review_queue` | POST | Oldest-first facts for agent review |
+| `/api/project_memory/extract` | POST | Extract durable facts from a session transcript |
 
-## Tools
+## Agent tools
 
-- `project_memory_recent` → `/api/project_memory/list` (category `handoffs`)
-- `project_memory_search` → `/api/project_memory/search`
-- `project_memory_get` → `/api/project_memory/get`
-- `project_memory_save` → `/api/project_memory/add` (category depends on `kind`: `fact`→`facts`, `handoff`→`handoffs`, `todo`→`todos`)
-- `project_memory_list_todos` → `/api/project_memory/todos`
+- `project_facts({ query?, recent?, limit? })` → search or list recent facts. Returns full records (truncated only if the total result would exceed context limits).
+- `curate_facts({ action: "list" | "update" | "merge" | "delete", ... })` → manually-enabled fact curation.
 
 ## Commands
 
-- `/pm-status` → `GET /api/project_memory/status`
-- `/pm-recent [N]` → `/api/project_memory/list`
-- `/pm-todos [active|done|archived]` → `/api/project_memory/todos`
-- `/pm-search <query>` → `/api/project_memory/search`
-- `/pm-add-fact type|topic|what` → `/api/project_memory/add`
-- `/pm-add-handoff topic|what` → `/api/project_memory/add`
-- `/pm-add-todo topic|what` → `/api/project_memory/add`
-- `/pm-add type|topic|what` → legacy alias (maps type to category)
-- `/pm-handoff topic|what` → alias for `/pm-add-handoff`
-- `/pm-get <item_id>` → `/api/project_memory/get`
-- `/pm-update <item_id> <status>` → `/api/project_memory/update`
-- `/pm-delete <item_id>` → `/api/project_memory/delete`
 - `/pm` → interactive TUI dashboard
+- `/remember type|topic|what` → `/api/project_memory/add`
+- `/todo topic|what` → `/api/project_memory/add`
+- `/done` → builds session transcript, calls `/api/project_memory/extract`, then `/api/project_memory/add` for selected facts
+
+## Add endpoint
+
+`POST /api/project_memory/add`
+
+Saves a new record, or returns an existing duplicate if the candidate is too similar to a record already stored.
+
+Body: see canonical spec.
+
+Response when a new record is saved:
+```json
+{
+  "ok": true,
+  "item_id": "pm-abc123"
+}
+```
+
+Response when a duplicate is detected:
+```json
+{
+  "ok": true,
+  "item_id": "pm-abc123",
+  "duplicate": true,
+  "score": 0.94,
+  "method": "embedding"
+}
+```
+
+When `duplicate` is `true`, `item_id` refers to the existing record and no new record is created. `method` is one of `exact`, `jaccard`, or `embedding`.
+
+## Merge endpoint
+
+`POST /api/project_memory/merge`
+
+Merges a source fact into a target fact and deletes the source. The target keeps the union of `where`/`tags`, plus a `merged:<source_id>` tag.
+
+```json
+{
+  "project_id": "my-app",
+  "source_item_id": "pm-old",
+  "target_item_id": "pm-new",
+  "fields": {
+    "topic": "Merged topic (optional)",
+    "what": "Merged description (optional)",
+    "why": "...",
+    "where": ["file.ts"],
+    "tags": ["api"]
+  }
+}
+```
+
+## Extract endpoint
+
+`POST /api/project_memory/extract`
+
+Body:
+```json
+{
+  "project_id": "my-app",
+  "transcript": "## user\n...\n\n## assistant\n..."
+}
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "facts": [
+    {"fact_type": "decision", "topic": "...", "what": "..."}
+  ]
+}
+```
+
+The prompt used for extraction lives in `app/project_memory/prompts/extract_facts.md` and can be edited without restarting the backend (it is read on each call).
 
 ## Configuration
 

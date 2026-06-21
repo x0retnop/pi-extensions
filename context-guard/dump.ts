@@ -1,59 +1,50 @@
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-  ToolInfo,
-  BuildSystemPromptOptions,
+  BeforeAgentStartEvent,
   ContextEvent,
   BeforeProviderRequestEvent,
-  BeforeAgentStartEvent,
-  SlashCommandInfo,
-  ContextUsage,
+  ToolInfo,
 } from "@earendil-works/pi-coding-agent";
-import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
-import { buildSessionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ImageContent,
+  ToolResultMessage,
+} from "@earendil-works/pi-ai";
 import path from "node:path";
 import fs from "node:fs";
 
-const EXT = "tool-dev";
-
-interface Snapshot {
+interface DumpSnapshot {
   capturedAt: number;
-  systemPrompt?: string;
-  systemPromptOptions?: BuildSystemPromptOptions;
   prompt?: string;
   images?: ImageContent[];
+  systemPrompt?: string;
+  systemPromptOptions?: any;
   messages?: any[];
   providerPayload?: unknown;
 }
 
-let snapshot: Snapshot = { capturedAt: 0 };
+let snapshot: DumpSnapshot = { capturedAt: 0 };
 
-function notify(ctx: ExtensionCommandContext, message: string, level: "info" | "warning" | "error" = "info"): void {
-  const text = message.startsWith(`[${EXT}]`) ? message : `[${EXT}] ${message}`;
-  if (ctx.hasUI && typeof ctx.ui?.notify === "function") {
-    ctx.ui.notify(text, level);
-    return;
-  }
-  const log = level === "error" ? console.error : level === "warning" ? console.warn : console.log;
-  log(text);
+export function startDumpCapture(pi: ExtensionAPI): void {
+  pi.on("before_agent_start", (event: BeforeAgentStartEvent) => {
+    snapshot.prompt = event.prompt;
+    snapshot.images = event.images;
+    snapshot.systemPrompt = event.systemPrompt;
+    snapshot.systemPromptOptions = event.systemPromptOptions;
+    snapshot.capturedAt = Date.now();
+  });
+
+  pi.on("context", (event: ContextEvent) => {
+    snapshot.messages = event.messages as any[];
+  });
+
+  pi.on("before_provider_request", (event: BeforeProviderRequestEvent) => {
+    snapshot.providerPayload = event.payload;
+  });
 }
 
-function getToolSource(tool: ToolInfo): string {
-  const source = tool.sourceInfo?.source ?? "unknown";
-  if (source === "builtin") return "built-in";
-  if (source === "sdk") return "sdk";
-  if (source === "local" && tool.sourceInfo?.path) {
-    const dir = path.dirname(tool.sourceInfo.path);
-    return path.basename(dir) || "local";
-  }
-  return source;
-}
-
-function getToolPath(tool: ToolInfo): string {
-  if (!tool.sourceInfo?.path) return "";
-  const p = tool.sourceInfo.path;
-  if (p.startsWith("<") && p.endsWith(">")) return "";
-  return p;
+function estimateTokens(text: string): number {
+  return Math.max(0, Math.ceil(text.length / 4));
 }
 
 function firstLine(text: string, max = 120): string {
@@ -62,30 +53,7 @@ function firstLine(text: string, max = 120): string {
   return line.slice(0, max - 1) + "…";
 }
 
-function formatSchema(tool: ToolInfo): string {
-  const schema = tool.parameters as any;
-  if (!schema || typeof schema !== "object") return "(no schema)";
-  return JSON.stringify(schema, null, 2);
-}
-
-function extractParamSummary(tool: ToolInfo): string[] {
-  const schema = tool.parameters as any;
-  if (!schema || schema.type !== "object" || typeof schema.properties !== "object") {
-    return [];
-  }
-  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
-  const lines: string[] = [];
-  for (const [name, prop] of Object.entries(schema.properties)) {
-    const p = prop as any;
-    const type = Array.isArray(p?.type) ? p.type.join("|") : (p?.type ?? "any");
-    const req = required.has(name) ? "required" : "optional";
-    const desc = typeof p?.description === "string" ? ` — ${p.description.split("\n")[0]}` : "";
-    lines.push(`${name}: ${type} (${req})${desc}`);
-  }
-  return lines;
-}
-
-function stringifyContent(content: any): string {
+function stringifyContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return JSON.stringify(content, null, 2);
   return content
@@ -94,35 +62,27 @@ function stringifyContent(content: any): string {
       if (block.type === "text") return block.text ?? "";
       if (block.type === "image") return `[image ${block.mimeType ?? "?"}, ${(block.data?.length ?? 0).toLocaleString()} chars]`;
       if (block.type === "thinking") return block.redacted ? "[redacted thinking]" : (block.thinking ?? "[thinking]");
+      if (block.type === "toolCall") return `[toolCall ${block.name ?? "?"}]`;
       return JSON.stringify(block);
     })
     .join("\n");
 }
 
-function getMessages(ctx: ExtensionCommandContext): any[] {
-  if (snapshot.messages && snapshot.messages.length > 0) return snapshot.messages;
-  try {
-    const leafId = ctx.sessionManager.getLeafId();
-    const entries = ctx.sessionManager.getEntries();
-    return buildSessionContext(entries, leafId).messages;
-  } catch {
-    return [];
-  }
-}
 
 function countMessagesByRole(messages: any[], role: string): number {
-  return messages.filter((m) => m?.role === role).length;
+  return messages.filter((m) => (m as any)?.role === role).length;
 }
 
 function formatMessageBrief(message: any, index: number): string {
-  if (!message || typeof message !== "object") return `${index}. (unreadable)`;
-  const role = message.role ?? "unknown";
+  const msg = message as any;
+  if (!msg || typeof msg !== "object") return `${index}. (unreadable)`;
+  const role = msg.role ?? "unknown";
   const prefix = `${index}. [${role}]`;
   if (role === "user") {
-    return `${prefix} ${firstLine(stringifyContent(message.content), 140)}`;
+    return `${prefix} ${firstLine(stringifyContent(msg.content), 140)}`;
   }
   if (role === "assistant") {
-    const content = Array.isArray(message.content) ? message.content : [];
+    const content = Array.isArray(msg.content) ? msg.content : [];
     const text = content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join(" ").trim();
     const tools = content.filter((c: any) => c?.type === "toolCall").length;
     const parts: string[] = [];
@@ -131,34 +91,36 @@ function formatMessageBrief(message: any, index: number): string {
     return `${prefix} ${parts.join(" · ") || "(no text)"}`;
   }
   if (role === "toolResult") {
-    const status = message.isError ? "error" : "ok";
-    return `${prefix} ${message.toolName ?? "?"} (${status})`;
+    const tr = msg as ToolResultMessage;
+    const status = tr.isError ? "error" : "ok";
+    return `${prefix} ${tr.toolName ?? "?"} (${status})`;
   }
-  return `${prefix} ${firstLine(JSON.stringify(message), 140)}`;
+  return `${prefix} ${firstLine(JSON.stringify(msg), 140)}`;
 }
 
 function formatMessageFull(message: any, index: number): string[] {
   const lines: string[] = [];
-  if (!message || typeof message !== "object") {
+  const msg = message as any;
+  if (!msg || typeof msg !== "object") {
     lines.push(`${index}. (unreadable)`);
     lines.push("```json");
     lines.push(JSON.stringify(message, null, 2));
     lines.push("```");
     return lines;
   }
-  const role = message.role ?? "unknown";
+  const role = msg.role ?? "unknown";
   lines.push(`#### ${index}. role: \`${role}\``);
-  if (message.timestamp) {
-    lines.push(`**timestamp:** ${new Date(message.timestamp).toISOString()}`);
+  if (msg.timestamp) {
+    lines.push(`**timestamp:** ${new Date(msg.timestamp).toISOString()}`);
   }
 
   if (role === "user") {
     lines.push("**content:**");
     lines.push("```");
-    lines.push(stringifyContent(message.content));
+    lines.push(stringifyContent(msg.content));
     lines.push("```");
   } else if (role === "assistant") {
-    const content = Array.isArray(message.content) ? message.content : [];
+    const content = Array.isArray(msg.content) ? msg.content : [];
     const text = content.filter((c: any) => c?.type === "text").map((c: any) => c.text).join("\n");
     const thinking = content.filter((c: any) => c?.type === "thinking");
     const toolCalls = content.filter((c: any) => c?.type === "toolCall");
@@ -185,61 +147,56 @@ function formatMessageFull(message: any, index: number): string[] {
         lines.push("  ```");
       }
     }
-    if (message.model) lines.push(`**model:** ${message.model}`);
-    if (message.stopReason) lines.push(`**stop reason:** ${message.stopReason}`);
-    if (message.usage) lines.push(`**usage:** ${JSON.stringify(message.usage)}`);
+    if (msg.model) lines.push(`**model:** ${msg.model}`);
+    if (msg.stopReason) lines.push(`**stop reason:** ${msg.stopReason}`);
+    if (msg.usage) lines.push(`**usage:** ${JSON.stringify(msg.usage)}`);
   } else if (role === "toolResult") {
-    lines.push(`**tool:** ${message.toolName ?? "?"} · callId \`${message.toolCallId ?? "?"}\` · error: ${!!message.isError}`);
+    const tr = msg as ToolResultMessage;
+    lines.push(`**tool:** ${tr.toolName ?? "?"} · callId \`${tr.toolCallId ?? "?"}\` · error: ${!!tr.isError}`);
     lines.push("**content:**");
     lines.push("```");
-    lines.push(stringifyContent(message.content));
+    lines.push(stringifyContent(tr.content));
     lines.push("```");
   } else {
     lines.push("```json");
-    lines.push(JSON.stringify(message, null, 2));
+    lines.push(JSON.stringify(msg, null, 2));
     lines.push("```");
   }
   return lines;
 }
 
-function dumpToFile(content: string): string {
-  const tmpDir = path.join(process.env.TEMP || process.env.TMPDIR || "/tmp", "pi-tool-dev");
-  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-  const filePath = path.join(tmpDir, `inspect-${Date.now()}.md`);
-  fs.writeFileSync(filePath, content, "utf-8");
-  return filePath;
+function getToolSource(tool: ToolInfo): string {
+  const source = (tool as any).sourceInfo?.source ?? "unknown";
+  if (source === "builtin") return "built-in";
+  if (source === "sdk") return "sdk";
+  if (source === "local" && (tool as any).sourceInfo?.path) {
+    const dir = path.dirname((tool as any).sourceInfo.path);
+    return path.basename(dir) || "local";
+  }
+  return source;
 }
 
-function formatToolsBrief(pi: ExtensionAPI): string {
-  const allTools = pi.getAllTools();
-  const activeNames = new Set(pi.getActiveTools());
-  const active = allTools.filter((t) => activeNames.has(t.name)).sort((a, b) => a.name.localeCompare(b.name));
+function getToolPath(tool: ToolInfo): string {
+  const p = (tool as any).sourceInfo?.path ?? "";
+  if (p.startsWith("<") && p.endsWith(">")) return "";
+  return p;
+}
 
+function extractParamSummary(tool: ToolInfo): string[] {
+  const schema = tool.parameters as any;
+  if (!schema || schema.type !== "object" || typeof schema.properties !== "object") {
+    return [];
+  }
+  const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   const lines: string[] = [];
-  lines.push(`# Tools — active (${active.length} of ${allTools.length})`);
-  lines.push("");
-
-  const bySource = new Map<string, ToolInfo[]>();
-  for (const tool of active) {
-    const source = getToolSource(tool);
-    if (!bySource.has(source)) bySource.set(source, []);
-    bySource.get(source)!.push(tool);
+  for (const [name, prop] of Object.entries(schema.properties)) {
+    const p = prop as any;
+    const type = Array.isArray(p?.type) ? p.type.join("|") : (p?.type ?? "any");
+    const req = required.has(name) ? "required" : "optional";
+    const desc = typeof p?.description === "string" ? ` — ${p.description.split("\n")[0]}` : "";
+    lines.push(`${name}: ${type} (${req})${desc}`);
   }
-
-  for (const source of Array.from(bySource.keys()).sort()) {
-    lines.push(`## [${source}]`);
-    for (const tool of bySource.get(source)!) {
-      lines.push(`- **${tool.name}** — ${firstLine(tool.description)}`);
-      const params = extractParamSummary(tool);
-      if (params.length > 0) {
-        for (const p of params.slice(0, 4)) lines.push(`  - ${p}`);
-        if (params.length > 4) lines.push(`  - ... and ${params.length - 4} more params`);
-      }
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n");
+  return lines;
 }
 
 function formatToolsFull(pi: ExtensionAPI): string {
@@ -269,8 +226,40 @@ function formatToolsFull(pi: ExtensionAPI): string {
 
     lines.push("### Parameters");
     lines.push("```json");
-    lines.push(formatSchema(tool));
+    lines.push(JSON.stringify(tool.parameters, null, 2));
     lines.push("```");
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+function formatToolsBrief(pi: ExtensionAPI): string {
+  const allTools = pi.getAllTools();
+  const activeNames = new Set(pi.getActiveTools());
+  const active = allTools.filter((t) => activeNames.has(t.name)).sort((a, b) => a.name.localeCompare(b.name));
+
+  const lines: string[] = [];
+  lines.push(`# Active tools (${active.length} of ${allTools.length})`);
+  lines.push("");
+
+  const bySource = new Map<string, ToolInfo[]>();
+  for (const tool of active) {
+    const source = getToolSource(tool);
+    if (!bySource.has(source)) bySource.set(source, []);
+    bySource.get(source)!.push(tool);
+  }
+
+  for (const source of Array.from(bySource.keys()).sort()) {
+    lines.push(`## [${source}]`);
+    for (const tool of bySource.get(source)!) {
+      lines.push(`- **${tool.name}** — ${firstLine(tool.description)}`);
+      const params = extractParamSummary(tool);
+      if (params.length > 0) {
+        for (const p of params.slice(0, 4)) lines.push(`  - ${p}`);
+        if (params.length > 4) lines.push(`  - ... and ${params.length - 4} more params`);
+      }
+    }
     lines.push("");
   }
 
@@ -284,9 +273,9 @@ function formatPromptsBrief(ctx: ExtensionCommandContext): string {
 
   const systemPrompt = ctx.getSystemPrompt();
   const opts = ctx.getSystemPromptOptions();
-  const messages = getMessages(ctx);
+  const messages = snapshot.messages ?? [];
 
-  lines.push(`- **System prompt:** ${systemPrompt.length.toLocaleString()} chars · ${systemPrompt.split("\n").length.toLocaleString()} lines`);
+  lines.push(`- **System prompt:** ${systemPrompt.length.toLocaleString()} chars · ${systemPrompt.split("\n").length.toLocaleString()} lines · ~${estimateTokens(systemPrompt).toLocaleString()} tok`);
   if (opts.customPrompt) lines.push(`- **Custom system prompt:** yes (${opts.customPrompt.length.toLocaleString()} chars)`);
   if (opts.appendSystemPrompt) lines.push(`- **Append system prompt:** yes (${opts.appendSystemPrompt.length.toLocaleString()} chars)`);
   lines.push(`- **Prompt guidelines:** ${opts.promptGuidelines?.length ?? 0}`);
@@ -318,13 +307,13 @@ function formatPromptsFull(ctx: ExtensionCommandContext): string {
         appendSystemPrompt: opts.appendSystemPrompt,
         selectedTools: opts.selectedTools,
         toolSnippets: opts.toolSnippets,
-        skills: opts.skills?.map((s) => ({
+        skills: opts.skills?.map((s: any) => ({
           name: s.name,
           description: s.description,
           filePath: s.filePath,
           disableModelInvocation: s.disableModelInvocation,
         })),
-        contextFiles: opts.contextFiles?.map((cf) => ({
+        contextFiles: opts.contextFiles?.map((cf: any) => ({
           path: cf.path,
           length: cf.content.length,
         })),
@@ -342,7 +331,7 @@ function formatPromptsFull(ctx: ExtensionCommandContext): string {
   lines.push("```");
   lines.push("");
 
-  const messages = getMessages(ctx);
+  const messages = snapshot.messages ?? [];
   if (messages.length > 0) {
     lines.push(`## Conversation (${messages.length} messages)`);
     lines.push("");
@@ -370,7 +359,7 @@ function formatOther(ctx: ExtensionCommandContext, pi: ExtensionAPI): string {
     lines.push(`- **Provider:** ${model.provider}`);
     lines.push(`- **API:** ${model.api}`);
     lines.push(`- **Context window:** ${model.contextWindow.toLocaleString()} tokens`);
-    lines.push(`- **Max tokens:** ${model.maxTokens.toLocaleString()}`);
+    lines.push(`- **Max tokens:** ${model.maxTokens.toLocaleString()} tokens`);
     lines.push(`- **Inputs:** ${model.input.join(", ")}`);
   } else {
     lines.push("- **Model:** not set");
@@ -428,72 +417,72 @@ function formatHeadlessFallback(ctx: ExtensionCommandContext, pi: ExtensionAPI):
   ].join("\n");
 }
 
-export default function (pi: ExtensionAPI) {
-  pi.on("before_agent_start", (event: BeforeAgentStartEvent) => {
-    snapshot.prompt = event.prompt;
-    snapshot.images = event.images;
-    snapshot.systemPrompt = event.systemPrompt;
-    snapshot.systemPromptOptions = event.systemPromptOptions;
-    snapshot.capturedAt = Date.now();
-  });
+export interface DumpMenuResult {
+  choice: "file" | "editor" | "brief" | null;
+  scope: "full" | "brief" | null;
+}
 
-  pi.on("context", (event: ContextEvent) => {
-    snapshot.messages = event.messages;
-  });
+export async function pickDumpAction(ctx: ExtensionCommandContext): Promise<DumpMenuResult> {
+  if (!ctx.hasUI) {
+    return { choice: "file", scope: "brief" };
+  }
 
-  pi.on("before_provider_request", (event: BeforeProviderRequestEvent) => {
-    snapshot.providerPayload = event.payload;
-  });
+  const action = await ctx.ui.select("Dump context to", [
+    "📄 File (full)",
+    "📄 File (brief)",
+    "🖥  Editor (full)",
+    "🖥  Editor (brief)",
+    "Cancel",
+  ]);
 
-  pi.registerCommand("inspect", {
-    description: "Interactive inspector for everything the LLM sees (tools, prompts, other, full)",
-    handler: async (_args, ctx) => {
-      // Always refresh live system prompt data when the command runs.
-      snapshot.systemPrompt = ctx.getSystemPrompt();
-      snapshot.systemPromptOptions = ctx.getSystemPromptOptions();
+  if (action?.startsWith("📄 File")) {
+    return { choice: "file", scope: action.includes("brief") ? "brief" : "full" };
+  }
+  if (action?.startsWith("🖥  Editor")) {
+    return { choice: "editor", scope: action.includes("brief") ? "brief" : "full" };
+  }
+  return { choice: null, scope: null };
+}
 
-      if (!ctx.hasUI) {
-        const md = formatHeadlessFallback(ctx, pi);
-        const filePath = dumpToFile(md);
-        notify(ctx, `Headless report saved to ${filePath}`, "info");
-        return;
-      }
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 50);
+}
 
-      const choice = await ctx.ui.select("🔍 Inspect LLM context", [
-        "Tools — brief",
-        "Tools — full",
-        "Prompts — brief",
-        "Prompts — full",
-        "Other",
-        "Full report",
-      ]);
-      if (!choice) return;
+function writeDumpToFile(content: string, cwd: string): string {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const fileName = `pi-context-dump-${sanitizeFilename(path.basename(cwd))}-${ts}.md`;
+  const filePath = path.join(cwd, fileName);
+  fs.writeFileSync(filePath, content, "utf-8");
+  return filePath;
+}
 
-      let md = "";
-      switch (choice) {
-        case "Tools — brief":
-          md = formatToolsBrief(pi);
-          break;
-        case "Tools — full":
-          md = formatToolsFull(pi);
-          break;
-        case "Prompts — brief":
-          md = formatPromptsBrief(ctx);
-          break;
-        case "Prompts — full":
-          md = formatPromptsFull(ctx);
-          break;
-        case "Other":
-          md = formatOther(ctx, pi);
-          break;
-        case "Full report":
-        default:
-          md = formatFull(ctx, pi);
-          break;
-      }
+export async function runContextDump(ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+  // Always refresh live system prompt data when the dump runs.
+  snapshot.systemPrompt = ctx.getSystemPrompt();
+  snapshot.systemPromptOptions = ctx.getSystemPromptOptions();
 
-      await ctx.ui.editor(choice, md);
-      notify(ctx, `${choice} opened in editor`, "info");
-    },
-  });
+  const { choice, scope } = await pickDumpAction(ctx);
+  if (!choice) return;
+
+  const isFull = scope === "full";
+  const md = isFull ? formatFull(ctx, pi) : formatHeadlessFallback(ctx, pi);
+
+  if (choice === "file") {
+    const filePath = writeDumpToFile(md, ctx.cwd);
+    const msg = `Context dump saved: ${filePath}`;
+    if (ctx.hasUI) {
+      ctx.ui.notify(msg, "info");
+    } else {
+      console.log(msg);
+    }
+    return;
+  }
+
+  if (choice === "editor") {
+    await ctx.ui.editor(isFull ? "context-dump-full" : "context-dump-brief", md);
+    return;
+  }
+
+  // No UI fallback — print to stdout.
+  console.log(md);
 }

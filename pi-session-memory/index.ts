@@ -3,7 +3,10 @@ import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import path from "node:path";
 
-const BASE_URL = "http://127.0.0.1:8000";
+const BASE_URL =
+  process.env.PI_SESSION_MEMORY_URL?.trim() ||
+  process.env.PI_BACKEND_URL?.trim() ||
+  "http://127.0.0.1:8000";
 const SEARCH_ENTRY_TYPE = "session-memory-search";
 
 interface SearchHit {
@@ -125,14 +128,16 @@ function getLastSearch(ctx: ExtensionContext): StoredSearch | null {
 }
 
 function extractProject(sourcePath: string): string {
-  if (sourcePath.includes("--")) {
-    const parts = sourcePath.split(/[\\/]/);
-    for (const part of parts) {
-      if (part.startsWith("--") && part.endsWith("--")) {
-        const inner = part.slice(2, -2);
-        if (inner.includes("--")) {
-          return inner.replace(/-/g, "/");
+  const parts = sourcePath.split(/[\\/]/);
+  for (const part of parts) {
+    if (part.startsWith("--") && part.endsWith("--")) {
+      const inner = part.slice(2, -2);
+      if (inner.includes("--")) {
+        const segments = inner.split("--");
+        if (segments.length > 0 && /^[A-Za-z]$/.test(segments[0])) {
+          segments[0] = segments[0] + ":";
         }
+        return segments.join("/");
       }
     }
   }
@@ -154,20 +159,27 @@ function formatSessionOption(s: SessionListItem): string {
 
 function serverUnreachableResult(err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
-  if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
+  const unreachable =
+    msg.includes("ECONNREFUSED") ||
+    msg.includes("fetch failed") ||
+    msg.includes("Unable to connect") ||
+    msg.includes("Connection refused");
+  if (unreachable) {
     return {
       content: [
         {
           type: "text",
-          text: "Error: 0x010 server is not running on 127.0.0.1:8000. Start uvicorn and ensure SESSION_INDEX_ENABLED=true.",
+          text: `Error: 0x010 server is not running on ${BASE_URL}. Start uvicorn and ensure SESSION_INDEX_ENABLED=true.`,
         },
       ],
       details: { error: "Server unreachable", raw: msg },
+      isError: true,
     };
   }
   return {
     content: [{ type: "text", text: `Error: ${msg}` }],
     details: { error: msg },
+    isError: true,
   };
 }
 
@@ -235,6 +247,7 @@ async function actionContent(params: any, ctx: ExtensionContext): Promise<any> {
           { type: "text", text: "Error: No recent session_memory search found. Run action=search first or provide sourcePath." },
         ],
         details: { error: "No recent search" },
+        isError: true,
       };
     }
     const hit = last.hits[params.hitIndex];
@@ -244,6 +257,7 @@ async function actionContent(params: any, ctx: ExtensionContext): Promise<any> {
           { type: "text", text: `Error: hitIndex ${params.hitIndex} out of range (0-${last.hits.length - 1})` },
         ],
         details: { error: "Index out of range" },
+        isError: true,
       };
     }
     sourcePath = hit.source_path;
@@ -253,6 +267,7 @@ async function actionContent(params: any, ctx: ExtensionContext): Promise<any> {
     return {
       content: [{ type: "text", text: "Error: Provide sourcePath or hitIndex." }],
       details: { error: "No source specified" },
+      isError: true,
     };
   }
 
@@ -269,6 +284,7 @@ async function actionContent(params: any, ctx: ExtensionContext): Promise<any> {
     return {
       content: [{ type: "text", text: `Error reading session: ${msg}` }],
       details: { error: msg, sourcePath },
+      isError: true,
     };
   }
 
@@ -410,6 +426,7 @@ export default function (pi: ExtensionAPI) {
             return {
               content: [{ type: "text", text: "Error: action=search requires a query parameter." }],
               details: { error: "Missing query" },
+              isError: true,
             };
           }
           return actionSearch(params, ctx, pi, onUpdate);
@@ -421,6 +438,7 @@ export default function (pi: ExtensionAPI) {
           return {
             content: [{ type: "text", text: `Error: unknown action "${params.action}". Use search, content, or list.` }],
             details: { error: "Unknown action" },
+            isError: true,
           };
       }
     },
@@ -545,9 +563,14 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify("Cancelled", "info");
       return;
     }
-    const result = await actionSearch({ action: "search", query: query.trim(), limit: 5, minScore: 0.3 }, ctx as any, pi);
-    const text = (result.content.find((c: any) => c.type === "text") as any)?.text || "";
-    ctx.ui.notify(text.length > 800 ? text.slice(0, 800) + "\n...[truncated]" : text, "info");
+    try {
+      const result = await actionSearch({ action: "search", query: query.trim(), limit: 5, minScore: 0.3 }, ctx as any, pi);
+      const text = (result.content.find((c: any) => c.type === "text") as any)?.text || "";
+      ctx.ui.notify(text.length > 800 ? text.slice(0, 800) + "\n...[truncated]" : text, "info");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.ui.notify(`Error searching: ${msg}`, "error");
+    }
   }
 
   async function runResume(ctx: any) {

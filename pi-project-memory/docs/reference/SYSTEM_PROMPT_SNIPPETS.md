@@ -7,7 +7,7 @@ Copy the relevant block into the agent system prompt for projects where you want
 Use this as the default reminder for any project with a `.project-id` file.
 
 ```markdown
-**Project memory.** Use `project_memory_recent` at session start or when context is lost. Use `project_memory_search` before reading many files to answer "how do we do X". Save records only if they will help a future agent in 30 days: decisions, gotchas, bug roots, session state, open todos. Skip obvious code, style fixes, and vague summaries.
+**Project memory.** Use `project_facts({ query })` when the user asks about project conventions, architecture, or historical decisions. Use `project_facts({ recent: true, limit: 20 })` to audit recent memory. Save durable facts via `/remember` or `/done` only if they will help a future agent in 30 days: decisions, gotchas, bug roots, open todos. Skip obvious code, style fixes, and vague summaries.
 ```
 
 ## Full discipline
@@ -17,12 +17,12 @@ Use this for projects where you want agents to own memory end-to-end.
 ```markdown
 ## Project memory
 
-- Read `project_memory_recent` at session start or when the user lost context.
-- Use `project_memory_search` before reading 3+ files to answer "how do we do X"; read full records with `project_memory_get` when previews are not enough.
+- Use `project_facts({ query })` when the user asks about a convention, pattern, or historical decision in the project.
+- Use `project_facts({ recent: true, limit: 20 })` to audit the latest facts or prepare for curation.
 - Save only what passes the "30 days" test: would a future agent need this to avoid re-discovering it?
-  - Save: non-obvious decisions, gotchas/bug roots, session state, open todos.
+  - Save: non-obvious decisions, gotchas/bug roots, open todos.
   - Skip: typos, style fixes, pure refactors, one-off user requests, vague summaries.
-- Save a `handoff` when ending a session with meaningful progress. Save a `todo` for any work left for next time.
+- Suggest `/done` when ending a session with meaningful progress.
 ```
 
 ## Minimal reminder
@@ -30,5 +30,5 @@ Use this for projects where you want agents to own memory end-to-end.
 Use this when the system prompt is already crowded.
 
 ```markdown
-**Memory:** read `project_memory_recent` at start, `project_memory_search` before archaeology, save only what helps in 30 days, handoff at end.
+**Memory:** use `project_facts` for project knowledge; `/done` to digest a session; `/remember` for quick facts.
 ```

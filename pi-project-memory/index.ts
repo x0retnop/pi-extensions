@@ -1,9 +1,12 @@
-import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
 import path from "node:path";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
+
+const SETTINGS_PATH = path.join(getAgentDir(), "settings.json");
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -27,10 +30,25 @@ interface ApiRecord {
   why?: string;
   where?: string[];
   tags?: string[];
-  status?: string;
   created_at?: string;
   updated_at?: string;
   score?: number;
+}
+
+interface ExtractedFact {
+  fact_type: "decision" | "pattern" | "gotcha" | "architecture" | "bugfix";
+  topic: string;
+  what: string;
+  where?: string[];
+}
+
+interface AddResult {
+  ok: boolean;
+  item_id?: string;
+  duplicate?: boolean;
+  score?: number;
+  method?: string;
+  error?: string;
 }
 
 interface ToolResultDetails {
@@ -38,9 +56,24 @@ interface ToolResultDetails {
   item_id?: string;
   count?: number;
   hits?: number;
-  kind?: string;
   phase?: string;
+  duplicate?: boolean;
+  score?: number;
+  method?: string;
   error?: string;
+  fields?: Record<string, unknown>;
+  source_item_id?: string;
+  target_item_id?: string;
+  result?: unknown;
+}
+
+interface CurateState {
+  enabled: boolean;
+  mode: "auto" | "manual";
+}
+
+interface ProjectMemorySettings {
+  debug?: boolean;
 }
 
 type ToolResult = {
@@ -74,25 +107,46 @@ function hasProjectId(cwd: string): boolean {
   }
 }
 
-const PROJECT_MEMORY_TOOLS = [
-  "project_memory_recent",
-  "project_memory_search",
-  "project_memory_get",
-  "project_memory_save",
-  "project_memory_list_todos",
-];
+function getLatestCurateState(ctx: ExtensionContext): CurateState | null {
+  const branch = ctx.sessionManager.getBranch();
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const entry = branch[i];
+    if (entry.type === "custom" && entry.customType === PROJECT_MEMORY_CURATE_STATE_TYPE) {
+      return entry.data as CurateState;
+    }
+  }
+  return null;
+}
+
+const PROJECT_FACTS_TOOL = "project_facts";
+const CURATE_FACTS_TOOL = "curate_facts";
+const PROJECT_MEMORY_CURATE_STATE_TYPE = "project-memory-curate-state";
+const SETTINGS_KEY = "projectMemory";
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-async function apiGet(endpoint: string): Promise<any> {
-  const res = await fetch(`${BASE_URL}${endpoint}`);
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
+function getProjectMemorySettings(): ProjectMemorySettings {
+  try {
+    const raw = fs.readFileSync(SETTINGS_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    return (parsed[SETTINGS_KEY] as ProjectMemorySettings) ?? {};
+  } catch {
+    return {};
   }
-  return res.json();
+}
+
+async function saveProjectMemorySettings(settings: ProjectMemorySettings): Promise<void> {
+  let parsed: Record<string, unknown> = {};
+  try {
+    const raw = fs.readFileSync(SETTINGS_PATH, "utf-8");
+    parsed = JSON.parse(raw);
+  } catch {
+    // start fresh
+  }
+  parsed[SETTINGS_KEY] = settings;
+  fs.writeFileSync(SETTINGS_PATH, JSON.stringify(parsed, null, 2), "utf-8");
 }
 
 async function apiPost(endpoint: string, body: unknown): Promise<any> {
@@ -116,13 +170,39 @@ function errorResult(message: string): ToolResult {
 }
 
 // ---------------------------------------------------------------------------
+// Add-result formatting
+// ---------------------------------------------------------------------------
+
+function formatAddResult(result: AddResult, topic: string): { message: string; details: ToolResultDetails } {
+  if (!result.ok) {
+    const msg = result.error || "Failed to save";
+    return { message: `Project memory error: ${msg}`, details: { error: msg } };
+  }
+  if (result.duplicate && result.item_id) {
+    const methodPart = result.method ? `, method: ${result.method}` : "";
+    const score = result.score !== undefined ? ` (score: ${result.score.toFixed(3)}${methodPart})` : "";
+    return {
+      message: `Skipped duplicate "${topic}". Existing record: ${result.item_id}${score}`,
+      details: { item_id: result.item_id, duplicate: true, score: result.score, method: result.method },
+    };
+  }
+  return {
+    message: `Saved "${topic}" (id: ${result.item_id})`,
+    details: { item_id: result.item_id },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Formatting helpers
 // ---------------------------------------------------------------------------
 
-function formatRecordPreview(r: ApiRecord, maxLen = 400): string {
+const DEFAULT_MAX_RECORD_LEN = 1200;
+
+function formatRecordPreview(r: ApiRecord, maxLen = DEFAULT_MAX_RECORD_LEN): string {
   let s = `[${r.category}] ${r.topic}\n${r.what}`;
   if (r.why) s += `\nWhy: ${r.why}`;
   if (r.where?.length) s += `\nWhere: ${r.where.join(", ")}`;
+  if (r.tags?.length) s += `\nTags: ${r.tags.join(", ")}`;
   if (s.length > maxLen) s = s.slice(0, maxLen) + "...";
   return s;
 }
@@ -131,11 +211,11 @@ function formatRecordDetail(r: ApiRecord): string {
   let out = `## ${r.topic}\n`;
   out += `ID: ${r.item_id}\n`;
   out += `Type: ${r.type} | Category: ${r.category}\n`;
-  if (r.status) out += `Status: ${r.status}\n`;
   out += `What: ${r.what}\n`;
   if (r.why) out += `Why: ${r.why}\n`;
   if (r.where?.length) out += `Where: ${r.where.join(", ")}\n`;
   if (r.tags?.length) out += `Tags: ${r.tags.join(", ")}\n`;
+  out += `Created: ${r.created_at ?? "unknown"}`;
   return out.trimEnd();
 }
 
@@ -149,9 +229,38 @@ function formatListPreview(items: ApiRecord[], includeScore = false): string {
     .join("\n\n");
 }
 
-// ---------------------------------------------------------------------------
-// UI helpers for commands
-// ---------------------------------------------------------------------------
+/** Enforce a hard cap on total tool-result text so the agent context is protected. */
+function clampTotalText(items: ApiRecord[], baseText: string, maxTotalChars = 12000): string {
+  let text = baseText;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const preview = formatListPreview([items[i]]);
+    if (text.length + preview.length + 2 <= maxTotalChars) {
+      // already included in baseText
+      continue;
+    }
+    const marker = `\n\n[Result truncated: ${items.length - i - 1} record(s) omitted to stay within context limits. Use a narrower query or lower limit.]\n\n`;
+    const keepLen = Math.max(0, maxTotalChars - marker.length);
+    text = text.slice(0, keepLen) + marker;
+    break;
+  }
+  if (text.length > maxTotalChars) {
+    text = text.slice(0, maxTotalChars - 3) + "...";
+  }
+  return text;
+}
+
+function formatRecordDate(r: ApiRecord): string {
+  if (!r.created_at) return "no date";
+  return r.created_at.slice(0, 10);
+}
+
+function formatTuiLabel(r: ApiRecord, i: number, tag?: string): string {
+  const date = formatRecordDate(r);
+  const labelTag = tag || r.category;
+  const topic = r.topic.slice(0, 40);
+  const whatPreview = r.what ? ` — ${r.what.slice(0, 60)}` : "";
+  return `${i}. ${date} [${labelTag}] ${topic}${whatPreview}`;
+}
 
 // ---------------------------------------------------------------------------
 // Tool rendering helpers
@@ -165,66 +274,20 @@ function getTextContent(result: { content: Array<{ type: string; text?: string }
   return result.content.find((c) => c.type === "text")?.text || "";
 }
 
-function renderSummaryLine(theme: any, label: string, value: string, projectId?: string) {
-  const line = theme.fg(label === "error" ? "error" : "success", value)
-    + (projectId ? theme.fg("muted", ` • ${projectId}`) : "");
-  return new Text(line, 0, 0);
-}
-
 // ---------------------------------------------------------------------------
 // Schema pieces
 // ---------------------------------------------------------------------------
 
-const TopicSchema = Type.String({
+const QuerySchema = Type.String({
   minLength: 1,
-  maxLength: 120,
-  description: "Short topic, max 6 words. Example: 'Runtime dep install path'",
+  maxLength: 500,
+  description: "What to search for. Be specific — use technical terms, file names, or problem descriptions.",
 });
 
-const WhatSchema = Type.String({
+const ItemIdSchema = Type.String({
   minLength: 1,
-  maxLength: 800,
-  description: "Concrete one-sentence fact. Keep it concise so future agents can scan it quickly.",
+  description: "Exact item_id from a previous result.",
 });
-
-const WhySchema = Type.Optional(Type.String({
-  maxLength: 800,
-  description: "Reasoning behind the fact (optional). Explains why the decision was made.",
-}));
-
-const WhereSchema = Type.Optional(Type.Array(Type.String(), {
-  description: "Relevant file paths (optional). Prefer relative paths from the project root.",
-}));
-
-const TagsSchema = Type.Optional(Type.Array(Type.String(), {
-  description: "Tags for grouping (optional).",
-}));
-
-const FactTypeSchema = Type.Union([
-  Type.Literal("decision"),
-  Type.Literal("pattern"),
-  Type.Literal("gotcha"),
-  Type.Literal("architecture"),
-  Type.Literal("bugfix"),
-], {
-  description: "Type of fact. Must be exactly one of: decision, pattern, gotcha, architecture, bugfix. Never use 'feature', 'refactor', 'task', or 'improvement'.",
-});
-
-const CategoryFilterSchema = Type.Optional(Type.Union([
-  Type.Literal("facts"),
-  Type.Literal("handoffs"),
-], {
-  description: "Optional filter. Only facts and handoffs are indexed and searchable.",
-}));
-
-const TodoStatusSchema = Type.Optional(Type.Union([
-  Type.Literal("active"),
-  Type.Literal("done"),
-  Type.Literal("archived"),
-], {
-  default: "active",
-  description: "Filter by status: active, done, or archived.",
-}));
 
 // ---------------------------------------------------------------------------
 // Tools
@@ -257,15 +320,26 @@ export default function (pi: ExtensionAPI) {
   // .project-id file. Tools stay registered so CLI commands keep working.
   function syncProjectMemoryTools(ctx: ExtensionContext): void {
     const enabled = hasProjectId(ctx.cwd);
+    const curateState = getLatestCurateState(ctx);
     const active = new Set(pi.getActiveTools());
-    for (const name of PROJECT_MEMORY_TOOLS) {
-      if (enabled) {
-        active.add(name);
-      } else {
-        active.delete(name);
-      }
+    if (enabled) {
+      active.add(PROJECT_FACTS_TOOL);
+    } else {
+      active.delete(PROJECT_FACTS_TOOL);
+    }
+    if (curateState?.enabled) {
+      active.add(CURATE_FACTS_TOOL);
+    } else {
+      active.delete(CURATE_FACTS_TOOL);
     }
     pi.setActiveTools([...active]);
+  }
+
+  function setCurateStatus(ctx: ExtensionContext | ExtensionCommandContext, state: CurateState | null): void {
+    if (ctx.hasUI) {
+      const text = state?.enabled ? `pm-curate: ${state.mode}` : undefined;
+      ctx.ui.setStatus("project-memory-curate", text);
+    }
   }
 
   pi.on("session_start", (_event, ctx) => {
@@ -273,297 +347,87 @@ export default function (pi: ExtensionAPI) {
     if (ctx.hasUI) {
       const status = hasProjectId(ctx.cwd) ? "on" : "off";
       ctx.ui.setStatus("project-memory", `pm: ${status}`);
+      setCurateStatus(ctx, getLatestCurateState(ctx));
+    }
+  });
+
+  pi.on("session_tree", (_event, ctx) => {
+    syncProjectMemoryTools(ctx);
+    if (ctx.hasUI) {
+      setCurateStatus(ctx, getLatestCurateState(ctx));
     }
   });
 
   // -------------------------------------------------------------------------
-  // project_memory_recent
+  // project_facts — single source of project knowledge for agents
   // -------------------------------------------------------------------------
   pi.registerTool({
-    name: "project_memory_recent",
-    label: "Project Memory Recent",
+    name: PROJECT_FACTS_TOOL,
+    label: "Project Facts",
     description:
-      "Get the latest session handoffs and progress for the current project.",
-    promptSnippet:
-      "Returns recent handoff cards. Use at session start or when the user lost context.",
+      "Read durable facts about this project. Use for conventions, architecture, patterns, gotchas, and historical decisions.",
+    promptSnippet: "Get project facts that will help answer the user's question.",
     promptGuidelines: [
-      "Returns up to 5 recent handoff cards. Each card shows its item_id.",
-      "FOLLOW-UP — if a handoff is unclear, call project_memory_get({ item_id: '...' }) using the exact item_id from the card.",
-      "NEVER pass a project_id parameter; the tool resolves it from the current working directory.",
+      "Call this tool at the start of a session or when facing a non-obvious decision.",
+      "Pass a specific `query` to search semantically, or set `recent: true` to see the latest facts.",
+      "The tool returns full records. Each fact is rendered with all fields (topic, what, why, where, tags).",
+      "Limit is 1-20. Use 10 by default, 20 only when you need a broad review. Very large results are truncated to protect context.",
     ],
     parameters: Type.Object({
+      query: Type.Optional(QuerySchema),
+      recent: Type.Optional(Type.Boolean({
+        default: false,
+        description: "If true (or if query is omitted), return the most recent facts instead of searching.",
+      })),
       limit: Type.Optional(Type.Integer({
         minimum: 1,
-        maximum: 5,
-        default: 5,
-        description: "Max handoff cards (1-5).",
+        maximum: 20,
+        default: 10,
+        description: "Max facts to return (1-20).",
       })),
     }),
     async execute(_toolCallId, params, _signal, onUpdate, ctx): Promise<ToolResult> {
-      onUpdate?.({ content: [{ type: "text", text: "Loading recent project memory..." }], details: { phase: "load" } });
       const projectId = await getProjectIdOrError(ctx);
       if (typeof projectId !== "string") return projectId;
+
+      const query = params.query?.trim();
+      const recent = params.recent ?? !query;
+      const limit = params.limit ?? 10;
+
       try {
-        const data = await apiPost("/api/project_memory/list", {
-          project_id: projectId,
-          category: "handoffs",
-          limit: params.limit ?? 5,
-        });
-        const records: ApiRecord[] = data.records || [];
+        let records: ApiRecord[];
+        if (recent) {
+          onUpdate?.({ content: [{ type: "text", text: `Fetching recent project facts for "${projectId}"...` }], details: { phase: "recent" } });
+          const data = await apiPost("/api/project_memory/list", {
+            project_id: projectId,
+            category: "facts",
+            limit,
+          });
+          records = data.records || [];
+        } else {
+          onUpdate?.({ content: [{ type: "text", text: `Searching project facts: "${query}"...` }], details: { phase: "search" } });
+          const data = await apiPost("/api/project_memory/search", {
+            query: query!,
+            project_id: projectId,
+            category: "facts",
+            limit,
+          });
+          records = data.hits || [];
+        }
+
         if (records.length === 0) {
           return {
-            content: [{ type: "text", text: `No recent handoffs for project "${projectId}".` }],
-            details: { project_id: projectId, count: 0 },
-          };
-        }
-        const preview = formatListPreview(records);
-        const out = `Recent project memory for "${projectId}" (${records.length} cards):\n\n${preview}\n\nUse project_memory_get({ item_id: "..." }) with the ID shown above to read full detail.`;
-        return {
-          content: [{ type: "text", text: out }],
-          details: { project_id: projectId, count: records.length },
-        };
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    },
-    renderCall(args, theme) {
-      const l = (args as any).limit ?? 5;
-      return new Text(theme.fg("toolTitle", theme.bold("project_memory_recent ")) + theme.fg("accent", `${l}`), 0, 0);
-    },
-    renderResult(result, { expanded }, theme) {
-      const d = result.details as ToolResultDetails;
-      if (d?.error) return renderError(theme, d.error);
-      const line = theme.fg("success", `${d?.count ?? 0} cards`) + theme.fg("muted", ` • ${d?.project_id ?? ""}`);
-      if (!expanded) return new Text(line, 0, 0);
-      const text = getTextContent(result);
-      const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
-      return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
-    },
-  });
-
-  // -------------------------------------------------------------------------
-  // project_memory_search
-  // -------------------------------------------------------------------------
-  pi.registerTool({
-    name: "project_memory_search",
-    label: "Project Memory Search",
-    description:
-      "Semantic search across accumulated project facts, decisions, patterns, and handoffs.",
-    promptSnippet:
-      "Use before reading 3+ files to understand a convention, pattern, or 'how do we do X'.",
-    promptGuidelines: [
-      "Searches facts and handoffs only. Todos are NOT indexed; use project_memory_list_todos for tasks.",
-      "CATEGORY FILTER — use only when the user explicitly asks for decisions (facts) or session summaries (handoffs). Otherwise leave it empty.",
-      "WORKFLOW — returns preview hits with item_id and score. Call project_memory_get({ item_id }) only if the preview is not detailed enough.",
-      "QUERY QUALITY — use specific technical terms, file names, or framework names. 'TypeBox validation' is better than 'validation'.",
-    ],
-    parameters: Type.Object({
-      query: Type.String({
-        minLength: 1,
-        maxLength: 500,
-        description: "What to search for. Be specific — use technical terms, file names, or problem descriptions.",
-      }),
-      category: CategoryFilterSchema,
-      limit: Type.Optional(Type.Integer({
-        minimum: 1,
-        maximum: 10,
-        default: 5,
-        description: "Max hits (1-10).",
-      })),
-    }),
-    async execute(_toolCallId, params, _signal, onUpdate, ctx): Promise<ToolResult> {
-      onUpdate?.({ content: [{ type: "text", text: `Searching project memory: "${params.query}"...` }], details: { phase: "search" } });
-      const projectId = await getProjectIdOrError(ctx);
-      if (typeof projectId !== "string") return projectId;
-      try {
-        const data = await apiPost("/api/project_memory/search", {
-          query: params.query,
-          project_id: projectId,
-          category: params.category || undefined,
-          limit: params.limit ?? 5,
-        });
-        const hits: ApiRecord[] = data.hits || [];
-        if (hits.length === 0) {
-          return {
-            content: [{ type: "text", text: "No relevant project memory found. Try a different query or ask the user to save more facts." }],
+            content: [{ type: "text", text: "No relevant project facts found." }],
             details: { project_id: projectId, hits: 0 },
           };
         }
-        const preview = formatListPreview(hits, true);
-        const out = `Found ${hits.length} relevant fact(s) for "${projectId}":\n\n${preview}\n\nUse project_memory_get({ item_id: "..." }) with the ID shown above to read full detail.`;
+
+        const preview = formatListPreview(records, !recent);
+        const out = `Found ${records.length} fact(s) for "${projectId}":\n\n${preview}`;
+        const clamped = clampTotalText(records, out);
         return {
-          content: [{ type: "text", text: out }],
-          details: { project_id: projectId, hits: hits.length },
-        };
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    },
-    renderCall(args, theme) {
-      const q = (args as any).query || "";
-      const display = q.length > 40 ? q.slice(0, 37) + "..." : q;
-      return new Text(theme.fg("toolTitle", theme.bold("project_memory_search ")) + theme.fg("accent", `"${display}"`), 0, 0);
-    },
-    renderResult(result, { expanded }, theme) {
-      const d = result.details as ToolResultDetails;
-      if (d?.error) return renderError(theme, d.error);
-      const line = theme.fg("success", `${d?.hits ?? 0} hits`) + theme.fg("muted", ` • ${d?.project_id ?? ""}`);
-      if (!expanded) return new Text(line, 0, 0);
-      const text = getTextContent(result);
-      const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
-      return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
-    },
-  });
-
-  // -------------------------------------------------------------------------
-  // project_memory_get
-  // -------------------------------------------------------------------------
-  pi.registerTool({
-    name: "project_memory_get",
-    label: "Project Memory Get",
-    description: "Read the full detail of a specific project memory record by item_id.",
-    promptSnippet: "Follow-up to project_memory_search or project_memory_recent. Use the exact item_id from the previous result.",
-    promptGuidelines: [
-      "Use when the preview from project_memory_search or project_memory_recent is not detailed enough.",
-      "Pass the exact item_id string shown in the previous result. Do not guess IDs.",
-      "NEVER call this without a concrete item_id from a previous tool result.",
-    ],
-    parameters: Type.Object({
-      item_id: Type.String({
-        minLength: 1,
-        description: "Exact item_id from a previous search or recent result.",
-      }),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
-      const projectId = await getProjectIdOrError(ctx);
-      if (typeof projectId !== "string") return projectId;
-      try {
-        const data = await apiPost("/api/project_memory/get", { project_id: projectId, item_id: params.item_id });
-        const r: ApiRecord = data.record;
-        return {
-          content: [{ type: "text", text: formatRecordDetail(r) }],
-          details: { item_id: r.item_id, project_id: projectId },
-        };
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    },
-    renderCall(args, theme) {
-      return new Text(theme.fg("toolTitle", theme.bold("project_memory_get ")) + theme.fg("accent", (args as any).item_id || "?"), 0, 0);
-    },
-    renderResult(result, { expanded }, theme) {
-      const d = result.details as ToolResultDetails;
-      if (d?.error) return renderError(theme, d.error);
-      const text = getTextContent(result);
-      if (!expanded) {
-        const preview = text.length > 80 ? text.slice(0, 77) + "..." : text;
-        return new Text(theme.fg("success", d?.item_id ?? "record") + theme.fg("dim", ` • ${preview}`), 0, 0);
-      }
-      const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
-      return new Text(theme.fg("success", d?.item_id ?? "record") + "\n" + theme.fg("dim", preview), 0, 0);
-    },
-  });
-
-  // -------------------------------------------------------------------------
-  // project_memory_save
-  // -------------------------------------------------------------------------
-  const SaveKindSchema = Type.Union([
-    Type.Literal("fact"),
-    Type.Literal("handoff"),
-    Type.Literal("todo"),
-  ], {
-    description: "What to save: fact (eternal knowledge), handoff (session summary), or todo (open task).",
-  });
-
-  pi.registerTool({
-    name: "project_memory_save",
-    label: "Project Memory Save",
-    description:
-      "Save a durable project record: a fact, a session handoff, or an open todo. Only save what would help a future agent in 30 days.",
-    promptSnippet:
-      "Save kind='fact' for durable knowledge, kind='handoff' for session state, kind='todo' for follow-up work. Skip anything not useful in 30 days.",
-    promptGuidelines: [
-      "FACT — kind='fact', fact_type=decision|pattern|gotcha|architecture|bugfix. Use for non-obvious decisions, patterns, traps, or bug roots.",
-      "HANDOFF — kind='handoff'. Use at the end of a meaningful session to capture state and next steps. Handoffs rotate (last 30 kept). Do not use for eternal facts.",
-      "TODO — kind='todo'. Use for follow-up work that must not be forgotten. Todos are not indexed.",
-      "QUALITY GATE — only save what would help a future agent in 30 days. Skip obvious code, style fixes, vague summaries, and one-off requests.",
-      "TOPIC — keep under 6 words. Examples: 'Runtime dep install path', 'Auth via credentials provider', 'Session 12'.",
-      "WHAT — one or two concrete sentences. Not 'we discussed auth', but 'Auth uses NextAuth credentials provider with bcrypt hashing'.",
-      "FACT_TYPE MAPPING — 'we added a feature' → pattern or architecture. 'bug fixed' → bugfix. 'design choice' → decision. 'non-obvious trap' → gotcha. Never use 'feature', 'refactor', 'task', 'improvement'.",
-      "WHY/WHERE/TAGS — only for facts. WHERE uses paths relative to the project root. WHY explains reasoning so future agents do not revert the decision.",
-      "STATUS — only for todos. Default is 'active'. Use 'done' or 'archived' if the user explicitly marks it so.",
-    ],
-    parameters: Type.Object({
-      kind: SaveKindSchema,
-      topic: TopicSchema,
-      what: WhatSchema,
-      fact_type: Type.Optional(FactTypeSchema),
-      why: WhySchema,
-      where: WhereSchema,
-      tags: TagsSchema,
-      status: Type.Optional(Type.Union([
-        Type.Literal("active"),
-        Type.Literal("done"),
-        Type.Literal("archived"),
-      ], {
-        default: "active",
-        description: "Initial status for todos. Ignored for facts and handoffs.",
-      })),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
-      const projectId = await getProjectIdOrError(ctx);
-      if (typeof projectId !== "string") return projectId;
-      try {
-        let category: string;
-        let type: string;
-        let why = "";
-        let where: string[] = [];
-        let tags: string[] = [];
-        let status = "active";
-        let label = "";
-
-        switch (params.kind) {
-          case "fact": {
-            if (!params.fact_type) {
-              return errorResult("'fact_type' is required when kind='fact'. Use decision, pattern, gotcha, architecture, or bugfix.");
-            }
-            category = "facts";
-            type = params.fact_type;
-            why = params.why || "";
-            where = params.where || [];
-            tags = params.tags || [];
-            label = "fact";
-            break;
-          }
-          case "handoff": {
-            category = "handoffs";
-            type = "progress";
-            label = "handoff";
-            break;
-          }
-          case "todo": {
-            category = "todos";
-            type = "todo_item";
-            status = params.status ?? "active";
-            label = "todo";
-            break;
-          }
-        }
-
-        const result = await apiPost("/api/project_memory/add", {
-          project_id: projectId,
-          category,
-          type,
-          topic: params.topic,
-          what: params.what,
-          why,
-          where,
-          tags,
-          status,
-        });
-        return {
-          content: [{ type: "text", text: `Saved ${label}: ${params.topic} (id: ${result.item_id})` }],
-          details: { item_id: result.item_id, project_id: projectId, kind: params.kind },
+          content: [{ type: "text", text: clamped }],
+          details: { project_id: projectId, hits: records.length },
         };
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
@@ -571,77 +435,18 @@ export default function (pi: ExtensionAPI) {
     },
     renderCall(args, theme) {
       const a = args as any;
-      const kind = a.kind || "?";
-      const t = a.topic || "";
-      const display = t.length > 25 ? t.slice(0, 22) + "..." : t;
-      return new Text(theme.fg("toolTitle", theme.bold(`project_memory_save ${kind} `)) + theme.fg("accent", display), 0, 0);
-    },
-    renderResult(result, _options, theme) {
-      const d = result.details as ToolResultDetails & { kind?: string };
-      if (d?.error) return renderError(theme, d.error);
-      return new Text(theme.fg("success", `saved ${d?.kind ?? "record"}`) + theme.fg("muted", ` • ${d?.item_id ?? ""}`), 0, 0);
-    },
-  });
-
-  // -------------------------------------------------------------------------
-  // project_memory_list_todos
-  // -------------------------------------------------------------------------
-  pi.registerTool({
-    name: "project_memory_list_todos",
-    label: "Project Memory Todos",
-    description: "List open (or done) todo items for the current project.",
-    promptSnippet: "Use when the user asks about remaining work, next steps, or open tasks.",
-    promptGuidelines: [
-      "STATUS — default 'active'. Use 'done' only if the user explicitly asks for completed todos.",
-      "SCOPE — todos are not searchable via project_memory_search. Use this tool for all todo queries.",
-    ],
-    parameters: Type.Object({
-      status: TodoStatusSchema,
-      limit: Type.Optional(Type.Integer({
-        minimum: 1,
-        maximum: 50,
-        default: 20,
-        description: "Max todos to return (1-50).",
-      })),
-    }),
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
-      const projectId = await getProjectIdOrError(ctx);
-      if (typeof projectId !== "string") return projectId;
-      try {
-        const data = await apiPost("/api/project_memory/todos", {
-          project_id: projectId,
-          status: params.status ?? "active",
-          limit: params.limit ?? 20,
-        });
-        const records: ApiRecord[] = data.records || [];
-        if (records.length === 0) {
-          return {
-            content: [{ type: "text", text: `No ${params.status ?? "active"} todos for "${projectId}".` }],
-            details: { project_id: projectId, count: 0 },
-          };
-        }
-        const lines = records
-          .map((r, i) => `${i + 1}. [${r.status}] ${r.topic}\n   ${r.what}\n   ID: ${r.item_id}`)
-          .join("\n\n");
-        return {
-          content: [{ type: "text", text: `Todos for "${projectId}" (${records.length}):\n\n${lines}` }],
-          details: { project_id: projectId, count: records.length },
-        };
-      } catch (err) {
-        return errorResult(err instanceof Error ? err.message : String(err));
-      }
-    },
-    renderCall(args, theme) {
-      const s = (args as any).status ?? "active";
-      return new Text(theme.fg("toolTitle", theme.bold("project_memory_todos ")) + theme.fg("accent", s), 0, 0);
+      const display = a.query && !a.recent
+        ? (a.query.length > 40 ? a.query.slice(0, 37) + "..." : a.query)
+        : "recent";
+      return new Text(theme.fg("toolTitle", theme.bold("project_facts ")) + theme.fg("accent", `"${display}"`), 0, 0);
     },
     renderResult(result, { expanded }, theme) {
       const d = result.details as ToolResultDetails;
       if (d?.error) return renderError(theme, d.error);
-      const line = theme.fg("success", `${d?.count ?? 0} todos`) + theme.fg("muted", ` • ${d?.project_id ?? ""}`);
+      const line = theme.fg("success", `${d?.hits ?? 0} facts`) + theme.fg("muted", ` • ${d?.project_id ?? ""}`);
       if (!expanded) return new Text(line, 0, 0);
       const text = getTextContent(result);
-      const preview = text.length > 400 ? text.slice(0, 400) + "..." : text;
+      const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
       return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
     },
   });
@@ -650,96 +455,257 @@ export default function (pi: ExtensionAPI) {
   // Commands
   // -------------------------------------------------------------------------
 
-  pi.registerCommand("pm-status", {
-    description: "Show project memory status",
+  pi.registerCommand("pm", {
+    description: "Interactive project memory dashboard: browse, search, add, edit, delete facts and todos.",
     handler: async (_args, ctx) => {
-      const projectId = await resolveProjectId(ctx.cwd);
-      try {
-        const data = await apiGet("/api/project_memory/status");
-        const counts = data.projects?.[projectId] || { facts: 0, handoffs: 0, todos: 0 };
-        notify(ctx, `Project: ${projectId}\nFacts: ${counts.facts} | Handoffs: ${counts.handoffs} | Todos: ${counts.todos}`, "info");
-      } catch (err) {
-        notifyError(ctx, err);
-      }
-    },
-  });
-
-  pi.registerCommand("pm-recent", {
-    description: "Show recent project handoffs (usage: /pm-recent [N])",
-    handler: async (args, ctx) => {
-      const projectId = await resolveProjectId(ctx.cwd);
-      const limit = Math.max(1, Math.min(parseInt(args.trim()) || 5, 5));
-      try {
-        const data = await apiPost("/api/project_memory/list", { project_id: projectId, category: "handoffs", limit });
-        const records: ApiRecord[] = data.records || [];
-        if (records.length === 0) {
-          notify(ctx, `No recent handoffs for "${projectId}".`, "warning");
-          return;
-        }
-        const out = `Recent handoffs for "${projectId}":\n\n` + records.map((r) => `- ${r.item_id}: ${r.topic}\n  ${r.what}`).join("\n");
-        notify(ctx, out, "info");
-      } catch (err) {
-        notifyError(ctx, err);
-      }
-    },
-  });
-
-  pi.registerCommand("pm-todos", {
-    description: "Show project todos (usage: /pm-todos [active|done|archived])",
-    handler: async (args, ctx) => {
-      const projectId = await resolveProjectId(ctx.cwd);
-      const status = ["active", "done", "archived"].includes(args.trim()) ? args.trim() : "active";
-      try {
-        const data = await apiPost("/api/project_memory/todos", { project_id: projectId, status, limit: 20 });
-        const records: ApiRecord[] = data.records || [];
-        if (records.length === 0) {
-          notify(ctx, `No ${status} todos for "${projectId}".`, "warning");
-          return;
-        }
-        const out = `${status} todos for "${projectId}":\n\n` + records.map((r) => `- ${r.item_id}: [${r.status}] ${r.topic}\n  ${r.what}`).join("\n");
-        notify(ctx, out, "info");
-      } catch (err) {
-        notifyError(ctx, err);
-      }
-    },
-  });
-
-  pi.registerCommand("pm-search", {
-    description: "Search project memory (usage: /pm-search <query>)",
-    handler: async (args, ctx) => {
-      const query = args.trim();
-      if (!query) {
-        notify(ctx, "Usage: /pm-search <query>", "warning");
+      if (!ctx.hasUI) {
+        notify(ctx, "Interactive UI requires TUI mode.", "warning");
         return;
       }
       const projectId = await resolveProjectId(ctx.cwd);
+      const menuItems = [
+        "🔍 Search",
+        "📚 Browse facts",
+        "✅ List todos",
+        "➕ Add fact",
+        "➕ Add todo",
+        "📄 Get record",
+        "🗑️ Delete record",
+        "🤖 Curate facts",
+        "⚙️ Settings",
+      ];
+      const actionLabel = await ctx.ui.select("Project Memory", menuItems);
+      if (!actionLabel) return;
+      const action = actionLabel.split(" ").slice(1).join(" ");
+
       try {
-        const data = await apiPost("/api/project_memory/search", { project_id: projectId, query, limit: 5 });
-        const hits: ApiRecord[] = data.hits || [];
-        if (hits.length === 0) {
-          notify(ctx, `No results for "${query}".`, "warning");
-          return;
+        if (action === "Search") {
+          const query = await ctx.ui.input("Search query", "");
+          if (!query) return;
+          const data = await apiPost("/api/project_memory/search", { project_id: projectId, query, limit: 10 });
+          const hits: ApiRecord[] = data.hits || [];
+          if (!hits.length) {
+            ctx.ui.notify("No results.", "warning");
+            return;
+          }
+          const labels = hits.map((h, i) => formatTuiLabel(h, i));
+          const selected = await ctx.ui.select("Search results", labels);
+          if (selected) {
+            const idx = parseInt(selected.split(".")[0]);
+            ctx.ui.notify(formatRecordDetail(hits[idx]), "info");
+          }
+        } else if (action === "Add fact") {
+          const type = (await ctx.ui.select("Type", ["decision", "pattern", "gotcha", "architecture", "bugfix"])) || "decision";
+          const topic = await ctx.ui.input("Topic (max 6 words)", "");
+          if (!topic) return;
+          const what = await ctx.ui.editor("What (one concrete sentence)");
+          if (!what) return;
+          const why = await ctx.ui.editor("Why (optional)");
+          const whereRaw = await ctx.ui.input("Where (comma-separated)", "");
+          const where = whereRaw ? whereRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+          const tagsRaw = await ctx.ui.input("Tags (comma-separated)", "");
+          const tags = tagsRaw ? tagsRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
+          const result: AddResult = await apiPost("/api/project_memory/add", {
+            project_id: projectId,
+            category: "facts",
+            type,
+            topic: topic.trim(),
+            what: what.trim(),
+            why: why?.trim() || "",
+            where,
+            tags,
+          });
+          const { message } = formatAddResult(result, topic);
+          ctx.ui.notify(message, "info");
+        } else if (action === "Add todo") {
+          const topic = await ctx.ui.input("Topic (max 6 words)", "");
+          if (!topic) return;
+          const what = await ctx.ui.editor("What needs to be done?");
+          if (!what) return;
+          const result = await apiPost("/api/project_memory/add", {
+            project_id: projectId,
+            category: "todos",
+            type: "todo_item",
+            topic: topic.trim(),
+            what: what.trim(),
+            why: "",
+            where: [],
+            tags: [],
+          });
+          ctx.ui.notify(`Saved todo "${topic}" (id: ${result.item_id})`, "info");
+        } else if (action === "List todos") {
+          const data = await apiPost("/api/project_memory/todos", { project_id: projectId, limit: 20 });
+          const records: ApiRecord[] = data.records || [];
+          if (!records.length) {
+            ctx.ui.notify("No todos.", "warning");
+            return;
+          }
+          const labels = records.map((r, i) => formatTuiLabel(r, i, "todo"));
+          const selected = await ctx.ui.select("Todos", labels);
+          if (selected) {
+            const idx = parseInt(selected.split(".")[0]);
+            ctx.ui.notify(formatRecordDetail(records[idx]), "info");
+          }
+        } else if (action === "Get record") {
+          const data = await apiPost("/api/project_memory/list_all", { project_id: projectId, limit: 50 });
+          const records: ApiRecord[] = data.records || [];
+          if (!records.length) {
+            ctx.ui.notify("No records found.", "warning");
+            return;
+          }
+          const labels = records.map((r, i) => formatTuiLabel(r, i));
+          const selected = await ctx.ui.select("Select a record", labels);
+          if (!selected) return;
+          const idx = parseInt(selected.split(".")[0]);
+          ctx.ui.notify(formatRecordDetail(records[idx]), "info");
+        } else if (action === "Browse facts") {
+          const data = await apiPost("/api/project_memory/list", { project_id: projectId, category: "facts", limit: 50 });
+          const records: ApiRecord[] = data.records || [];
+          if (!records.length) {
+            ctx.ui.notify("No facts found.", "warning");
+            return;
+          }
+          const labels = records.map((r, i) => formatTuiLabel(r, i));
+          const selected = await ctx.ui.select("Facts", labels);
+          if (!selected) return;
+          const idx = parseInt(selected.split(".")[0]);
+          const r = records[idx];
+          ctx.ui.notify(formatRecordDetail(r), "info");
+          const action2 = await ctx.ui.select(`${r.topic.slice(0, 40)}`, ["✏️ Edit", "🗑️ Delete", "← Back"]);
+          if (!action2) return;
+          if (action2 === "✏️ Edit") {
+            const fields = {
+              topic: r.topic,
+              what: r.what,
+              why: r.why || "",
+              where: (r.where || []).join(", "),
+              tags: (r.tags || []).join(", "),
+            };
+            let editing = true;
+            while (editing) {
+              const preview = (text: string, len = 40) => (text.length > len ? text.slice(0, len) + "..." : text || "(empty)");
+              const choice = await ctx.ui.select("Choose field to edit", [
+                `Topic: ${preview(fields.topic, 35)}`,
+                `What: ${preview(fields.what, 50)}`,
+                `Why: ${preview(fields.why, 40)}`,
+                `Where: ${preview(fields.where, 35)}`,
+                `Tags: ${preview(fields.tags, 35)}`,
+                "💾 Save changes",
+                "← Cancel",
+              ]);
+              if (!choice || choice === "← Cancel") return;
+              if (choice === "💾 Save changes") {
+                editing = false;
+                break;
+              }
+              const fieldName = choice.split(":")[0].toLowerCase();
+              if (fieldName === "topic") {
+                const val = await ctx.ui.input("Topic (max 6 words)", fields.topic);
+                if (val !== undefined) fields.topic = val;
+              } else if (fieldName === "what") {
+                const val = await ctx.ui.editor("What (one concrete sentence)", fields.what);
+                if (val !== undefined) fields.what = val;
+              } else if (fieldName === "why") {
+                const val = await ctx.ui.editor("Why (optional)", fields.why);
+                if (val !== undefined) fields.why = val;
+              } else if (fieldName === "where") {
+                const val = await ctx.ui.input("Where (comma-separated)", fields.where);
+                if (val !== undefined) fields.where = val;
+              } else if (fieldName === "tags") {
+                const val = await ctx.ui.input("Tags (comma-separated)", fields.tags);
+                if (val !== undefined) fields.tags = val;
+              }
+            }
+            const topic = fields.topic.trim();
+            const what = fields.what.trim();
+            if (!topic || !what) {
+              ctx.ui.notify("Topic and What cannot be empty. Update cancelled.", "warning");
+              return;
+            }
+            const where = fields.where ? fields.where.split(",").map((s) => s.trim()).filter(Boolean) : [];
+            const tags = fields.tags ? fields.tags.split(",").map((s) => s.trim()).filter(Boolean) : [];
+            await apiPost("/api/project_memory/update_full", {
+              project_id: projectId,
+              item_id: r.item_id,
+              fields: { topic, what, why: fields.why.trim(), where, tags },
+            });
+            ctx.ui.notify(`Updated ${r.item_id}`, "info");
+          } else if (action2 === "🗑️ Delete") {
+            const ok = await ctx.ui.confirm("Delete", `Delete ${r.item_id}?`);
+            if (!ok) return;
+            await apiPost("/api/project_memory/delete", { project_id: projectId, item_id: r.item_id });
+            ctx.ui.notify(`Deleted ${r.item_id}`, "info");
+          }
+        } else if (action === "Delete record") {
+          const data = await apiPost("/api/project_memory/list_all", { project_id: projectId, limit: 50 });
+          const records: ApiRecord[] = data.records || [];
+          if (!records.length) {
+            ctx.ui.notify("No records found.", "warning");
+            return;
+          }
+          const labels = records.map((r, i) => formatTuiLabel(r, i));
+          const selected = await ctx.ui.select("Select a record to delete", labels);
+          if (!selected) return;
+          const idx = parseInt(selected.split(".")[0]);
+          const r = records[idx];
+          const ok = await ctx.ui.confirm("Delete", `Are you sure you want to delete ${r.item_id}?`);
+          if (!ok) return;
+          await apiPost("/api/project_memory/delete", { project_id: projectId, item_id: r.item_id });
+          ctx.ui.notify(`Deleted ${r.item_id}`, "info");
+        } else if (action === "Curate facts") {
+          const currentState = getLatestCurateState(ctx);
+          const isOn = currentState?.enabled ?? false;
+          const powerMenu = isOn ? ["⛔ Turn off curation"] : ["⚡ Turn on curation"];
+          const powerChoice = await ctx.ui.select("Project memory curation", powerMenu);
+          if (!powerChoice) return;
+          if (isOn) {
+            pi.appendEntry(PROJECT_MEMORY_CURATE_STATE_TYPE, { enabled: false, mode: null });
+            syncProjectMemoryTools(ctx);
+            setCurateStatus(ctx, null);
+            ctx.ui.notify("Project memory curation OFF", "info");
+            return;
+          }
+          const modeMenu = ["🤖 Auto", "👤 Manual"];
+          const modeChoice = await ctx.ui.select("Curation mode", modeMenu);
+          if (!modeChoice) return;
+          const mode = modeChoice === "🤖 Auto" ? "auto" : "manual";
+          pi.appendEntry(PROJECT_MEMORY_CURATE_STATE_TYPE, { enabled: true, mode });
+          syncProjectMemoryTools(ctx);
+          setCurateStatus(ctx, { enabled: true, mode });
+          const prefilled = mode === "auto"
+            ? "Review the latest project memory facts. Use curate_facts({ action: 'list' }) to fetch up to 20 facts, inspect the files listed in 'where', then call curate_facts with update/merge/delete for any fact that is stale, duplicate, or incorrect. Leave correct facts untouched. Report a summary of changes with reasons."
+            : "Use curate_facts to inspect and manage project memory facts. Ask me before any destructive action (delete/merge) or if a fact's correctness is unclear.";
+          ctx.ui.setEditorText(prefilled);
+          ctx.ui.notify(`Project memory curation ${mode.toUpperCase()} — edit the prompt and press Enter`, "info");
+        } else if (action === "Settings") {
+          const settings = getProjectMemorySettings();
+          const choice = await ctx.ui.select(
+            "Project memory settings",
+            [`Debug logging: ${settings.debug ? "ON" : "OFF"}`, "← Back"],
+          );
+          if (choice === "← Back" || !choice) return;
+          settings.debug = !settings.debug;
+          await saveProjectMemorySettings(settings);
+          ctx.ui.notify(`Debug logging ${settings.debug ? "ON" : "OFF"}`, "info");
         }
-        const out = `Search results for "${query}":\n\n` + hits.map((h) => `- ${h.item_id} [${h.category}] ${h.topic} (${(h.score ?? 0).toFixed(2)})\n  ${h.what}`).join("\n");
-        notify(ctx, out, "info");
       } catch (err) {
-        notifyError(ctx, err);
+        const msg = err instanceof Error ? err.message : String(err);
+        ctx.ui.notify(`Error: ${msg}`, "error");
       }
     },
   });
 
-  function parsePipeArgs(raw: string, expected: number): string[] | null {
-    const parts = raw.split("|").map((s) => s.trim());
-    if (parts.length !== expected || parts.some((p) => !p)) return null;
-    return parts;
-  }
-
-  pi.registerCommand("pm-add-fact", {
-    description: "Save a project fact (usage: /pm-add-fact type|topic|what)",
+  pi.registerCommand("remember", {
+    description: "Save a project fact. Usage: /remember type|topic|what. Types: decision, pattern, gotcha, architecture, bugfix.",
     handler: async (args, ctx) => {
-      const parts = parsePipeArgs(args.trim(), 3);
-      if (!parts) {
-        notify(ctx, "Usage: /pm-add-fact type|topic|what\nTypes: decision, pattern, gotcha, architecture, bugfix\nExample: /pm-add-fact decision|API style|All mutations use POST", "warning");
+      const raw = args.trim();
+      if (!raw) {
+        notify(ctx, "Usage: /remember type|topic|what\nExample: /remember decision|API style|All mutations use POST", "warning");
+        return;
+      }
+      const parts = raw.split("|").map((s) => s.trim());
+      if (parts.length !== 3 || parts.some((p) => !p)) {
+        notify(ctx, "Usage: /remember type|topic|what", "warning");
         return;
       }
       const [type, topic, what] = parts;
@@ -750,7 +716,7 @@ export default function (pi: ExtensionAPI) {
       }
       const projectId = await resolveProjectId(ctx.cwd);
       try {
-        const result = await apiPost("/api/project_memory/add", {
+        const result: AddResult = await apiPost("/api/project_memory/add", {
           project_id: projectId,
           category: "facts",
           type,
@@ -760,47 +726,25 @@ export default function (pi: ExtensionAPI) {
           where: [],
           tags: [],
         });
-        notify(ctx, `Saved fact "${topic}" (id: ${result.item_id})`, "info");
+        const { message } = formatAddResult(result, topic);
+        notify(ctx, message, "info");
       } catch (err) {
         notifyError(ctx, err);
       }
     },
   });
 
-  pi.registerCommand("pm-add-handoff", {
-    description: "Save a session handoff (usage: /pm-add-handoff topic|what)",
+  pi.registerCommand("todo", {
+    description: "Save a project todo. Usage: /todo topic|what.",
     handler: async (args, ctx) => {
-      const parts = parsePipeArgs(args.trim(), 2);
-      if (!parts) {
-        notify(ctx, "Usage: /pm-add-handoff topic|what\nExample: /pm-add-handoff Session 3|Refactored indexer and added tests", "warning");
+      const raw = args.trim();
+      if (!raw) {
+        notify(ctx, "Usage: /todo topic|what\nExample: /todo Add tests|Write backend tests for project memory", "warning");
         return;
       }
-      const [topic, what] = parts;
-      const projectId = await resolveProjectId(ctx.cwd);
-      try {
-        const result = await apiPost("/api/project_memory/add", {
-          project_id: projectId,
-          category: "handoffs",
-          type: "progress",
-          topic,
-          what,
-          why: "",
-          where: [],
-          tags: [],
-        });
-        notify(ctx, `Saved handoff "${topic}" (id: ${result.item_id})`, "info");
-      } catch (err) {
-        notifyError(ctx, err);
-      }
-    },
-  });
-
-  pi.registerCommand("pm-add-todo", {
-    description: "Save a project todo (usage: /pm-add-todo topic|what)",
-    handler: async (args, ctx) => {
-      const parts = parsePipeArgs(args.trim(), 2);
-      if (!parts) {
-        notify(ctx, "Usage: /pm-add-todo topic|what\nExample: /pm-add-todo Add tests|Write backend tests for project memory", "warning");
+      const parts = raw.split("|").map((s) => s.trim());
+      if (parts.length !== 2 || parts.some((p) => !p)) {
+        notify(ctx, "Usage: /todo topic|what", "warning");
         return;
       }
       const [topic, what] = parts;
@@ -823,346 +767,377 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Legacy alias for muscle memory.
-  pi.registerCommand("pm-add", {
-    description: "Save a fact or todo (usage: /pm-add type|topic|what). Prefer /pm-add-fact, /pm-add-handoff, or /pm-add-todo.",
-    handler: async (args, ctx) => {
-      const raw = args.trim();
-      if (!raw) {
-        notify(ctx, "Usage: /pm-add type|topic|what. Prefer /pm-add-fact, /pm-add-handoff, or /pm-add-todo.", "warning");
-        return;
-      }
-      const parts = parsePipeArgs(raw, 3);
-      if (!parts) {
-        notify(ctx, "Usage: /pm-add type|topic|what\nExample: /pm-add decision|API style|All mutations use POST", "warning");
-        return;
-      }
-      const [type, topic, what] = parts;
-      const validTypes = new Set(["decision", "pattern", "gotcha", "architecture", "progress", "todo_item", "bugfix"]);
-      if (!validTypes.has(type)) {
-        notify(ctx, `Invalid type "${type}". Valid: decision, pattern, gotcha, architecture, progress, todo_item, bugfix`, "warning");
-        return;
-      }
-      const category = type === "todo_item" ? "todos" : type === "progress" ? "handoffs" : "facts";
-      const projectId = await resolveProjectId(ctx.cwd);
+  // -------------------------------------------------------------------------
+  // curate_facts — agent-driven fact curation (manually enabled)
+  // -------------------------------------------------------------------------
+  pi.registerTool({
+    name: CURATE_FACTS_TOOL,
+    label: "Curate Project Facts",
+    description:
+      "Curate saved project facts. List recent facts, then update, merge, or delete ones that are stale, duplicate, or incorrect. Leave correct facts untouched.",
+    promptSnippet: "Use when reviewing project memory facts for correctness, freshness, and duplicates.",
+    promptGuidelines: [
+      "Start with action 'list' to fetch the latest facts (up to 20).",
+      "Inspect the files/directories listed in 'where' using normal tools (read, grep, bash).",
+      "For correct facts: do nothing.",
+      "For outdated or wrong facts: call 'delete' with the item_id.",
+      "For duplicate facts: call 'merge' with source_item_id (the worse/older fact) and target_item_id (the better fact). Optionally pass 'fields' to set the merged topic/what/why/where/tags. The source is deleted automatically.",
+      "For facts that need editing: call 'update' with item_id and 'fields'.",
+      "Always provide a concise reason when updating, merging, or deleting.",
+      "Never delete or merge without evidence from the current code or docs.",
+    ],
+    parameters: Type.Object({
+      action: Type.String({
+        description: "One of: list, update, merge, delete.",
+      }),
+      item_id: Type.Optional(Type.String({ description: "Fact ID for update or delete." })),
+      source_item_id: Type.Optional(Type.String({ description: "Source fact ID when merging (the one to remove)." })),
+      target_item_id: Type.Optional(Type.String({ description: "Target fact ID when merging (the one to keep)." })),
+      reason: Type.Optional(Type.String({ description: "Short reason for update/merge/delete." })),
+      fields: Type.Optional(Type.Object({
+        topic: Type.Optional(Type.String()),
+        what: Type.Optional(Type.String()),
+        why: Type.Optional(Type.String()),
+        where: Type.Optional(Type.Array(Type.String())),
+        tags: Type.Optional(Type.Array(Type.String())),
+        type: Type.Optional(Type.String()),
+      }, { description: "Updated fields for 'update' or merged fields for 'merge'." })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx): Promise<ToolResult> {
+      const projectId = await getProjectIdOrError(ctx);
+      if (typeof projectId !== "string") return projectId;
+
+      const action = params.action;
       try {
-        const result = await apiPost("/api/project_memory/add", {
-          project_id: projectId,
-          category,
-          type,
-          topic,
-          what,
-          why: "",
-          where: [],
-          tags: [],
-        });
-        notify(ctx, `Saved ${category.slice(0, -1)} "${topic}" (id: ${result.item_id})`, "info");
+        if (action === "list") {
+          const data = await apiPost("/api/project_memory/review_queue", { project_id: projectId, limit: 20 });
+          const records: ApiRecord[] = data.records || [];
+          if (!records.length) {
+            return {
+              content: [{ type: "text", text: "No facts to review." }],
+              details: { project_id: projectId, count: 0 },
+            };
+          }
+          const preview = formatListPreview(records, false);
+          const out = `Found ${records.length} fact(s) to review:\n\n${preview}\n\nInspect the files listed in 'where', then call curate_facts with update/merge/delete. Leave correct facts untouched.`;
+          return {
+            content: [{ type: "text", text: out }],
+            details: { project_id: projectId, count: records.length },
+          };
+        }
+
+        if (action === "update") {
+          if (!params.item_id || !params.fields) {
+            return errorResult("item_id and fields are required for update");
+          }
+          const fields: Record<string, unknown> = {};
+          if (params.fields.topic !== undefined) fields.topic = params.fields.topic;
+          if (params.fields.what !== undefined) fields.what = params.fields.what;
+          if (params.fields.why !== undefined) fields.why = params.fields.why;
+          if (params.fields.where !== undefined) fields.where = params.fields.where;
+          if (params.fields.tags !== undefined) fields.tags = params.fields.tags;
+          if (params.fields.type !== undefined) fields.type = params.fields.type;
+          await apiPost("/api/project_memory/update_full", { project_id: projectId, item_id: params.item_id, fields });
+          return {
+            content: [{ type: "text", text: `Updated ${params.item_id}. Reason: ${params.reason || "(none given)"}` }],
+            details: { project_id: projectId, item_id: params.item_id, fields },
+          };
+        }
+
+        if (action === "merge") {
+          if (!params.source_item_id || !params.target_item_id) {
+            return errorResult("source_item_id and target_item_id are required for merge");
+          }
+          const data = await apiPost("/api/project_memory/merge", {
+            project_id: projectId,
+            source_item_id: params.source_item_id,
+            target_item_id: params.target_item_id,
+            fields: params.fields,
+          });
+          return {
+            content: [{ type: "text", text: `Merged ${params.source_item_id} into ${params.target_item_id}. Reason: ${params.reason || "(none given)"}` }],
+            details: {
+              project_id: projectId,
+              source_item_id: params.source_item_id,
+              target_item_id: params.target_item_id,
+              result: data,
+            },
+          };
+        }
+
+        if (action === "delete") {
+          if (!params.item_id) return errorResult("item_id is required for delete");
+          await apiPost("/api/project_memory/delete", { project_id: projectId, item_id: params.item_id });
+          return {
+            content: [{ type: "text", text: `Deleted ${params.item_id}. Reason: ${params.reason || "(none given)"}` }],
+            details: { project_id: projectId, item_id: params.item_id },
+          };
+        }
+
+        return errorResult(`Unknown action: ${action}`);
       } catch (err) {
-        notifyError(ctx, err);
+        return errorResult(err instanceof Error ? err.message : String(err));
       }
     },
-  });
-
-  pi.registerCommand("pm-handoff", {
-    description: "Save a session handoff (usage: /pm-handoff topic|what). Alias for /pm-add-handoff.",
-    handler: async (args, ctx) => {
-      // Reuse the same handler object by looking it up would require storing it.
-      // Just duplicate the small body.
-      const parts = parsePipeArgs(args.trim(), 2);
-      if (!parts) {
-        notify(ctx, "Usage: /pm-handoff topic|what\nExample: /pm-handoff Session 3|Refactored indexer and added tests", "warning");
-        return;
-      }
-      const [topic, what] = parts;
-      const projectId = await resolveProjectId(ctx.cwd);
-      try {
-        const result = await apiPost("/api/project_memory/add", {
-          project_id: projectId,
-          category: "handoffs",
-          type: "progress",
-          topic,
-          what,
-          why: "",
-          where: [],
-          tags: [],
-        });
-        notify(ctx, `Saved handoff "${topic}" (id: ${result.item_id})`, "info");
-      } catch (err) {
-        notifyError(ctx, err);
-      }
+    renderCall(args, theme) {
+      const a = args as any;
+      const action = a.action || "?";
+      const id = a.item_id || a.source_item_id || "";
+      const display = id ? `${action} ${id}` : action;
+      return new Text(theme.fg("toolTitle", theme.bold("curate_facts ")) + theme.fg("accent", display), 0, 0);
     },
-  });
-
-  pi.registerCommand("pm-get", {
-    description: "Read full detail of a project memory record (usage: /pm-get <item_id>)",
-    handler: async (args, ctx) => {
-      const itemId = args.trim();
-      if (!itemId) {
-        notify(ctx, "Usage: /pm-get <item_id>", "warning");
-        return;
+    renderResult(result, { expanded }, theme) {
+      const d = result.details as ToolResultDetails;
+      if (d?.error) return renderError(theme, d.error);
+      const text = getTextContent(result);
+      if (!expanded) {
+        const preview = text.length > 80 ? text.slice(0, 77) + "..." : text;
+        return new Text(theme.fg("success", d?.item_id ?? "curate") + theme.fg("dim", ` • ${preview}`), 0, 0);
       }
-      const projectId = await resolveProjectId(ctx.cwd);
-      try {
-        const data = await apiPost("/api/project_memory/get", { project_id: projectId, item_id: itemId });
-        notify(ctx, formatRecordDetail(data.record), "info");
-      } catch (err) {
-        notifyError(ctx, err);
-      }
-    },
-  });
-
-  pi.registerCommand("pm-update", {
-    description: "Update status of a record (usage: /pm-update <item_id> <status>)",
-    handler: async (args, ctx) => {
-      const parts = args.trim().split(/\s+/);
-      if (parts.length < 2) {
-        notify(ctx, "Usage: /pm-update <item_id> <status>", "warning");
-        return;
-      }
-      const [itemId, status] = parts;
-      const projectId = await resolveProjectId(ctx.cwd);
-      try {
-        await apiPost("/api/project_memory/update", { project_id: projectId, item_id: itemId, status });
-        notify(ctx, `Updated ${itemId} → ${status}`, "info");
-      } catch (err) {
-        notifyError(ctx, err);
-      }
-    },
-  });
-
-  pi.registerCommand("pm-delete", {
-    description: "Delete a project memory record (usage: /pm-delete <item_id>)",
-    handler: async (args, ctx) => {
-      const itemId = args.trim();
-      if (!itemId) {
-        notify(ctx, "Usage: /pm-delete <item_id>", "warning");
-        return;
-      }
-      const projectId = await resolveProjectId(ctx.cwd);
-      try {
-        await apiPost("/api/project_memory/delete", { project_id: projectId, item_id: itemId });
-        notify(ctx, `Deleted ${itemId}`, "info");
-      } catch (err) {
-        notifyError(ctx, err);
-      }
+      const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
+      return new Text(theme.fg("success", d?.item_id ?? "curate") + "\n" + theme.fg("dim", preview), 0, 0);
     },
   });
 
   // -------------------------------------------------------------------------
-  // Interactive dashboard
+  // /done — extract facts from current session, review, save
   // -------------------------------------------------------------------------
-  pi.registerCommand("pm", {
-    description: "Interactive project memory dashboard (TUI)",
+  function entryToMessage(entry: any): any | undefined {
+    if (entry.type === "message" && entry.message) {
+      return entry.message;
+    }
+    if (entry.type === "compaction") {
+      return {
+        role: "compactionSummary",
+        summary: entry.summary,
+        tokensBefore: entry.tokensBefore,
+        timestamp: new Date(entry.timestamp).getTime(),
+      };
+    }
+    return undefined;
+  }
+
+  function getSessionMessages(branch: any[]): any[] {
+    let compactionIndex = -1;
+    for (let i = branch.length - 1; i >= 0; i--) {
+      if (branch[i].type === "compaction") {
+        compactionIndex = i;
+        break;
+      }
+    }
+    if (compactionIndex < 0) {
+      return branch.map(entryToMessage).filter((m): m is any => m !== undefined);
+    }
+    const compaction = branch[compactionIndex];
+    const firstKeptIndex = compaction.type === "compaction"
+      ? branch.findIndex((entry) => entry.id === compaction.firstKeptEntryId)
+      : -1;
+    const compactedBranch = [
+      compaction,
+      ...(firstKeptIndex >= 0 ? branch.slice(firstKeptIndex, compactionIndex) : []),
+      ...branch.slice(compactionIndex + 1),
+    ];
+    return compactedBranch.map(entryToMessage).filter((m): m is any => m !== undefined);
+  }
+
+  function extractToolSummary(toolName: string, details: any): string {
+    if (!details || typeof details !== "object") return `tool:${toolName}`;
+    const path = details.path || details.file_path || details.url || details.command || details.query || details.pattern;
+    if (path) return `tool:${toolName} ${path}`;
+    const keys = Object.keys(details).slice(0, 2);
+    const args = keys.map((k) => `${k}=${JSON.stringify(details[k])}`).join(" ");
+    return args ? `tool:${toolName} ${args}` : `tool:${toolName}`;
+  }
+
+  function extractToolSnippet(toolName: string, details: any): string {
+    const text = details && typeof details === "object" ? JSON.stringify(details) : String(details || "");
+    if (text.length <= 400) return text;
+    return text.slice(0, 200) + "\n...[truncated]...\n" + text.slice(-200);
+  }
+
+  function truncateAssistantText(text: string, maxChars = 24000): string {
+    if (text.length <= maxChars) return text;
+    const head = text.slice(0, Math.floor(maxChars / 2));
+    const tail = text.slice(-Math.floor(maxChars / 2));
+    return `${head}\n\n...[long assistant message truncated]...\n\n${tail}`;
+  }
+
+  function formatAssistantMessage(m: any): string {
+    const content = Array.isArray(m.content) ? m.content : [];
+    const textParts: string[] = [];
+    const toolCalls: string[] = [];
+    for (const block of content) {
+      if (block?.type === "text" && typeof block.text === "string") {
+        textParts.push(block.text);
+      } else if (block?.type === "toolCall" && block.name) {
+        const args = block.arguments || {};
+        const target = args.path || args.file_path || args.url || args.command || args.query || args.pattern;
+        toolCalls.push(target ? `${block.name} ${target}` : block.name);
+      }
+      // thinking blocks are intentionally skipped.
+    }
+    let out = textParts.join("\n\n").trim();
+    if (toolCalls.length) {
+      const toolLine = `[tools: ${toolCalls.join(", ")}]`;
+      out = out ? `${out}\n\n${toolLine}` : toolLine;
+    }
+    return truncateAssistantText(out);
+  }
+
+  async function buildTranscript(ctx: ExtensionCommandContext, includeToolResults = false): Promise<string> {
+    const branch = ctx.sessionManager.getBranch();
+    const messages = getSessionMessages(branch);
+    const llmMessages = convertToLlm(messages);
+
+    const lines: string[] = [];
+    for (const rawM of llmMessages) {
+      const m = rawM as any;
+      if (m.role === "user") {
+        const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        lines.push(`## ${m.role}\n${text}`);
+      } else if (m.role === "assistant") {
+        lines.push(`## ${m.role}\n${formatAssistantMessage(m)}`);
+      } else if (m.role === "toolResult") {
+        const toolName = m.toolName || "tool";
+        const details = m.details;
+        if (includeToolResults) {
+          const args = details && typeof details === "object" ? extractToolArgs(details) : "";
+          const snippet = extractToolSnippet(toolName, details);
+          lines.push(`## toolResult: ${toolName}${args ? ` ${args}` : ""}\n${snippet}`);
+        } else {
+          lines.push(`## ${extractToolSummary(toolName, details)}`);
+        }
+      } else {
+        const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        lines.push(`## ${m.role}\n${text}`);
+      }
+    }
+    const transcript = lines.join("\n\n");
+
+    // Diagnostic: log rough transcript size and role distribution when debug is enabled.
+    const settings = getProjectMemorySettings();
+    if (settings.debug) {
+      try {
+        const diag = llmMessages.map((m: any) => {
+          const text = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+          return { role: m.role, toolName: m.toolName, len: text.length };
+        });
+        const logDir = path.join(getAgentDir(), "logs", "project-memory");
+        fs.mkdirSync(logDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(logDir, `transcript-diag-${Date.now()}.json`),
+          JSON.stringify({ total: llmMessages.length, transcriptLen: transcript.length, roles: diag }, null, 2),
+          "utf-8",
+        );
+      } catch {
+        // ignore
+      }
+    }
+
+    return transcript;
+  }
+
+  function extractToolArgs(details: any): string {
+    if (!details || typeof details !== "object") return "";
+    const path = details.path || details.file_path || details.url || details.command || details.query || details.pattern;
+    if (path) return String(path);
+    const keys = Object.keys(details).slice(0, 2);
+    return keys.map((k) => `${k}=${JSON.stringify(details[k])}`).join(" ");
+  }
+
+  pi.registerCommand("done", {
+    description: "Digest the current session: extract durable facts with a local LLM, review them, and save to project memory.",
     handler: async (_args, ctx) => {
       if (!ctx.hasUI) {
-        notify(ctx, "Interactive UI requires TUI mode. Use individual /pm-* commands instead.", "warning");
+        notify(ctx, "Interactive UI required for /done.", "warning");
         return;
       }
       const projectId = await resolveProjectId(ctx.cwd);
-      const menuItems = [
-        "📊 Status",
-        "📜 Recent handoffs",
-        "🔍 Search",
-        "📚 Browse facts",
-        "➕ Add fact",
-        "➕ Add handoff",
-        "➕ Add todo",
-        "✅ List todos",
-        "📄 Get record",
-        "✏️ Update status",
-        "🗑️ Delete record",
-      ];
-      const actionLabel = await ctx.ui.select("Project Memory", menuItems);
-      if (!actionLabel) return;
-      const action = actionLabel.split(" ").slice(1).join(" ");
+      if (!hasProjectId(ctx.cwd)) {
+        notify(ctx, `Project memory not configured. Create .project-id in ${ctx.cwd}.`, "warning");
+        return;
+      }
 
+      const transcript = await buildTranscript(ctx);
+      if (!transcript.trim()) {
+        notify(ctx, "No session history to digest.", "warning");
+        return;
+      }
+
+      let data: any;
       try {
-        if (action === "Status") {
-          const data = await apiGet("/api/project_memory/status");
-          const counts = data.projects?.[projectId] || { facts: 0, handoffs: 0, todos: 0 };
-          ctx.ui.notify(`Project: ${projectId}\nFacts: ${counts.facts} | Handoffs: ${counts.handoffs} | Todos: ${counts.todos}`, "info");
-        } else if (action === "Recent handoffs") {
-          const raw = await ctx.ui.input("How many handoffs?", "5");
-          const limit = Math.max(1, Math.min(parseInt(raw || "5") || 5, 5));
-          const data = await apiPost("/api/project_memory/list", { project_id: projectId, category: "handoffs", limit });
-          const records: ApiRecord[] = data.records || [];
-          if (!records.length) {
-            ctx.ui.notify("No recent handoffs.", "warning");
-            return;
-          }
-          const labels = records.map((r, i) => `${i}. ${r.item_id}: ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Recent handoffs", labels);
-          if (selected) {
-            const idx = parseInt(selected.split(".")[0]);
-            ctx.ui.notify(formatRecordDetail(records[idx]), "info");
-          }
-        } else if (action === "Search") {
-          const query = await ctx.ui.input("Search query", "");
-          if (!query) return;
-          const data = await apiPost("/api/project_memory/search", { project_id: projectId, query, limit: 10 });
-          const hits: ApiRecord[] = data.hits || [];
-          if (!hits.length) {
-            ctx.ui.notify("No results.", "warning");
-            return;
-          }
-          const labels = hits.map((h, i) => `${i}. ${h.item_id} [${h.category}] ${h.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Search results", labels);
-          if (selected) {
-            const idx = parseInt(selected.split(".")[0]);
-            ctx.ui.notify(formatRecordDetail(hits[idx]), "info");
-          }
-        } else if (action === "Add fact") {
-          const type = (await ctx.ui.select("Type", ["decision", "pattern", "gotcha", "architecture", "bugfix"])) || "decision";
-          const topic = await ctx.ui.input("Topic (max 6 words)", "");
-          if (!topic) return;
-          const what = await ctx.ui.editor("What (one concrete sentence)");
-          if (!what) return;
-          const why = await ctx.ui.editor("Why (optional)");
-          const whereRaw = await ctx.ui.input("Where (comma-separated)", "");
-          const where = whereRaw ? whereRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
-          const tagsRaw = await ctx.ui.input("Tags (comma-separated)", "");
-          const tags = tagsRaw ? tagsRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
-          const result = await apiPost("/api/project_memory/add", {
+        ctx.ui.setWorkingMessage("Extracting facts from session...");
+        data = await apiPost("/api/project_memory/extract", { project_id: projectId, transcript });
+      } catch (err) {
+        notifyError(ctx, err);
+        return;
+      } finally {
+        ctx.ui.setWorkingMessage();
+      }
+
+      const facts: ExtractedFact[] = (data.facts || []).filter((f: any) => f.fact_type && f.topic && f.what);
+      if (facts.length === 0) {
+        notify(ctx, "No durable facts found in this session.", "info");
+        return;
+      }
+
+      ctx.ui.notify(`Found ${facts.length} candidate fact(s).`, "info");
+
+      const choices: string[] = [];
+      for (let i = 0; i < facts.length; i++) {
+        const f = facts[i];
+        choices.push(`${i}. [${f.fact_type}] ${f.topic}`);
+      }
+      choices.push("Save all");
+      choices.push("Discard all");
+
+      const selected = await ctx.ui.select("Select facts to save", choices);
+      if (!selected) return;
+
+      const selectedIndices = new Set<number>();
+      if (selected === "Save all") {
+        for (let i = 0; i < facts.length; i++) selectedIndices.add(i);
+      } else if (selected !== "Discard all") {
+        const idx = parseInt(selected.split(".")[0]);
+        if (!Number.isNaN(idx)) {
+          selectedIndices.add(idx);
+        }
+      }
+
+      if (selectedIndices.size === 0) {
+        notify(ctx, "No facts selected.", "info");
+        return;
+      }
+
+      const saved: string[] = [];
+      const skipped: string[] = [];
+      for (const idx of selectedIndices) {
+        const f = facts[idx];
+        try {
+          const result: AddResult = await apiPost("/api/project_memory/add", {
             project_id: projectId,
             category: "facts",
-            type,
-            topic: topic.trim(),
-            what: what.trim(),
-            why: why?.trim() || "",
-            where,
-            tags,
-          });
-          ctx.ui.notify(`Saved fact "${topic}" (id: ${result.item_id})`, "info");
-        } else if (action === "Add handoff") {
-          const topic = await ctx.ui.input("Topic (e.g. Session 12)", "");
-          if (!topic) return;
-          const what = await ctx.ui.editor("What was done and what is next?");
-          if (!what) return;
-          const result = await apiPost("/api/project_memory/add", {
-            project_id: projectId,
-            category: "handoffs",
-            type: "progress",
-            topic: topic.trim(),
-            what: what.trim(),
+            type: f.fact_type,
+            topic: f.topic,
+            what: f.what,
             why: "",
-            where: [],
+            where: Array.isArray(f.where) ? f.where : [],
             tags: [],
           });
-          ctx.ui.notify(`Saved handoff "${topic}" (id: ${result.item_id})`, "info");
-        } else if (action === "Add todo") {
-          const topic = await ctx.ui.input("Topic (max 6 words)", "");
-          if (!topic) return;
-          const what = await ctx.ui.editor("What needs to be done?");
-          if (!what) return;
-          const result = await apiPost("/api/project_memory/add", {
-            project_id: projectId,
-            category: "todos",
-            type: "todo_item",
-            topic: topic.trim(),
-            what: what.trim(),
-            why: "",
-            where: [],
-            tags: [],
-          });
-          ctx.ui.notify(`Saved todo "${topic}" (id: ${result.item_id})`, "info");
-        } else if (action === "List todos") {
-          const status = (await ctx.ui.select("Status", ["active", "done", "archived"])) || "active";
-          const data = await apiPost("/api/project_memory/todos", { project_id: projectId, status, limit: 20 });
-          const records: ApiRecord[] = data.records || [];
-          if (!records.length) {
-            ctx.ui.notify(`No ${status} todos.`, "warning");
-            return;
+          if (result.duplicate) {
+            skipped.push(`${f.topic} → ${result.item_id}`);
+          } else if (result.item_id) {
+            saved.push(result.item_id);
           }
-          const labels = records.map((r, i) => `${i}. ${r.item_id}: [${r.status}] ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Todos", labels);
-          if (selected) {
-            const idx = parseInt(selected.split(".")[0]);
-            ctx.ui.notify(formatRecordDetail(records[idx]), "info");
-          }
-        } else if (action === "Get record") {
-          const data = await apiPost("/api/project_memory/list_all", { project_id: projectId, limit: 50 });
-          const records: ApiRecord[] = data.records || [];
-          if (!records.length) {
-            ctx.ui.notify("No records found.", "warning");
-            return;
-          }
-          const labels = records.map((r, i) => `${i}. ${r.item_id} [${r.category}] ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Select a record", labels);
-          if (!selected) return;
-          const idx = parseInt(selected.split(".")[0]);
-          ctx.ui.notify(formatRecordDetail(records[idx]), "info");
-        } else if (action === "Browse facts") {
-          const data = await apiPost("/api/project_memory/list", { project_id: projectId, category: "facts", limit: 50 });
-          const records: ApiRecord[] = data.records || [];
-          if (!records.length) {
-            ctx.ui.notify("No facts found.", "warning");
-            return;
-          }
-          const labels = records.map((r, i) => `${i}. ${r.item_id}: ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Facts", labels);
-          if (!selected) return;
-          const idx = parseInt(selected.split(".")[0]);
-          const r = records[idx];
-          const action2 = await ctx.ui.select(`${r.topic.slice(0, 40)}`, ["✏️ Edit", "🗑️ Delete", "← Back"]);
-          if (!action2) return;
-          if (action2 === "✏️ Edit") {
-            const topic = await ctx.ui.input("Topic", r.topic);
-            if (!topic) return;
-            const what = await ctx.ui.editor("What", r.what);
-            if (!what) return;
-            const why = await ctx.ui.editor("Why (optional)", r.why || "");
-            const whereRaw = await ctx.ui.input("Where (comma-separated)", (r.where || []).join(", "));
-            const where = whereRaw ? whereRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
-            const tagsRaw = await ctx.ui.input("Tags (comma-separated)", (r.tags || []).join(", "));
-            const tags = tagsRaw ? tagsRaw.split(",").map((s) => s.trim()).filter(Boolean) : [];
-            await apiPost("/api/project_memory/update_full", {
-              project_id: projectId,
-              item_id: r.item_id,
-              fields: { topic: topic.trim(), what: what.trim(), why: why?.trim() || "", where, tags },
-            });
-            ctx.ui.notify(`Updated ${r.item_id}`, "info");
-          } else if (action2 === "🗑️ Delete") {
-            const ok = await ctx.ui.confirm("Delete", `Delete ${r.item_id}?`);
-            if (!ok) return;
-            await apiPost("/api/project_memory/delete", { project_id: projectId, item_id: r.item_id });
-            ctx.ui.notify(`Deleted ${r.item_id}`, "info");
-          }
-        } else if (action === "Update status") {
-          const data = await apiPost("/api/project_memory/list_all", { project_id: projectId, limit: 50 });
-          const records: ApiRecord[] = data.records || [];
-          if (!records.length) {
-            ctx.ui.notify("No records found.", "warning");
-            return;
-          }
-          const labels = records.map((r, i) => `${i}. ${r.item_id} [${r.category}] ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Select a record", labels);
-          if (!selected) return;
-          const idx = parseInt(selected.split(".")[0]);
-          const r = records[idx];
-          const status = (await ctx.ui.select("New status", ["active", "done", "archived"])) || "active";
-          await apiPost("/api/project_memory/update", { project_id: projectId, item_id: r.item_id, status });
-          ctx.ui.notify(`Updated ${r.item_id} → ${status}`, "info");
-        } else if (action === "Delete record") {
-          const data = await apiPost("/api/project_memory/list_all", { project_id: projectId, limit: 50 });
-          const records: ApiRecord[] = data.records || [];
-          if (!records.length) {
-            ctx.ui.notify("No records found.", "warning");
-            return;
-          }
-          const labels = records.map((r, i) => `${i}. ${r.item_id} [${r.category}] ${r.topic.slice(0, 40)}`);
-          const selected = await ctx.ui.select("Select a record to delete", labels);
-          if (!selected) return;
-          const idx = parseInt(selected.split(".")[0]);
-          const r = records[idx];
-          const ok = await ctx.ui.confirm("Delete", `Are you sure you want to delete ${r.item_id}?`);
-          if (!ok) return;
-          await apiPost("/api/project_memory/delete", { project_id: projectId, item_id: r.item_id });
-          ctx.ui.notify(`Deleted ${r.item_id}`, "info");
+        } catch (err) {
+          notifyError(ctx, err);
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        ctx.ui.notify(`Error: ${msg}`, "error");
       }
+
+      const parts: string[] = [];
+      if (saved.length) parts.push(`Saved ${saved.length} fact(s).\n${saved.join("\n")}`);
+      if (skipped.length) parts.push(`Skipped ${skipped.length} duplicate(s):\n${skipped.join("\n")}`);
+      notify(ctx, parts.join("\n\n") || "No facts saved.", "info");
     },
   });
 }

@@ -104,6 +104,12 @@ async function loadAgentsFromDir(dir: string, source: "project" | "builtin"): Pr
           .filter(Boolean)
       : undefined;
 
+    const parseNumber = (value: string | undefined): number | undefined => {
+      if (!value) return undefined;
+      const n = Number(value);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
+
     agents.push({
       name: frontmatter.name,
       description: frontmatter.description,
@@ -111,8 +117,8 @@ async function loadAgentsFromDir(dir: string, source: "project" | "builtin"): Pr
       tools,
       includeExtensions: frontmatter.includeExtensions?.toLowerCase() === "true",
       extensions,
-      timeoutMs: frontmatter.timeoutMs ? Number(frontmatter.timeoutMs) : undefined,
-      maxTurns: frontmatter.maxTurns ? Number(frontmatter.maxTurns) : undefined,
+      timeoutMs: parseNumber(frontmatter.timeoutMs),
+      maxTurns: parseNumber(frontmatter.maxTurns),
       systemPrompt: body,
       source,
       filePath,

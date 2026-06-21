@@ -5,10 +5,12 @@ Hybrid local/cloud subagent delegation for Pi CLI.
 ## What it does
 
 - `/sub-agents` — interactive TUI for manually running specialized agents:
-  - `scout-gemma` — read-only recon using local Gemma-4.
-  - `flash-worker` — coding/refactoring using DeepSeek V4 Flash via OpenCode Go.
-  - `handoff-gemma` — session summarizer for `/handoff`.
-- `/handoff [title]` — generate `handoff-YYYY-MM-DD-[title].md` in the current working directory.
+  - `Run task` — pick a predefined task file, fill optional `{input}`, and run.
+  - `Run agent` — pick a single agent and write a custom task.
+  - `Review / Critic` — review last commit, staged changes, a file, or custom diff/text.
+  - `Recent runs` — view, rerun, or delete previous invocations stored in `~/.pi/agent/sub-agents-history/`.
+  - `Settings` — default cwd, global extensions policy, per-agent extensions policy, and history retention days.
+- `/handoff [title]` — generate `handoff-YYYY-MM-DD-[title].md` in the current working directory. Uses the built-in `handoff-gemma` agent shipped with the extension.
 
 There is no agent-facing tool; the user controls every subagent run through the TUI.
 
@@ -18,7 +20,12 @@ Copy this folder to `~/.pi/agent/extensions/sub-agents/` and restart Pi.
 
 ## Agent definitions
 
-Agents are markdown files with YAML frontmatter, located **directly in cwd** (no subdirectories). If cwd has no `.md` agent files, the extension falls back to the agents shipped inside the extension root (`~/.pi/agent/extensions/sub-agents/`).
+Agents are markdown files with YAML frontmatter. The TUI loads agents in this order:
+
+1. `.md` files directly in the current working directory (`cwd`).
+2. If none are found, built-in agents shipped inside the extension root (`~/.pi/agent/extensions/sub-agents/`).
+
+`handoff-gemma` is always loaded from the extension folder so `/handoff` works regardless of project-local agents.
 
 Frontmatter fields:
 
@@ -30,20 +37,8 @@ Frontmatter fields:
 | `tools` | Comma-separated allowlist of built-in tools. |
 | `includeExtensions` | `true` — load other Pi extensions in the child process. Set `false` to isolate the subagent. |
 | `extensions` | Comma-separated list of extension names (or absolute paths) to load explicitly. When set, `includeExtensions` is ignored and only the listed extensions are loaded. |
-
-## Interactive TUI
-
-Run `/sub-agents` to open a flat, two-level TUI for manual subagent invocation:
-
-- **Run agent** — pick agent, mode (`single`/`parallel`/`chain`), and task(s). The run uses per-agent extension defaults from settings, with an optional override screen for cwd and extensions before launching.
-- **Recent runs** — view, rerun, or delete previous invocations stored in `~/.pi/agent/sub-agents-history/`.
-- **Settings** —
-  - Default cwd
-  - Global extensions policy
-  - Per-agent extensions policy (e.g. isolate `scout-gemma`/`handoff-gemma`, enable helpers for `flash-worker`)
-  - History retention days
-
-Settings are saved in `~/.pi/agent/settings.json` under the `"subAgents"` key. Per-agent extension settings are stored under `subAgents.agentExtensions.<agentName>`.
+| `timeoutMs` | Maximum subagent runtime in milliseconds (positive number). |
+| `maxTurns` | Maximum assistant turns before the subagent is stopped (positive number). |
 
 ## Extension isolation per agent
 
@@ -59,7 +54,7 @@ This lets `scout-gemma` stay read-only, `handoff-gemma` stay isolated, and `flas
 
 ## Debug logging
 
-Logs are written to `pi-sub-agents.log` in the directory where Pi was launched. Override the directory:
+Logs are written to `~/.pi/agent/logs/sub-agents/pi-sub-agents.log` by default. Override the directory:
 
 ```bash
 PI_SUB_AGENTS_LOG_DIR=/path/to/logs pi
@@ -67,13 +62,13 @@ PI_SUB_AGENTS_LOG_DIR=/path/to/logs pi
 
 ## Usage examples
 
-Open the TUI and run a scout:
+Open the TUI:
 
 ```
 /sub-agents
 ```
 
-Handoff:
+Generate a handoff file:
 
 ```
 /handoff refactor-auth

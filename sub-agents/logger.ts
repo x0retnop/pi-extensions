@@ -1,13 +1,18 @@
 import { appendFile, mkdir } from "node:fs/promises";
+import * as os from "node:os";
 import { dirname, join } from "node:path";
 
 const DEBUG = process.env.PI_SUB_AGENTS_DEBUG === "1" || process.env.PI_SUB_AGENTS_DEBUG === "true";
 const LOG_FILE_NAME = "pi-sub-agents.log";
 
+function defaultLogDir(): string {
+  return join(os.homedir(), ".pi", "agent", "logs", "sub-agents");
+}
+
 function logPath(cwd: string): string {
   const dir = process.env.PI_SUB_AGENTS_LOG_DIR?.trim();
   if (dir) return join(dir, LOG_FILE_NAME);
-  return join(cwd, LOG_FILE_NAME);
+  return join(defaultLogDir(), LOG_FILE_NAME);
 }
 
 async function ensureDir(filePath: string): Promise<void> {

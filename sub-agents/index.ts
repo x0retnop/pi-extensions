@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { discoverAgents, formatAgentList } from "./agents.js";
+import { formatAgentList, loadBuiltinAgents } from "./agents.js";
 import * as logger from "./logger.js";
 import { getResultOutput, isFailedResult, runSingleAgent, type SubagentDetails, type SubagentMode, type SingleResult } from "./runner.js";
 import { runSubAgentsTUI } from "./tui.js";
@@ -65,7 +65,7 @@ function formatHistoryForHandoff(entries: any[], maxChars = 60000): string {
     }
 
     if (!text) return null;
-    return { text, weight: entry.type === "compaction" || entry.type === "branch_summary" ? 2 : 1 };
+    return { text, weight: 1 };
   };
 
   const formatted = entries.map(formatEntry).filter((x): x is { text: string; weight: number } => x !== null);
@@ -130,7 +130,7 @@ function sanitizeFilename(name: string): string {
 
 async function runHandoff(title: string | undefined, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const cwd = ctx.cwd;
-  const agents = await discoverAgents(cwd);
+  const agents = await loadBuiltinAgents();
   const agent = agents.find((a) => a.name === "handoff-gemma");
 
   if (!agent) {
@@ -140,7 +140,16 @@ async function runHandoff(title: string | undefined, ctx: ExtensionCommandContex
     return;
   }
 
-  const entries = (ctx as any).sessionManager?.getEntries?.() || [];
+  const sessionManager = (ctx as any).sessionManager;
+  if (!sessionManager || typeof sessionManager.getEntries !== "function") {
+    const msg = "Session history is not available in this Pi version. /handoff requires a sessionManager.getEntries API.";
+    await logger.error("Handoff unavailable", { reason: "missing sessionManager.getEntries" }, cwd);
+    if (ctx.hasUI) ctx.ui.notify(msg, "error");
+    else console.error(msg);
+    return;
+  }
+
+  const entries = sessionManager.getEntries() || [];
   const history = formatHistoryForHandoff(entries);
 
   const task = [
@@ -153,7 +162,7 @@ async function runHandoff(title: string | undefined, ctx: ExtensionCommandContex
     "</session_history>",
   ].join("\n");
 
-  await logger.marker("Handoff start", cwd);
+  await logger.info("Handoff start", { historyChars: history.length, taskChars: task.length }, cwd);
   const result = await runSingleAgent(
     cwd,
     agents,
@@ -220,5 +229,5 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  logger.info("pi-sub-agents extension loaded", { cwd: process.cwd() }).catch(() => {});
+  logger.info("pi-sub-agents extension loaded", undefined, process.cwd()).catch(() => {});
 }

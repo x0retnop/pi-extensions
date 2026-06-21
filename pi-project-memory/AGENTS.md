@@ -6,7 +6,7 @@ This project uses a **collapsed role model**: one agent handles coding, architec
 
 ## What this is
 
-Cross-session project memory for Pi agents. Replaces long handoff files with searchable "fact cards". 0x010 backend provides vector storage + JSONL persistence; this extension provides tools and commands.
+Cross-session project memory for Pi agents. The backend (0x010) provides vector storage + JSONL persistence; this extension provides read tools for agents and user-facing commands/TUI for management.
 
 ## Quick start
 
@@ -24,32 +24,29 @@ Cross-session project memory for Pi agents. Replaces long handoff files with sea
 ## Conventions
 
 - TypeScript, `@earendil-works/pi-coding-agent` extension API.
-- No auto-extraction; only explicit save via tool or command.
+- No auto-extraction; facts are saved explicitly via `/done`, `/remember`, or TUI.
 - Project identity comes from `.project-id` in cwd.
 - User-facing strings and command docs live in `README.md`.
 - Extension base URL is read from `PI_PROJECT_MEMORY_URL`, then `PI_BACKEND_URL`, then falls back to `http://127.0.0.1:8000`.
 
 ## Agent workflow
 
-Use the `project_memory_*` tools so future agents do not rediscover the same facts. Tool-specific usage details live in each tool's `promptGuidelines` inside `index.ts`.
+Tool-specific usage details live in each tool's `promptGuidelines` inside `index.ts`.
 
-1. **Start / lost context** — call `project_memory_recent` before asking "where were we" / "где мы были".
-2. **Understand patterns** — call `project_memory_search` before reading 3+ files to answer "how do we do X".
-3. **Need detail** — call `project_memory_get({ item_id })` using the exact ID from a previous result.
-4. **Remaining work** — call `project_memory_list_todos` for open tasks.
-5. **Save durable signal** — call `project_memory_save` for decisions, gotchas, bug roots, session state, and open todos. Skip obvious code, style fixes, and vague summaries.
+1. **Recall facts** — call `project_facts({ query })` when the user asks about conventions, architecture, or historical decisions.
+2. **Recent facts** — call `project_facts({ recent: true, limit: 20 })` to audit the latest memory or prepare for curation.
+3. **Curate** — when the curation tool is enabled, use `curate_facts({ action: "list" })`, then `update`, `merge`, or `delete`. Leave correct facts untouched.
 
-## What to save
+## What the user saves
 
 | Kind | Backend category | Use for | Notes |
 |------|------------------|---------|-------|
 | `fact` | `facts` | Decision, pattern, gotcha, architecture, bugfix | Indexed, eternal |
-| `handoff` | `handoffs` | Session summary / progress | Indexed, rotated to last 30 |
 | `todo` | `todos` | Open task | Not indexed, JSONL only |
 
 ## Quality test
 
-Before saving, ask: "Will this help a future agent in 30 days?" If yes, write one concrete sentence in `what`, keep `topic` under 6 words, and pick the right `kind` and `fact_type`.
+Before saving, ask: "Will this help a future agent in 30 days?" If yes, write one concrete sentence in `what`, keep `topic` under 6 words, and pick the right `fact_type`.
 
 ## System prompt snippets
 
@@ -57,7 +54,7 @@ Ready-to-copy blocks for other projects live in `docs/reference/SYSTEM_PROMPT_SN
 
 ## Where to find work
 
-1. `README.md` — user-reported gaps in commands.
+1. `README.md` — user-facing install and commands.
 2. `0x010/docs/reviews/CORE_REGISTRY.md` — if the issue is backend-side.
 
 ## Documentation

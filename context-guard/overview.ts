@@ -391,11 +391,50 @@ class ContextView implements Component {
 }
 
 export function registerContextOverview(pi: ExtensionAPI): void {
+  pi.on("tool_result", (event: ToolResultEvent, ctx: ExtensionContext) => {
+    if ((event as any).toolName !== "read") return;
+    if ((event as any).isError) return;
+
+    const input = (event as any).input as { path?: unknown } | undefined;
+    const p = typeof input?.path === "string" ? input.path : "";
+    if (!p) return;
+
+    const abs = normalizeReadPath(p, ctx.cwd);
+    const skillName = matchSkillForPath(buildSkillIndex(pi, ctx.cwd), abs);
+    if (!skillName) return;
+
+    const loadedSkills = getLoadedSkillsFromSession(ctx);
+    if (!loadedSkills.has(skillName)) {
+      loadedSkills.add(skillName);
+      pi.appendEntry<SkillLoadedEntryData>(SKILL_LOADED_ENTRY, { name: skillName, path: abs });
+    }
+  });
+
+  pi.registerCommand("context", {
+    description: "Show loaded context overview",
+    handler: async (_args, ctx) => {
+      await runContextOverview(ctx, pi);
+    },
+  });
+}
+
+function matchSkillForPath(index: SkillIndexEntry[], absPath: string): string | null {
+  let best: SkillIndexEntry | null = null;
+  for (const s of index) {
+    if (!s.skillDir) continue;
+    if (absPath === s.skillFilePath || absPath.startsWith(s.skillDir + path.sep)) {
+      if (!best || s.skillDir.length > best.skillDir.length) best = s;
+    }
+  }
+  return best?.name ?? null;
+}
+
+export async function runContextOverview(ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   let lastSessionId: string | null = null;
   let cachedLoadedSkills = new Set<string>();
   let cachedSkillIndex: SkillIndexEntry[] = [];
 
-  const ensureCaches = (ctx: ExtensionContext) => {
+  const ensureCaches = () => {
     const sid = ctx.sessionManager.getSessionId();
     if (sid !== lastSessionId) {
       lastSessionId = sid;
@@ -407,139 +446,106 @@ export function registerContextOverview(pi: ExtensionAPI): void {
     }
   };
 
-  const matchSkillForPath = (absPath: string): string | null => {
-    let best: SkillIndexEntry | null = null;
-    for (const s of cachedSkillIndex) {
-      if (!s.skillDir) continue;
-      if (absPath === s.skillFilePath || absPath.startsWith(s.skillDir + path.sep)) {
-        if (!best || s.skillDir.length > best.skillDir.length) best = s;
+  ensureCaches();
+
+  try {
+    const commands = pi.getCommands();
+    const extensionCmds = commands.filter((c) => c.source === "extension");
+    const skillCmds = commands.filter((c) => c.source === "skill");
+
+    const extensionsByPath = new Map<string, string[]>();
+    for (const c of extensionCmds) {
+      const p = getCommandPath(c as CommandLike, ctx.cwd) || "<unknown>";
+      const arr = extensionsByPath.get(p) ?? [];
+      arr.push(c.name);
+      extensionsByPath.set(p, arr);
+    }
+    const extensionFiles = [...extensionsByPath.keys()]
+      .map((p) => (p === "<unknown>" ? p : path.basename(p)))
+      .sort((a, b) => a.localeCompare(b));
+
+    const skills = skillCmds.map((c) => normalizeSkillName(c.name)).sort((a, b) => a.localeCompare(b));
+
+    const agentFiles = await loadProjectContextFiles(ctx.cwd);
+    const agentFilePaths = agentFiles.map((f) => shortenPath(f.path, ctx.cwd));
+    const agentTokens = agentFiles.reduce((a, f) => a + f.tokens, 0);
+
+    const systemPrompt = ctx.getSystemPrompt();
+    const systemPromptTokens = systemPrompt ? estimateTokens(systemPrompt) : 0;
+
+    const usage = ctx.getContextUsage();
+    const messageTokens = usage?.tokens ?? 0;
+    const ctxWindow = usage?.contextWindow ?? 0;
+
+    const TOOL_FUDGE = 1.5;
+    const activeToolNames = pi.getActiveTools();
+    const toolInfoByName = new Map(pi.getAllTools().map((t) => [t.name, t] as const));
+    let toolsTokens = 0;
+    for (const name of activeToolNames) {
+      const info = toolInfoByName.get(name);
+      const blob = `${name}\n${info?.description ?? ""}`;
+      toolsTokens += estimateTokens(blob);
+    }
+    toolsTokens = Math.round(toolsTokens * TOOL_FUDGE);
+
+    const effectiveTokens = messageTokens + toolsTokens;
+    const percent = ctxWindow > 0 ? (effectiveTokens / ctxWindow) * 100 : 0;
+    const remainingTokens = ctxWindow > 0 ? Math.max(0, ctxWindow - effectiveTokens) : 0;
+
+    const sessionUsage = sumSessionUsage(ctx);
+    const loadedSkills = Array.from(getLoadedSkillsFromSession(ctx)).sort((a, b) => a.localeCompare(b));
+
+    const makePlainText = () => {
+      const lines: string[] = [];
+      lines.push("Context");
+      if (usage) {
+        lines.push(
+          `Window: ~${effectiveTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} (${percent.toFixed(1)}% used, ~${remainingTokens.toLocaleString()} left)`,
+        );
+      } else {
+        lines.push("Window: (unknown)");
       }
+      lines.push(`System: ~${systemPromptTokens.toLocaleString()} tok (AGENTS ~${agentTokens.toLocaleString()})`);
+      lines.push(`Tools: ~${toolsTokens.toLocaleString()} tok (${activeToolNames.length} active)`);
+      lines.push(`AGENTS: ${agentFilePaths.length ? joinComma(agentFilePaths) : "(none)"}`);
+      lines.push(`Extensions (${extensionFiles.length}): ${extensionFiles.length ? joinComma(extensionFiles) : "(none)"}`);
+      lines.push(`Skills (${skills.length}): ${skills.length ? joinComma(skills) : "(none)"}`);
+      lines.push(`Session: ${sessionUsage.totalTokens.toLocaleString()} tokens · ${formatUsd(sessionUsage.totalCost)}`);
+      return lines.join("\n");
+    };
+
+    if (!ctx.hasUI) {
+      pi.sendMessage({ customType: "context", content: makePlainText(), display: true }, { triggerTurn: false });
+      return;
     }
-    return best?.name ?? null;
-  };
 
-  pi.on("tool_result", (event: ToolResultEvent, ctx: ExtensionContext) => {
-    if ((event as any).toolName !== "read") return;
-    if ((event as any).isError) return;
-
-    const input = (event as any).input as { path?: unknown } | undefined;
-    const p = typeof input?.path === "string" ? input.path : "";
-    if (!p) return;
-
-    ensureCaches(ctx);
-    const abs = normalizeReadPath(p, ctx.cwd);
-    const skillName = matchSkillForPath(abs);
-    if (!skillName) return;
-
-    if (!cachedLoadedSkills.has(skillName)) {
-      cachedLoadedSkills.add(skillName);
-      pi.appendEntry<SkillLoadedEntryData>(SKILL_LOADED_ENTRY, { name: skillName, path: abs });
-    }
-  });
-
-  pi.registerCommand("context", {
-    description: "Show loaded context overview",
-    handler: async (_args, ctx) => {
-      try {
-        const commands = pi.getCommands();
-        const extensionCmds = commands.filter((c) => c.source === "extension");
-        const skillCmds = commands.filter((c) => c.source === "skill");
-
-        const extensionsByPath = new Map<string, string[]>();
-        for (const c of extensionCmds) {
-          const p = getCommandPath(c as CommandLike, ctx.cwd) || "<unknown>";
-          const arr = extensionsByPath.get(p) ?? [];
-          arr.push(c.name);
-          extensionsByPath.set(p, arr);
-        }
-        const extensionFiles = [...extensionsByPath.keys()]
-          .map((p) => (p === "<unknown>" ? p : path.basename(p)))
-          .sort((a, b) => a.localeCompare(b));
-
-        const skills = skillCmds.map((c) => normalizeSkillName(c.name)).sort((a, b) => a.localeCompare(b));
-
-        const agentFiles = await loadProjectContextFiles(ctx.cwd);
-        const agentFilePaths = agentFiles.map((f) => shortenPath(f.path, ctx.cwd));
-        const agentTokens = agentFiles.reduce((a, f) => a + f.tokens, 0);
-
-        const systemPrompt = ctx.getSystemPrompt();
-        const systemPromptTokens = systemPrompt ? estimateTokens(systemPrompt) : 0;
-
-        const usage = ctx.getContextUsage();
-        const messageTokens = usage?.tokens ?? 0;
-        const ctxWindow = usage?.contextWindow ?? 0;
-
-        const TOOL_FUDGE = 1.5;
-        const activeToolNames = pi.getActiveTools();
-        const toolInfoByName = new Map(pi.getAllTools().map((t) => [t.name, t] as const));
-        let toolsTokens = 0;
-        for (const name of activeToolNames) {
-          const info = toolInfoByName.get(name);
-          const blob = `${name}\n${info?.description ?? ""}`;
-          toolsTokens += estimateTokens(blob);
-        }
-        toolsTokens = Math.round(toolsTokens * TOOL_FUDGE);
-
-        const effectiveTokens = messageTokens + toolsTokens;
-        const percent = ctxWindow > 0 ? (effectiveTokens / ctxWindow) * 100 : 0;
-        const remainingTokens = ctxWindow > 0 ? Math.max(0, ctxWindow - effectiveTokens) : 0;
-
-        const sessionUsage = sumSessionUsage(ctx);
-        const loadedSkills = Array.from(getLoadedSkillsFromSession(ctx)).sort((a, b) => a.localeCompare(b));
-
-        const makePlainText = () => {
-          const lines: string[] = [];
-          lines.push("Context");
-          if (usage) {
-            lines.push(
-              `Window: ~${effectiveTokens.toLocaleString()} / ${ctxWindow.toLocaleString()} (${percent.toFixed(1)}% used, ~${remainingTokens.toLocaleString()} left)`,
-            );
-          } else {
-            lines.push("Window: (unknown)");
+    const viewData: ContextViewData = {
+      usage: usage
+        ? {
+            messageTokens,
+            contextWindow: ctxWindow,
+            effectiveTokens,
+            percent,
+            remainingTokens,
+            systemPromptTokens,
+            agentTokens,
+            toolsTokens,
+            activeTools: activeToolNames.length,
           }
-          lines.push(`System: ~${systemPromptTokens.toLocaleString()} tok (AGENTS ~${agentTokens.toLocaleString()})`);
-          lines.push(`Tools: ~${toolsTokens.toLocaleString()} tok (${activeToolNames.length} active)`);
-          lines.push(`AGENTS: ${agentFilePaths.length ? joinComma(agentFilePaths) : "(none)"}`);
-          lines.push(`Extensions (${extensionFiles.length}): ${extensionFiles.length ? joinComma(extensionFiles) : "(none)"}`);
-          lines.push(`Skills (${skills.length}): ${skills.length ? joinComma(skills) : "(none)"}`);
-          lines.push(`Session: ${sessionUsage.totalTokens.toLocaleString()} tokens · ${formatUsd(sessionUsage.totalCost)}`);
-          return lines.join("\n");
-        };
+        : null,
+      agentFiles: agentFilePaths,
+      extensions: extensionFiles,
+      skills,
+      loadedSkills,
+      session: { totalTokens: sessionUsage.totalTokens, totalCost: sessionUsage.totalCost },
+    };
 
-        if (!ctx.hasUI) {
-          pi.sendMessage({ customType: "context", content: makePlainText(), display: true }, { triggerTurn: false });
-          return;
-        }
-
-        const viewData: ContextViewData = {
-          usage: usage
-            ? {
-                messageTokens,
-                contextWindow: ctxWindow,
-                effectiveTokens,
-                percent,
-                remainingTokens,
-                systemPromptTokens,
-                agentTokens,
-                toolsTokens,
-                activeTools: activeToolNames.length,
-              }
-            : null,
-          agentFiles: agentFilePaths,
-          extensions: extensionFiles,
-          skills,
-          loadedSkills,
-          session: { totalTokens: sessionUsage.totalTokens, totalCost: sessionUsage.totalCost },
-        };
-
-        await ctx.ui.custom<void>((tui, theme, _kb, done) => {
-          return new ContextView(tui, theme, viewData, done);
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (ctx.hasUI) ctx.ui.notify(`[context-guard] ${msg}`, "error");
-        else console.error(`[context-guard] ${msg}`);
-      }
-    },
-  });
+    await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+      return new ContextView(tui, theme, viewData, done);
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (ctx.hasUI) ctx.ui.notify(`[context-guard] ${msg}`, "error");
+    else console.error(`[context-guard] ${msg}`);
+  }
 }

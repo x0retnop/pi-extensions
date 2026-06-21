@@ -1,6 +1,4 @@
 handoff-*.md
-session-*.md
-*.log
 .pm-transcript-diag.json
 node_modules
 .DS_Store

@@ -3,10 +3,9 @@ import { loadGuardSettings, saveGuardSettings } from "./config.js";
 import { MANAGED_FEATURES, getFeatureById } from "./features.js";
 import { applyPromptRules } from "./prompt-rules.js";
 import { syncToolGates } from "./tool-gates.js";
-import { ensureSkillsDiscovered, removeSkillsBlock, injectPendingSkills, registerSkillCommands } from "./skills.js";
-import { registerContextOverview } from "./overview.js";
-import { buildInspectReport } from "./inspect.js";
+import { ensureSkillsDiscovered, removeSkillsBlock, injectPendingSkills, registerUseSkillCommand } from "./skills.js";
 import { runGuardTUI, buildStatusText } from "./tui.js";
+import { startDumpCapture } from "./dump.js";
 import type { GuardSettings, PromptRuleContext } from "./types.js";
 
 const EXT = "context-guard";
@@ -28,6 +27,9 @@ export default function (pi: ExtensionAPI) {
     settings = loadGuardSettings();
     syncTools();
   });
+
+  // Capture live context for full dump.
+  startDumpCapture(pi);
 
   // Core prompt cleanup + manual skill injection.
   pi.on("before_agent_start", async (event, ctx) => {
@@ -58,38 +60,19 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   });
 
-  // Commands
-  registerSkillCommands(pi);
-  registerContextOverview(pi);
-
-  pi.registerCommand("ctx-inspect", {
-    description: "Inspect system prompt layers, auto-injections and guard rules",
-    handler: async (_args, ctx) => {
-      const prompt = (ctx as any).getSystemPrompt?.() ?? "";
-      const options = (ctx as any).getSystemPromptOptions?.() ?? {};
-      const entries = (ctx as any).sessionManager?.getEntries?.() ?? [];
-      const report = buildInspectReport(prompt, options, settings, entries);
-
-      if (!ctx.hasUI) {
-        console.log(report);
-        return;
-      }
-      await ctx.ui.editor("ctx-inspect", report);
-    },
-  });
-
-  pi.registerCommand("ctx-guard", {
+  // Command: unified context-guard TUI.
+  pi.registerCommand("context-guard", {
     description:
-      "Open the Context Guard TUI, or toggle a feature directly. Features: " +
+      "Open the Context Guard TUI (rules, gates, skills, inspect, overview, dump). Or toggle: " +
       MANAGED_FEATURES.map((f) => f.id).join(", ") +
-      ", autoSkills",
+      ", autoSkills, reset",
     handler: async (args, ctx) => {
       const arg = args.trim();
       const ids = [...MANAGED_FEATURES.map((f) => f.id), "autoSkills"];
 
       if (!arg || arg.toLowerCase() === "status") {
         if (ctx.hasUI) {
-          await runGuardTUI(ctx, {
+          await runGuardTUI(ctx, pi, {
             settings,
             saveSettings: (s) => {
               settings = s;
@@ -158,4 +141,7 @@ export default function (pi: ExtensionAPI) {
       else console.log(msg);
     },
   });
+
+  // Register skill quick command.
+  registerUseSkillCommand(pi);
 }
