@@ -22,6 +22,7 @@ export class ProviderDetail {
   private onUse?: (model: Model<Api>) => void;
   private onSync?: () => void;
   private onAddModel?: () => void;
+  private onToggleHidden?: () => void;
   private onBack: () => void;
   private managed: ManagedProvider;
   private models: ModelRow[] = [];
@@ -29,6 +30,7 @@ export class ProviderDetail {
   private selectedIndex = 0;
   private searchMode = false;
   private searchInput = new Input();
+  private canCurate: boolean;
 
   constructor(
     tui: TUI,
@@ -42,6 +44,7 @@ export class ProviderDetail {
     onSync?: () => void,
     onAddModel?: () => void,
     onUse?: (model: Model<Api>) => void,
+    onToggleHidden?: () => void,
   ) {
     this.tui = tui;
     this.theme = theme;
@@ -53,6 +56,8 @@ export class ProviderDetail {
     this.onSync = onSync;
     this.onAddModel = onAddModel;
     this.onUse = onUse;
+    this.onToggleHidden = onToggleHidden;
+    this.canCurate = !isBuiltInProvider(providerId) || providerId === "openrouter";
     this.managed = config.providers.find((p) => p.id === providerId) ?? {
       id: providerId,
       enabled: true,
@@ -71,6 +76,11 @@ export class ProviderDetail {
     const name = this.ctx.modelRegistry.getProviderDisplayName(this.providerId) || this.providerId;
     lines.push(truncateToWidth(this.theme.fg("accent", this.theme.bold(`Providers > ${name}`)), width));
 
+    const isHidden = this.config.global.hiddenProviderIds.includes(this.providerId);
+    if (isHidden) {
+      lines.push(truncateToWidth(this.theme.fg("warning", "  [hidden] press h to restore"), width));
+    }
+
     const toggle = this.managed.useLatestDefault
       ? this.theme.fg("success", "ON")
       : this.theme.fg("dim", "OFF");
@@ -78,6 +88,9 @@ export class ProviderDetail {
 
     if (this.searchMode) {
       lines.push(truncateToWidth(this.theme.fg("muted", "Filter: ") + this.searchInput.render(width - 8).join(""), width));
+    }
+    if (!this.canCurate) {
+      lines.push(truncateToWidth(this.theme.fg("dim", "  (model curation is only available for OpenRouter and custom providers)"), width));
     }
     lines.push("");
 
@@ -97,9 +110,11 @@ export class ProviderDetail {
     }
 
     lines.push("");
-    const hints = ["↑↓ move", "Enter use", "Space manage", "* favorite", "a all/none", "Esc back"];
+    const hints = ["↑↓ move", "Enter use", "* favorite", "Esc back"];
+    if (this.canCurate) hints.push("Space manage", "a all/none");
     if (this.providerId === "openrouter") hints.push("s sync");
     if (this.onAddModel) hints.push("n add model");
+    hints.push("h hide provider");
     if (this.searchMode) hints.push("Enter close filter");
     else hints.push("/ filter");
     lines.push(truncateToWidth(this.theme.fg("dim", hints.join(" · ")), width));
@@ -132,7 +147,7 @@ export class ProviderDetail {
       this.toggleFavorite();
       return;
     }
-    if (data === " " || data === "x") {
+    if ((data === " " || data === "x") && this.canCurate) {
       this.toggleManaged();
       return;
     }
@@ -140,7 +155,7 @@ export class ProviderDetail {
       this.useSelected();
       return;
     }
-    if (data === "a" || data === "A") {
+    if ((data === "a" || data === "A") && this.canCurate) {
       this.toggleAll();
       return;
     }
@@ -150,6 +165,18 @@ export class ProviderDetail {
     }
     if ((data === "n" || data === "N") && this.onAddModel) {
       this.onAddModel();
+      return;
+    }
+    if (data === "h" || data === "H") {
+      this.onToggleHidden?.();
+      return;
+    }
+
+    if (this.models.length === 0) {
+      if (kb.matches(data, "tui.select.cancel") || data === "q") {
+        this.onBack();
+      }
+      this.tui.requestRender();
       return;
     }
 
@@ -174,7 +201,9 @@ export class ProviderDetail {
       favorite: this.isFavorite(m.id),
     }));
     this.applyFilter(this.searchMode ? this.searchInput.getValue() : "");
-    if (this.selectedIndex >= this.models.length) {
+    if (this.models.length === 0) {
+      this.selectedIndex = 0;
+    } else if (this.selectedIndex >= this.models.length) {
       this.selectedIndex = Math.max(0, this.models.length - 1);
     }
   }
@@ -219,6 +248,7 @@ export class ProviderDetail {
   }
 
   private toggleAll(): void {
+    if (this.models.length === 0) return;
     const target = this.models.some((r) => !r.managed);
     for (const row of this.models) row.managed = target;
     this.commitManaged();

@@ -39,9 +39,7 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
     if (config.global.defaultProvider) {
       await restoreDefaultOrLastUsed(pi, ctx, config.providers, config.global.defaultProvider);
     }
-    if (ctx.hasUI) {
-      ctx.ui.setStatus("model-manager", ctx.ui.theme.fg("accent", "mm"));
-    }
+
   });
 
   pi.on("model_select", async (event, ctx) => {
@@ -115,7 +113,7 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
       }
 
       function showHelp() {
-        notify(ctx, "/mm shortcuts: ↑↓ navigate · Enter open/use · u use default · Space manage · * favorite · a all/none · / filter · s sync (OpenRouter) · Esc/q close", "info");
+        notify(ctx, "/mm shortcuts: ↑↓ navigate · Enter open/use · u use default · h hide/unhide provider · * favorite · / filter · s sync (OpenRouter) · g/G top/bottom · ? help · Esc/q close", "info");
       }
 
       function handleAction(action: UiAction) {
@@ -132,6 +130,30 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
             main.refresh(config);
             notify(ctx, "Model manager refreshed", "info");
             return;
+          case "persist":
+            persist();
+            return;
+          case "toggleHidden": {
+            const hidden = new Set(config.global.hiddenProviderIds);
+            const wasHidden = hidden.has(action.providerId);
+            if (wasHidden) {
+              hidden.delete(action.providerId);
+            } else {
+              hidden.add(action.providerId);
+            }
+            config.global.hiddenProviderIds = Array.from(hidden);
+            // For providers managed by this extension, hiding also disables them
+            // so they disappear from Pi's registry; unhiding re-enables them.
+            const managed = config.providers.find((p) => p.id === action.providerId);
+            if (managed) {
+              managed.enabled = wasHidden;
+            }
+            persist();
+            apply(ctx);
+            main.refresh(config);
+            notify(ctx, wasHidden ? `Provider ${action.providerId} restored` : `Provider ${action.providerId} hidden`, "info");
+            return;
+          }
           case "settings":
             subview = new SettingsScreen(tui, theme, kb, ctx, config, (updated) => {
               config = updated;
@@ -142,7 +164,7 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
             break;
           case "provider":
             {
-              const view = getProviderView(ctx, config.providers, action.providerId);
+              const view = getProviderView(ctx, config, action.providerId);
               if (!view) {
                 notify(ctx, `Provider ${action.providerId} not found`, "error");
                 return;
@@ -201,6 +223,24 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
                     }
                   : undefined,
                 (model) => useModel(ctx, model.provider, model.id),
+                () => {
+                  const hidden = new Set(config.global.hiddenProviderIds);
+                  const wasHidden = hidden.has(action.providerId);
+                  if (wasHidden) {
+                    hidden.delete(action.providerId);
+                  } else {
+                    hidden.add(action.providerId);
+                  }
+                  config.global.hiddenProviderIds = Array.from(hidden);
+                  const managed = config.providers.find((p) => p.id === action.providerId);
+                  if (managed) {
+                    managed.enabled = wasHidden;
+                  }
+                  persist();
+                  apply(ctx);
+                  backToMain();
+                  notify(ctx, wasHidden ? `Provider ${action.providerId} restored` : `Provider ${action.providerId} hidden`, "info");
+                },
               );
             }
             break;
@@ -276,14 +316,17 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
     managed.cachedModels = models.filter((m) => selectedIds.includes(m.id)).map(openRouterModelToCached);
     // Register curated OpenRouter provider immediately.
     const cfg = buildCuratedProviderConfig(ctx, "openrouter", managed);
-    if (cfg) {
-      try {
-        pi.registerProvider("openrouter", cfg);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        notify(ctx, `OpenRouter registration failed: ${msg}`, "error");
-        return;
-      }
+    if (!cfg) {
+      notify(ctx, "OpenRouter: curated models saved, but no API key is configured", "warning");
+      persist();
+      return;
+    }
+    try {
+      pi.registerProvider("openrouter", cfg);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      notify(ctx, `OpenRouter registration failed: ${msg}`, "error");
+      return;
     }
     persist();
     notify(ctx, `OpenRouter: ${selectedIds.length} model(s) curated`, "info");
@@ -299,6 +342,7 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
       enabled: true,
       useLatestDefault: true,
       managedModelIds: [],
+      name: values.name,
       baseUrl: values.baseUrl,
       apiKey: values.apiKey,
       api: values.api,

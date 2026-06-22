@@ -18,6 +18,7 @@ export function createDefaultConfig(): ModelManagerConfig {
     global: {
       rememberLastUsed: true,
       displaySpecs: true,
+      hiddenProviderIds: [],
     },
   };
 }
@@ -38,6 +39,7 @@ export function loadConfig(): ModelManagerConfig {
         rememberLastUsed: parsed.global?.rememberLastUsed ?? true,
         displaySpecs: parsed.global?.displaySpecs ?? true,
         defaultProvider: parsed.global?.defaultProvider,
+        hiddenProviderIds: Array.isArray(parsed.global?.hiddenProviderIds) ? parsed.global.hiddenProviderIds : [],
       },
     };
   } catch (err) {
@@ -82,6 +84,7 @@ function normalizeProvider(raw: unknown): ManagedProvider {
     managedModelIds: Array.isArray(p.managedModelIds) ? p.managedModelIds : [],
     overrides: p.overrides && typeof p.overrides === "object" ? p.overrides : undefined,
     cachedModels: Array.isArray(p.cachedModels) ? p.cachedModels : undefined,
+    name: p.name,
     baseUrl: p.baseUrl,
     apiKey: p.apiKey,
     api: p.api,

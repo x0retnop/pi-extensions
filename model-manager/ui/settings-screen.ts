@@ -93,7 +93,7 @@ export class SettingsScreen {
   }
 
   private rebuildRows(): void {
-    const providers = getProviderViews(this.ctx, this.config.providers);
+    const providers = getProviderViews(this.ctx, this.config).filter((p) => !p.hidden);
     const providerOptions = ["(none)", ...providers.map((p) => p.id)];
     const currentDefault = this.config.global.defaultProvider ?? "(none)";
 

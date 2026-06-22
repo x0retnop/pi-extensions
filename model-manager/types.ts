@@ -41,6 +41,7 @@ export interface ManagedProvider {
   // Cached full model definitions for models fetched from APIs (e.g. OpenRouter).
   cachedModels?: CachedModel[];
   // Only used for custom providers added through the manager.
+  name?: string;
   baseUrl?: string;
   apiKey?: string;
   api?: Api;
@@ -50,6 +51,7 @@ export interface GlobalSettings {
   defaultProvider?: string;
   rememberLastUsed: boolean;
   displaySpecs: boolean;
+  hiddenProviderIds: string[];
 }
 
 export interface ModelManagerConfig {
@@ -71,6 +73,7 @@ export interface ProviderView {
   authConfigured: boolean;
   models: Model<Api>[];
   managed: ManagedProvider;
+  hidden: boolean;
 }
 
 export type UiAction =
@@ -81,4 +84,6 @@ export type UiAction =
   | { type: "openrouter" }
   | { type: "addProvider" }
   | { type: "refresh" }
-  | { type: "help" };
+  | { type: "help" }
+  | { type: "toggleHidden"; providerId: string }
+  | { type: "persist" };

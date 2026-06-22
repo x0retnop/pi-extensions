@@ -1,7 +1,7 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getProviders } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, ProviderConfig } from "@earendil-works/pi-coding-agent";
-import type { ManagedProvider, ProviderView } from "./types.js";
+import type { ManagedProvider, ModelManagerConfig, ProviderView } from "./types.js";
 
 const builtInProviders = new Set(getProviders());
 
@@ -13,10 +13,16 @@ export function getProviderModels(registry: ExtensionContext["modelRegistry"], p
   return registry.getAll().filter((m) => m.provider === providerId);
 }
 
+export function isProviderHidden(config: ModelManagerConfig, providerId: string): boolean {
+  return config.global.hiddenProviderIds.includes(providerId);
+}
+
 export function getProviderViews(
   ctx: ExtensionContext | ExtensionCommandContext,
-  managed: ManagedProvider[],
+  config: ModelManagerConfig,
 ): ProviderView[] {
+  const managed = config.providers;
+  const hidden = new Set(config.global.hiddenProviderIds);
   const allModels = ctx.modelRegistry.getAll();
   const byProvider = new Map<string, Model<Api>[]>();
   for (const m of allModels) {
@@ -45,10 +51,13 @@ export function getProviderViews(
       authConfigured: ctx.modelRegistry.getProviderAuthStatus(id).configured,
       models,
       managed: cfg,
+      hidden: hidden.has(id),
     });
   }
-  // Sort: built-in providers first, then custom, both alphabetically by name.
+  // Sort: visible providers first, then hidden; within each group built-ins first, then alphabetical.
   views.sort((a, b) => {
+    if (!a.hidden && b.hidden) return -1;
+    if (a.hidden && !b.hidden) return 1;
     if (a.isBuiltIn && !b.isBuiltIn) return -1;
     if (!a.isBuiltIn && b.isBuiltIn) return 1;
     return a.name.localeCompare(b.name);
@@ -58,10 +67,10 @@ export function getProviderViews(
 
 export function getProviderView(
   ctx: ExtensionContext | ExtensionCommandContext,
-  managed: ManagedProvider[],
+  config: ModelManagerConfig,
   providerId: string,
 ): ProviderView | undefined {
-  return getProviderViews(ctx, managed).find((v) => v.id === providerId);
+  return getProviderViews(ctx, config).find((v) => v.id === providerId);
 }
 
 export function getDefaultModelForProvider(
@@ -130,7 +139,7 @@ export function buildCuratedProviderConfig(
   if (!isBuiltInProvider(providerId)) {
     if (!managed.baseUrl || !managed.apiKey || !managed.api) return undefined;
     return {
-      name: managed.id,
+      name: managed.name || managed.id,
       baseUrl: managed.baseUrl,
       apiKey: managed.apiKey,
       api: managed.api,
@@ -175,10 +184,19 @@ export function applyCuratedRegistrations(
   managed: ManagedProvider[],
 ): void {
   for (const p of managed) {
+    const isCuratable = !isBuiltInProvider(p.id) || p.id === "openrouter";
     if (!p.enabled || p.managedModelIds.length === 0) {
-      pi.unregisterProvider(p.id);
+      // Only unregister providers this extension may have previously registered.
+      if (isCuratable) {
+        try {
+          pi.unregisterProvider(p.id);
+        } catch {
+          // Provider may not have been registered; ignore.
+        }
+      }
       continue;
     }
+    if (!isCuratable) continue; // Built-in providers other than OpenRouter cannot be curated here.
     const config = buildCuratedProviderConfig(ctx, p.id, p);
     if (!config) continue;
     try {

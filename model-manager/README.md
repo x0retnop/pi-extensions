@@ -19,9 +19,9 @@ The providers list is built from `ctx.modelRegistry.getAll()`:
    curated OpenRouter).
 
 The manager only stores *your preferences* for each provider (enabled state,
-`useLatestDefault`, `lastUsedModel`, managed model IDs, overrides) in
-`model-manager.json`. It never edits Pi's built-in files unless you explicitly
-use Pi's own commands (e.g. `/login`).
+`useLatestDefault`, `lastUsedModel`, managed model IDs, overrides,
+hidden/shown state) in `model-manager.json`. It never edits Pi's built-in files
+unless you explicitly use Pi's own commands (e.g. `/login`).
 
 ### Models
 
@@ -33,9 +33,10 @@ Models inside each provider come from the same live registry:
   `model-manager.json` so they survive restarts.
 - Custom models added manually for custom providers.
 
-Only models marked as **managed** (`[x]`) are passed to `pi.registerProvider()`
-as a curated list. Unmanaged models are hidden from Pi's normal `/model` and
-`Ctrl+L` selectors, but they remain in the registry until you re-enable them.
+Model curation (marking specific models as managed) is supported for
+**OpenRouter** and **custom providers**. For other built-in providers the
+manager can still select and use models, but it cannot hide individual models
+from Pi's registry.
 
 ## Usage
 
@@ -44,7 +45,9 @@ Run `/mm` (or `/model-manager`) to open the model manager.
 ### Main screen
 
 - **Pinned Favorites** — starred providers/models at the top.
-- **Providers** — list of all known providers with auth status, managed count, and default model.
+- **Providers** — providers you want to see.
+- **Hidden Providers** — providers you previously hid; select one and press
+  `Enter` or `h` to restore it.
 - **Quick Actions** — add provider, sync OpenRouter, global settings, refresh, help.
 
 ### Shortcuts
@@ -52,10 +55,12 @@ Run `/mm` (or `/model-manager`) to open the model manager.
 | Key | Action |
 |---|---|
 | `↑` / `↓` | Navigate |
-| `Enter` | Open provider detail; on a favorite model it also selects it for use |
+| `Enter` | Open provider detail; restore a hidden provider |
 | `u` | Use the default/current model for the selected provider or favorite |
+| `h` | Hide the selected provider or restore a hidden one |
 | `*` | Star/unstar the selected provider/model |
 | `/` | Filter the list |
+| `g` / `G` | Jump to first/last selectable row |
 | `?` | Show help |
 | `Esc` / `q` | Close |
 
@@ -69,8 +74,16 @@ Run `/mm` (or `/model-manager`) to open the model manager.
 | `a` | Select all / none |
 | `s` | Sync from OpenRouter (OpenRouter only) |
 | `n` | Add a custom model (custom providers only) |
+| `h` | Hide this provider |
 | `/` | Filter models |
 | `Esc` / `q` | Back |
+
+## Hiding providers
+
+Press `h` on any provider to hide it. Hidden providers move to the
+**Hidden Providers** section and are removed from the default provider list in
+settings. For custom providers and curated OpenRouter, hiding also disables the
+provider so it disappears from Pi's model selector until you restore it.
 
 ## Configuration
 
@@ -95,4 +108,4 @@ selector.
 |---|---|
 | `~/.pi/agent/models.json` | Pi's own provider/model overrides and custom providers. Read-only for this extension. |
 | `~/.pi/agent/auth.json` | API keys / OAuth tokens. The manager checks auth status here but does not write to it. |
-| `~/.pi/agent/model-manager.json` | Extension state: favorites, managed IDs, toggles, cached OpenRouter models. |
+| `~/.pi/agent/model-manager.json` | Extension state: favorites, managed IDs, toggles, hidden provider IDs, cached OpenRouter models. |

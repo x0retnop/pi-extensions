@@ -7,6 +7,7 @@ import { getProviderViews, getDefaultModelForProvider } from "../provider-utils.
 
 type Row =
   | { type: "header"; label: string }
+  | { type: "text"; label: string }
   | { type: "favorite"; favorite: FavoriteItem; label: string; sublabel?: string }
   | { type: "provider"; view: ProviderView }
   | { type: "action"; action: UiAction; label: string };
@@ -79,7 +80,7 @@ export class MainScreen {
       truncateToWidth(
         this.theme.fg(
           "dim",
-          "↑↓ move · Enter open/use · u use default · * favorite · / filter · ? help · Esc close",
+          "↑↓ move · Enter open/use · u use default · h hide/unhide · * favorite · / filter · g/G top/bottom · ? help · Esc close",
         ),
         width,
       ),
@@ -117,12 +118,25 @@ export class MainScreen {
       this.toggleFavorite();
       return;
     }
-    if (data === "u") {
+    if (data === "u" || data === "U") {
       this.useCurrent();
       return;
     }
+    if (data === "h" || data === "H") {
+      this.toggleHidden();
+      return;
+    }
+    if (data === "g") {
+      this.jumpToFirstSelectable();
+      this.tui.requestRender();
+      return;
+    }
+    if (data === "G") {
+      this.jumpToLastSelectable();
+      this.tui.requestRender();
+      return;
+    }
 
-    const rows = this.rows;
     if (kb.matches(data, "tui.select.up")) {
       this.moveSelection(-1);
     } else if (kb.matches(data, "tui.select.down")) {
@@ -135,27 +149,54 @@ export class MainScreen {
     this.tui.requestRender();
   }
 
+  private currentRows(): Row[] {
+    return this.searchMode ? this.filteredRows : this.rows;
+  }
+
+  private isSelectable(row: Row): boolean {
+    return row.type !== "header" && row.type !== "text";
+  }
+
+  private jumpToFirstSelectable(): void {
+    const rows = this.currentRows();
+    const idx = rows.findIndex((r) => this.isSelectable(r));
+    if (idx >= 0) this.selectedIndex = idx;
+  }
+
+  private jumpToLastSelectable(): void {
+    const rows = this.currentRows();
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (this.isSelectable(rows[i])) {
+        this.selectedIndex = i;
+        return;
+      }
+    }
+  }
+
   private moveSelection(delta: number): void {
-    const rows = this.rows;
+    const rows = this.currentRows();
     if (rows.length === 0) return;
     let next = this.selectedIndex + delta;
-    while (next >= 0 && next < rows.length && rows[next].type === "header") {
+    while (next >= 0 && next < rows.length && !this.isSelectable(rows[next])) {
       next += delta;
     }
     if (next < 0) next = rows.length - 1;
     if (next >= rows.length) next = 0;
-    // skip header at wrap
-    while (rows[next].type === "header") {
+    while (!this.isSelectable(rows[next])) {
       next = (next + 1) % rows.length;
     }
     this.selectedIndex = next;
   }
 
   private activate(): void {
-    const row = this.rows[this.selectedIndex];
+    const row = this.currentRows()[this.selectedIndex];
     if (!row) return;
     if (row.type === "provider") {
-      this.onAction({ type: "provider", providerId: row.view.id });
+      if (row.view.hidden) {
+        this.onAction({ type: "toggleHidden", providerId: row.view.id });
+      } else {
+        this.onAction({ type: "provider", providerId: row.view.id });
+      }
     } else if (row.type === "favorite") {
       if (row.favorite.modelId) {
         this.onAction({ type: "useModel", providerId: row.favorite.providerId, modelId: row.favorite.modelId });
@@ -168,7 +209,7 @@ export class MainScreen {
   }
 
   private useCurrent(): void {
-    const row = this.rows[this.selectedIndex];
+    const row = this.currentRows()[this.selectedIndex];
     if (!row) return;
     if (row.type === "favorite" && row.favorite.modelId) {
       this.onAction({ type: "useModel", providerId: row.favorite.providerId, modelId: row.favorite.modelId });
@@ -177,7 +218,7 @@ export class MainScreen {
       if (model) {
         this.onAction({ type: "useModel", providerId: model.provider, modelId: model.id });
       }
-    } else if (row.type === "provider") {
+    } else if (row.type === "provider" && !row.view.hidden) {
       const model = getDefaultModelForProvider(this.ctx, row.view.id);
       if (model) {
         this.onAction({ type: "useModel", providerId: model.provider, modelId: model.id });
@@ -186,7 +227,7 @@ export class MainScreen {
   }
 
   private toggleFavorite(): void {
-    const row = this.rows[this.selectedIndex];
+    const row = this.currentRows()[this.selectedIndex];
     if (!row) return;
     if (row.type === "favorite") {
       this.removeFavorite(row.favorite);
@@ -194,7 +235,14 @@ export class MainScreen {
       this.toggleProviderFavorite(row.view.id);
     }
     this.rebuildRows();
+    this.onAction({ type: "persist" });
     this.tui.requestRender();
+  }
+
+  private toggleHidden(): void {
+    const row = this.currentRows()[this.selectedIndex];
+    if (!row || row.type !== "provider") return;
+    this.onAction({ type: "toggleHidden", providerId: row.view.id });
   }
 
   private toggleProviderFavorite(providerId: string): void {
@@ -213,13 +261,15 @@ export class MainScreen {
   }
 
   private rebuildRows(): void {
-    const views = getProviderViews(this.ctx, this.config.providers);
+    const views = getProviderViews(this.ctx, this.config);
+    const visible = views.filter((v) => !v.hidden);
+    const hidden = views.filter((v) => v.hidden);
     const newRows: Row[] = [];
 
     // Pinned favorites
     newRows.push({ type: "header", label: "★ Pinned Favorites" });
     if (this.config.favorites.length === 0) {
-      newRows.push({ type: "favorite", favorite: { providerId: "" }, label: "  (no favorites yet — press * on a provider)" });
+      newRows.push({ type: "text", label: "  (no favorites yet — press * on a provider)" });
     } else {
       for (const fav of this.config.favorites.slice(0, 10)) {
         const model = fav.modelId ? this.ctx.modelRegistry.find(fav.providerId, fav.modelId) : undefined;
@@ -229,10 +279,22 @@ export class MainScreen {
       }
     }
 
-    // Providers
+    // Visible providers
     newRows.push({ type: "header", label: "Providers" });
-    for (const view of views) {
-      newRows.push({ type: "provider", view });
+    if (visible.length === 0) {
+      newRows.push({ type: "text", label: "  (all providers are hidden)" });
+    } else {
+      for (const view of visible) {
+        newRows.push({ type: "provider", view });
+      }
+    }
+
+    // Hidden providers
+    if (hidden.length > 0) {
+      newRows.push({ type: "header", label: "Hidden Providers" });
+      for (const view of hidden) {
+        newRows.push({ type: "provider", view });
+      }
     }
 
     // Quick actions
@@ -254,29 +316,42 @@ export class MainScreen {
       return;
     }
     const q = query.toLowerCase();
-    this.filteredRows = this.rows.filter((r) => {
-      if (r.type === "header") return true; // keep headers for context
-      return this.rowLabel(r).toLowerCase().includes(q);
-    });
-    this.selectedIndex = 0;
-    if (this.filteredRows[0]?.type === "header" && this.filteredRows.length > 1) {
-      this.selectedIndex = 1;
+    const result: Row[] = [];
+    let pendingHeader: Row | null = null;
+    for (const row of this.rows) {
+      if (row.type === "header") {
+        pendingHeader = row;
+        continue;
+      }
+      if (row.type === "text") continue;
+      if (this.rowLabel(row).toLowerCase().includes(q)) {
+        if (pendingHeader) {
+          result.push(pendingHeader);
+          pendingHeader = null;
+        }
+        result.push(row);
+      }
     }
+    this.filteredRows = result;
+    this.jumpToFirstSelectable();
   }
 
   private rowLabel(row: Row): string {
-    if (row.type === "header") return row.label;
+    if (row.type === "header" || row.type === "text") return row.label;
     if (row.type === "favorite") return row.label;
     if (row.type === "action") return row.label;
     const v = row.view;
     const defaultModel = v.managed.useLatestDefault ? "latest" : v.managed.lastUsedModel ?? "latest";
-    return `${v.name} ${v.authConfigured ? "✓" : "✗"} ${v.managed.managedModelIds.length} models default:${defaultModel}`;
+    return `${v.name} ${v.hidden ? "hidden" : ""} ${v.authConfigured ? "auth" : ""} ${v.managed.managedModelIds.length} models default:${defaultModel}`;
   }
 
   private renderRow(row: Row, selected: boolean, width: number): string {
     const prefix = selected ? this.theme.fg("accent", "> ") : "  ";
     if (row.type === "header") {
       return truncateToWidth(this.theme.fg("accent", this.theme.bold(`  ${row.label}`)), width);
+    }
+    if (row.type === "text") {
+      return truncateToWidth(this.theme.fg("dim", row.label), width);
     }
     if (row.type === "favorite") {
       let line = `${prefix}${row.label}`;
@@ -294,8 +369,9 @@ export class MainScreen {
     const defaultModel = v.managed.useLatestDefault
       ? this.theme.fg("accent", defaultModelRaw)
       : this.theme.fg("text", defaultModelRaw);
+    const hiddenTag = v.hidden ? this.theme.fg("warning", "[hidden] ") : "";
     const rightRaw = `${v.managed.managedModelIds.length} managed · ${defaultModelRaw} · ${v.models.length} available`;
-    const left = `${prefix}${star} ${auth} ${v.name}`;
+    const left = `${prefix}${star} ${auth} ${hiddenTag}${v.name}`;
     const leftWidth = visibleWidth(left);
     const rightWidth = visibleWidth(rightRaw);
     let pad = width - leftWidth - rightWidth - 1;
