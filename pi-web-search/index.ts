@@ -1,7 +1,70 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Text } from "@earendil-works/pi-tui";
+
+// ---------------------------------------------------------------------------
+// TUI helpers for compact, width-safe tool rendering
+// ---------------------------------------------------------------------------
+
+interface RenderComponent {
+  render(width: number): string[];
+  invalidate(): void;
+}
+
+function safeTruncate(str: string, maxWidth: number, suffix = "..."): string {
+  let visible = 0;
+  let result = "";
+  let inAnsi = false;
+
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+
+    if (ch === 0x1b && str.charCodeAt(i + 1) === 0x5b) {
+      inAnsi = true;
+      result += str[i];
+      continue;
+    }
+
+    if (inAnsi) {
+      result += str[i];
+      if ((ch >= 0x41 && ch <= 0x5a) || (ch >= 0x61 && ch <= 0x7a)) {
+        inAnsi = false;
+      }
+      continue;
+    }
+
+    if (visible >= maxWidth - suffix.length) {
+      result += suffix;
+      break;
+    }
+    result += str[i];
+    visible++;
+  }
+
+  return result;
+}
+
+function makePlainText(text: string): RenderComponent {
+  return {
+    render(width: number) { return text ? [safeTruncate(text, width)] : []; },
+    invalidate() {},
+  };
+}
+
+function makeWrappedText(lines: string[]): RenderComponent {
+  return {
+    render(width: number) { return lines.map((line) => safeTruncate(line, width)); },
+    invalidate() {},
+  };
+}
+
+function formatUrl(url: string, maxLen = 60): string {
+  return url.length > maxLen ? url.slice(0, maxLen - 3) + "..." : url;
+}
+
+function formatQuery(q: string, maxLen = 50): string {
+  return q.length > maxLen ? q.slice(0, maxLen - 3) + "..." : q;
+}
 
 const WEB_TOOLS = ["web_search", "fetch_content", "code_search"] as const;
 const GATE_TOOL = "web_access";
@@ -338,15 +401,15 @@ export default function (pi: ExtensionAPI) {
     },
 
     renderCall(_args, theme) {
-      return new Text(theme.fg("toolTitle", theme.bold("web_access ")) + theme.fg("warning", "disabled"), 0, 0);
+      return makePlainText(theme.fg("toolTitle", theme.bold("web_access ")) + theme.fg("warning", "disabled"));
     },
 
     renderResult(result, _options, theme) {
       const details = result.details as { enabled?: boolean } | undefined;
       if (details?.enabled) {
-        return new Text(theme.fg("success", "Web access already enabled"), 0, 0);
+        return makePlainText(theme.fg("success", "Web access already enabled"));
       }
-      return new Text(theme.fg("warning", "Web access disabled — remind user to run /web"), 0, 0);
+      return makePlainText(theme.fg("warning", "Web access disabled — remind user to run /web"));
     },
   });
 
@@ -443,43 +506,129 @@ export default function (pi: ExtensionAPI) {
     },
 
     renderCall(args, theme) {
-      const input = args as { query?: unknown; queries?: unknown };
+      const input = args as {
+        query?: unknown;
+        queries?: unknown;
+        depth?: string;
+        num_results?: number;
+        recency_filter?: string;
+        domain_filter?: string[];
+        summarize?: boolean;
+        answer_mode?: boolean;
+        provider?: string;
+        include_content?: boolean;
+      };
       const rawQueryList: unknown[] = Array.isArray(input.queries)
         ? input.queries
         : (input.query !== undefined ? [input.query] : []);
       const queryList = normalizeQueryList(rawQueryList);
+
       if (queryList.length === 0) {
-        return new Text(theme.fg("toolTitle", theme.bold("search ")) + theme.fg("error", "(no query)"), 0, 0);
+        return makePlainText(theme.fg("toolTitle", theme.bold("search ")) + theme.fg("error", "(no query)"));
       }
-      if (queryList.length === 1) {
-        const q = queryList[0];
-        const display = q.length > 60 ? q.slice(0, 57) + "..." : q;
-        return new Text(theme.fg("toolTitle", theme.bold("search ")) + theme.fg("accent", `"${display}"`), 0, 0);
+
+      const firstQuery = formatQuery(queryList[0], 50);
+      const multiTag = queryList.length > 1 ? theme.fg("dim", ` +${queryList.length - 1}`) : "";
+      const queryText = `"${firstQuery}"${multiTag}`;
+
+      const badges: string[] = [];
+      if (input.depth && input.depth !== "standard") badges.push(input.depth);
+      if (input.num_results != null && input.num_results !== 10) badges.push(`${input.num_results}`);
+      if (input.recency_filter) badges.push(input.recency_filter);
+      if (input.summarize) badges.push("summarize");
+      if (input.answer_mode) badges.push("answer");
+      if (input.include_content) badges.push("full");
+      if (input.provider) badges.push(input.provider);
+      if (input.domain_filter && input.domain_filter.length > 0) {
+        badges.push(input.domain_filter.length === 1 ? input.domain_filter[0] : `${input.domain_filter.length} domains`);
       }
-      return new Text(theme.fg("toolTitle", theme.bold("search ")) + theme.fg("accent", `${queryList.length} queries`), 0, 0);
+
+      let label = theme.fg("toolTitle", theme.bold("search ")) + theme.fg("accent", queryText);
+      if (badges.length > 0) {
+        label += theme.fg("dim", ` • ${badges.join(" · ")}`);
+      }
+      return makePlainText(label);
     },
 
-    renderResult(result, { expanded }, theme) {
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) {
+        return makeWrappedText([]);
+      }
       const details = result.details as {
         error?: string;
+        query?: string;
+        queries?: string[] | null;
         provider_used?: string;
         result_count?: number;
         fallback_used?: boolean;
         summarizer_error?: string;
+        answer?: string;
+        llm_tokens_used?: { total_tokens?: number | null } | null;
+        results?: Array<{ title?: string; url?: string; snippet?: string }>;
       } | undefined;
+
       if (details?.error) {
-        return new Text(theme.fg("error", `Error: ${details.error}`), 0, 0);
+        return makePlainText(theme.fg("error", `Error: ${details.error}`));
       }
+
       const count = details?.result_count ?? 0;
       const provider = details?.provider_used ?? "unknown";
-      let line = theme.fg("success", `${count} sources`) + theme.fg("muted", ` • ${provider}${details?.fallback_used ? " (fallback)" : ""}`);
-      if (details?.summarizer_error) {
-        line += theme.fg("warning", ` • summary error: ${details.summarizer_error}`);
+      const totalTokens = details?.llm_tokens_used?.total_tokens;
+
+      const badges: string[] = [];
+      if (details?.fallback_used) badges.push("fallback");
+      if (totalTokens != null) badges.push(`${totalTokens} tokens`);
+      if (details?.summarizer_error) badges.push("summary error");
+
+      let line = theme.fg("success", `${count} sources`) + theme.fg("muted", ` via ${provider}`);
+      if (badges.length > 0) {
+        line += theme.fg("dim", ` • ${badges.join(" · ")}`);
       }
-      if (!expanded) return new Text(line, 0, 0);
-      const text = result.content.find((c) => c.type === "text")?.text || "";
-      const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
-      return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
+
+      const lines: string[] = [line];
+
+      const queries = Array.isArray(details?.queries) ? details.queries : (details?.query ? [details.query] : []);
+      if (queries.length > 0) {
+        lines.push(theme.fg("toolTitle", "Queries:"));
+        for (const q of queries.slice(0, 5)) {
+          lines.push(`  ${theme.fg("accent", `"${q}"`)}`);
+        }
+        if (queries.length > 5) {
+          lines.push(theme.fg("dim", `  ...and ${queries.length - 5} more queries`));
+        }
+      }
+
+      if (details?.answer) {
+        lines.push("");
+        const preview = expanded && details.answer.length > 600
+          ? details.answer.slice(0, 597) + "..."
+          : (details.answer.length > 280 ? details.answer.slice(0, 277) + "..." : details.answer);
+        lines.push(theme.fg("accent", "Answer: ") + theme.fg("dim", preview));
+      }
+
+      const results = details?.results ?? [];
+      if (results.length > 0) {
+        lines.push("");
+        lines.push(theme.fg("toolTitle", "Results:"));
+        const maxItems = expanded ? 20 : 12;
+        for (let i = 0; i < Math.min(results.length, maxItems); i++) {
+          const r = results[i];
+          const title = formatQuery(r.title || "Untitled", 46);
+          const url = formatUrl(r.url || "", 58);
+          const num = theme.fg("toolTitle", `${i + 1}.`);
+          lines.push(`  ${num} ${theme.fg("accent", title)} ${theme.fg("muted", "—")} ${theme.fg("dim", url)}`);
+          if (expanded && r.snippet) {
+            const snippet = r.snippet.length > 140 ? r.snippet.slice(0, 137) + "..." : r.snippet;
+            lines.push(`      ${theme.fg("dim", snippet)}`);
+          }
+        }
+
+        if (results.length > maxItems) {
+          lines.push(theme.fg("dim", `  ...and ${results.length - maxItems} more`));
+        }
+      }
+
+      return makeWrappedText(lines);
     },
   });
 
@@ -560,50 +709,76 @@ export default function (pi: ExtensionAPI) {
     },
 
     renderCall(args, theme) {
-      const input = args as { url?: string; urls?: string[] };
+      const input = args as { url?: string; urls?: string[]; max_chars?: number; save_full?: boolean };
       const urlList = input.urls ?? (input.url ? [input.url] : []);
       if (urlList.length === 0) {
-        return new Text(theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("error", "(no URL)"), 0, 0);
+        return makePlainText(theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("error", "(no URL)"));
       }
-      if (urlList.length === 1) {
-        const display = urlList[0].length > 60 ? urlList[0].slice(0, 57) + "..." : urlList[0];
-        return new Text(theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("accent", display), 0, 0);
+
+      const display = urlList.length === 1 ? formatUrl(urlList[0], 50) : `${urlList.length} URLs`;
+      const badges: string[] = [];
+      if (input.max_chars != null && input.max_chars !== 32000) badges.push(`${input.max_chars} chars`);
+      if (input.save_full) badges.push("save_full");
+
+      let label = theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("accent", display);
+      if (badges.length > 0) {
+        label += theme.fg("dim", ` • ${badges.join(" · ")}`);
       }
-      return new Text(theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("accent", `${urlList.length} URLs`), 0, 0);
+      return makePlainText(label);
     },
 
-    renderResult(result, { expanded }, theme) {
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) {
+        return makeWrappedText([]);
+      }
       const details = result.details as {
         error?: string;
         urls?: string[];
         max_chars?: number;
         save_full?: boolean;
         full_content_paths?: (string | null)[];
-        results?: Array<{ url: string; title?: string; chars_returned?: number; truncated?: boolean }>;
+        results?: Array<{ url: string; title?: string; status_code?: number; chars_returned?: number; truncated?: boolean }>;
       } | undefined;
       if (details?.error) {
-        return new Text(theme.fg("error", `Error: ${details.error}`), 0, 0);
+        return makePlainText(theme.fg("error", `Error: ${details.error}`));
       }
       const results = details?.results ?? [];
       const count = results.length || details?.urls?.length || 1;
       const limit = details?.max_chars ?? 32000;
       const truncatedCount = results.filter((r) => r.truncated).length;
+      const failedCount = results.filter((r) => r.status_code != null && r.status_code >= 400).length;
+
       let line = theme.fg("success", `${count} URL(s) fetched`) + theme.fg("muted", ` • limit ${limit} chars`);
       if (truncatedCount > 0) {
         line += theme.fg("warning", ` • ${truncatedCount} truncated`);
       }
+      if (failedCount > 0) {
+        line += theme.fg("error", ` • ${failedCount} failed`);
+      }
       if (details?.save_full) {
         line += theme.fg("accent", " • save_full");
       }
-      if (!expanded) return new Text(line, 0, 0);
-      const text = result.content.find((c) => c.type === "text")?.text || "";
-      let extra = "";
+      if (!expanded) return makePlainText(line);
+
+      const lines: string[] = [line];
+      for (const r of results) {
+        const title = formatQuery(r.title || "Untitled", 40);
+        const url = formatUrl(r.url, 50);
+        const status = r.status_code != null && r.status_code >= 400
+          ? theme.fg("error", `${r.status_code}`)
+          : theme.fg("muted", `${r.status_code ?? "ok"}`);
+        const chars = theme.fg("muted", `${r.chars_returned ?? "?"} chars`);
+        const truncated = r.truncated ? theme.fg("warning", " truncated") : "";
+        lines.push(`${status} ${theme.fg("accent", title)} ${theme.fg("muted", "—")} ${theme.fg("dim", url)} ${chars}${truncated}`);
+      }
+
       const savedPaths = (details?.full_content_paths ?? []).filter((p): p is string => typeof p === "string" && p.length > 0);
       if (savedPaths.length > 0) {
-        extra = "\n" + theme.fg("dim", savedPaths.map((p) => `full: ${p}`).join("\n"));
+        lines.push(theme.fg("accent", "Saved full content:"));
+        for (const p of savedPaths) lines.push(theme.fg("dim", `  ${p}`));
       }
-      const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
-      return new Text(line + "\n" + theme.fg("dim", preview) + extra, 0, 0);
+
+      return makeWrappedText(lines);
     },
   });
 
@@ -670,25 +845,87 @@ export default function (pi: ExtensionAPI) {
     },
 
     renderCall(args, theme) {
-      const input = args as { query?: string };
-      const display = !input.query
-        ? "(no query)"
-        : input.query.length > 70 ? input.query.slice(0, 67) + "..." : input.query;
-      return new Text(theme.fg("toolTitle", theme.bold("code_search ")) + theme.fg("accent", display), 0, 0);
+      const input = args as { query?: string; num_results?: number; max_tokens?: number; provider?: string };
+      const display = !input.query ? "(no query)" : `"${formatQuery(input.query, 50)}"`;
+      const badges: string[] = [];
+      if (input.num_results != null && input.num_results !== 10) badges.push(`${input.num_results}`);
+      if (input.max_tokens != null && input.max_tokens !== 5000) badges.push(`${input.max_tokens} tokens`);
+      if (input.provider) badges.push(input.provider);
+
+      let label = theme.fg("toolTitle", theme.bold("code_search ")) + theme.fg("accent", display);
+      if (badges.length > 0) {
+        label += theme.fg("dim", ` • ${badges.join(" · ")}`);
+      }
+      return makePlainText(label);
     },
 
-    renderResult(result, { expanded }, theme) {
-      const details = result.details as { error?: string; provider_used?: string; result_count?: number; fallback_used?: boolean } | undefined;
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) {
+        return makeWrappedText([]);
+      }
+      const details = result.details as {
+        error?: string;
+        query?: string;
+        provider_used?: string;
+        result_count?: number;
+        fallback_used?: boolean;
+        answer?: string;
+        llm_tokens_used?: { total_tokens?: number | null } | null;
+        results?: Array<{ title?: string; url?: string; snippet?: string }>;
+      } | undefined;
       if (details?.error) {
-        return new Text(theme.fg("error", `Error: ${details.error}`), 0, 0);
+        return makePlainText(theme.fg("error", `Error: ${details.error}`));
       }
       const count = details?.result_count ?? 0;
       const provider = details?.provider_used ?? "unknown";
-      const line = theme.fg("success", `${count} sources`) + theme.fg("muted", ` • ${provider}${details?.fallback_used ? " (fallback)" : ""}`);
-      if (!expanded) return new Text(line, 0, 0);
-      const text = result.content.find((c) => c.type === "text")?.text || "";
-      const preview = text.length > 500 ? text.slice(0, 500) + "..." : text;
-      return new Text(line + "\n" + theme.fg("dim", preview), 0, 0);
+      const totalTokens = details?.llm_tokens_used?.total_tokens;
+
+      const badges: string[] = [];
+      if (details?.fallback_used) badges.push("fallback");
+      if (totalTokens != null) badges.push(`${totalTokens} tokens`);
+
+      let line = theme.fg("success", `${count} sources`) + theme.fg("muted", ` via ${provider}`);
+      if (badges.length > 0) {
+        line += theme.fg("dim", ` • ${badges.join(" · ")}`);
+      }
+
+      const lines: string[] = [line];
+
+      if (details?.query) {
+        lines.push(theme.fg("toolTitle", "Query: ") + theme.fg("accent", `"${details.query}"`));
+      }
+
+      if (details?.answer) {
+        lines.push("");
+        const preview = expanded && details.answer.length > 600
+          ? details.answer.slice(0, 597) + "..."
+          : (details.answer.length > 280 ? details.answer.slice(0, 277) + "..." : details.answer);
+        lines.push(theme.fg("accent", "Answer: ") + theme.fg("dim", preview));
+      }
+
+      const results = details?.results ?? [];
+      if (results.length > 0) {
+        lines.push("");
+        lines.push(theme.fg("toolTitle", "Results:"));
+        const maxItems = expanded ? 20 : 12;
+        for (let i = 0; i < Math.min(results.length, maxItems); i++) {
+          const r = results[i];
+          const title = formatQuery(r.title || "Untitled", 46);
+          const url = formatUrl(r.url || "", 58);
+          const num = theme.fg("toolTitle", `${i + 1}.`);
+          lines.push(`  ${num} ${theme.fg("accent", title)} ${theme.fg("muted", "—")} ${theme.fg("dim", url)}`);
+          if (expanded && r.snippet) {
+            const snippet = r.snippet.length > 140 ? r.snippet.slice(0, 137) + "..." : r.snippet;
+            lines.push(`      ${theme.fg("dim", snippet)}`);
+          }
+        }
+
+        if (results.length > maxItems) {
+          lines.push(theme.fg("dim", `  ...and ${results.length - maxItems} more`));
+        }
+      }
+
+      return makeWrappedText(lines);
     },
   });
 }
