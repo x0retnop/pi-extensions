@@ -17,6 +17,7 @@ See `AGENTS.md` and `docs/pi-workflow.md` for the full workflow.
 ```
 a-rewind          — guard against fake tool-call announcements; manual rewind
 auto-trust        — auto-approve safe commands
+context-compressor — lightweight same-model context compression with KEY FACTS
 context-guard     — prompt cleanup, tool gating, skill control
 grep-tool         — project-wide grep override
 model-manager     — dynamic provider/model registration, /mm TUI
