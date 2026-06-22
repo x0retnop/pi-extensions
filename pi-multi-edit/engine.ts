@@ -190,7 +190,8 @@ function matchEditsInFile(
   }
 
   if (fileFailed && continueOnError) {
-    return { byIndex, changed: false };
+    // Partial apply: keep successful edits, skip the rest, but still write
+    // whatever changes accumulated before the first failure.
   }
 
   const restored = restoreLineEndings(normalized, lineEnding);
