@@ -99,11 +99,15 @@ Copy the extension folder to `~/.pi/agent/extensions/` and restart Pi.
 - `/mycommand` — slash command that does Y.
 ```
 
+## Agent doc
+
+If the extension has non-obvious behavior, cross-extension interactions, or backend wiring, also create `docs/extensions/<name>.md` following the existing format.
+
 ## Local install / test
 
 1. Type-check from the repo root:
    ```bash
-   npx --no-install tsc --noEmit
+   npm run typecheck
    ```
 2. Copy the extension folder to the Pi runtime:
    ```bash
@@ -122,6 +126,6 @@ Copy the extension folder to `~/.pi/agent/extensions/` and restart Pi.
 
 ## When to update docs
 
-- Adding a new ready extension → update the root `README.md` catalog.
-- Changing a public command, tool, or install flow → update that extension's `README.md`.
+- Adding a new ready extension → update the root `README.md` catalog and create `docs/extensions/<name>.md` if non-trivial.
+- Changing a public command, tool, or install flow → update that extension's `README.md` and `docs/extensions/<name>.md`.
 - Internal refactoring with no user-facing change → usually skip README updates.

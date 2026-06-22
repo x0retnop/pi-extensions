@@ -1,53 +1,30 @@
 # pi-session-memory — Agent Guide
 
-## Role mode
-
-This project uses a **collapsed role model**: one agent handles coding, architecture, and keeper-style cleanup. Keep changes minimal and reviewable.
+> Loaded together with the root `AGENTS.md`. This file contains only guidance specific to `pi-session-memory`.
 
 ## What this is
 
-Pi extension for semantic search over past agent sessions via the 0x010 Session Vector Index.
-
-## Quick start
-
-```bash
-# Install into Pi
-pi install ./pi-session-memory
-```
-
-Requirements:
-- 0x010 server running on `127.0.0.1:8000`
-- `SESSION_INDEX_ENABLED=true` in 0x010 `.env`
-- Embedding server on port `8088`
+Semantic search over past Pi sessions via the 0x010 Session Vector Index.
 
 ## Backend
 
 - **Backend project:** `C:/10x001/AI comp/0x010`
 - **Canonical spec:** `0x010/docs/reference/SESSION_INDEX_SPEC.md`
 - **Backend module:** `0x010/app/session_index/`
-- **Client API summary:** `docs/reference/API.md`
+- **Client API summary:** `pi-session-memory/docs/reference/API.md`
 
-## Conventions
+## Agent workflow
 
-- TypeScript, `@earendil-works/pi-coding-agent` extension API.
-- Use `Type.Object` from `@sinclair/typebox` for tool parameters.
-- Keep tools self-contained: fetch 0x010, format results, store session state via `ctx.sessionManager`.
-- User-facing docs and commands in `README.md`.
+1. **Search** — call `session_memory({ action: "search", query })` when the user refers to past conversations.
+2. **Read** — use `session_memory({ action: "content", hitIndex })` from a previous search result.
+3. **List** — use `session_memory({ action: "list", scope: "current" | "all" })` to enumerate sessions.
 
-## Where to find work
+## Important behaviors
 
-1. `README.md` — user-reported gaps in commands or workflow.
-2. `0x010/docs/reviews/CORE_REGISTRY.md` — if the issue is backend-side.
+- Never use the raw `read` tool on `.jsonl` session files.
+- Backend URL resolution: `PI_SESSION_MEMORY_URL` → `PI_BACKEND_URL` → `http://127.0.0.1:8000`.
+- Last search is stored in session entries so `hitIndex` can be used in subsequent calls.
 
-## Documentation
+## Source
 
-Keep `AGENTS.md` and `README.md` useful and current. Update `docs/reference/API.md` when the 0x010 endpoint contract changes. Use git for local history review (`git status`, `git diff`, `git log`). There are no required agent commits or report files; commit a meaningful chunk when it is complete and stable if you want to.
-
-## Documentation map
-
-| File | Purpose |
-|------|---------|
-| `README.md` | User-facing install and usage |
-| `AGENTS.md` | This file — stable agent rules |
-| `docs/INDEX.md` | Map of this project's docs |
-| `docs/reference/API.md` | 0x010 Session Index API contract used by this extension |
+- `pi-session-memory/index.ts`
