@@ -149,30 +149,30 @@ function isDestructivePattern(command: string): boolean {
 
 type Decision = { action: "allow" | "ask" | "block"; reason?: string };
 
-function decideBash(command: string, cwd: string): Decision {
+function decideBash(command: string, cwd: string, config: Config): Decision {
   const norm = normalizeCommand(command);
   if (sessionAllowedCommands.has(norm)) return { action: "allow" };
 
   if (isDestructivePattern(command)) {
-    if (CONFIG.mode === "yolo") return { action: "ask", reason: "matches a known destructive pattern" };
+    if (config.mode === "yolo") return { action: "ask", reason: "matches a known destructive pattern" };
     return { action: "block", reason: "matches a known destructive pattern" };
   }
 
   const paths = extractBashPaths(command);
-  const hasOutside = paths.some((p) => classifyPathAccess(p, cwd, CONFIG.workspaceRoots, CONFIG.protectedRoots).scope === "outside_project");
-  const hasProtected = paths.some((p) => classifyPathAccess(p, cwd, CONFIG.workspaceRoots, CONFIG.protectedRoots).scope === "protected");
+  const hasOutside = paths.some((p) => classifyPathAccess(p, cwd, config.workspaceRoots, config.protectedRoots).scope === "outside_project");
+  const hasProtected = paths.some((p) => classifyPathAccess(p, cwd, config.workspaceRoots, config.protectedRoots).scope === "protected");
 
   if (hasProtected) {
-    if (CONFIG.mode === "yolo") return { action: "ask", reason: "touches a protected system path" };
+    if (config.mode === "yolo") return { action: "ask", reason: "touches a protected system path" };
     return { action: "block", reason: "touches a protected system path" };
   }
 
   if (isWriteLikeCommand(command) && hasOutside) {
-    if (CONFIG.mode === "strict") return { action: "block", reason: "would write outside the active project (blocked in strict mode)" };
+    if (config.mode === "strict") return { action: "block", reason: "would write outside the active project (blocked in strict mode)" };
     return { action: "ask", reason: "may write outside the active project" };
   }
 
-  if (hasOutside && CONFIG.mode === "strict") {
+  if (hasOutside && config.mode === "strict") {
     return { action: "ask", reason: "accesses paths outside the active project (strict mode)" };
   }
 
@@ -216,6 +216,8 @@ async function askReadAccess(
   if (choice === "Allow this directory") return "directory";
   return "block";
 }
+
+export { decideBash };
 
 // ─── Main export ───
 
@@ -383,7 +385,7 @@ export default function (pi: any) {
       const command = String(input.command ?? "").trim();
       if (!command) return undefined;
 
-      const decision = decideBash(command, cwd);
+      const decision = decideBash(command, cwd, CONFIG);
       if (decision.action === "block") {
         return {
           block: true,
