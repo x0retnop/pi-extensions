@@ -56,6 +56,7 @@ Run this before committing code or package changes. Pure documentation changes d
 - `docs/pi-quickref.md` — ExtensionAPI events/tools/commands.
 - `docs/pi-tool-internals.md` — tool visibility, substitution, rendering.
 - `docs/tool-rendering.md` — renderCall/renderResult pitfalls.
+- `docs/0x010-control.md` — start/stop/restart the 0x010 backend runtime.
 - `docs/interactions.md` — cross-extension and runtime wiring map.
 - `docs/extensions/<name>.md` — per-extension agent guide.
 - `docs/git-policy.md` — how agents commit in this shared repo.

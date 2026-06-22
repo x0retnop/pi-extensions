@@ -11,6 +11,7 @@ Quick index for agents working in this repo. If you are unsure where something l
 | API types, events, tool/command shapes | `docs/pi-quickref.md` |
 | Where Pi's own `.d.ts` files live | `docs/pi-local-map.md` |
 | Pi CLI update compatibility | Run `python scripts/check-pi-sync.py`, then `docs/pi-version-sync.md` |
+| 0x010 backend control (start/stop/restart runtime) | `docs/0x010-control.md` |
 | How extensions interact with each other and the runtime | `docs/interactions.md` |
 | Git rules for this shared repo | `docs/git-policy.md` |
 | Write a new extension | `docs/creating-extensions.md` |
