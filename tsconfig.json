@@ -15,6 +15,7 @@
   "include": [
     "a-rewind/**/*.ts",
     "auto-trust/**/*.ts",
+    "context-compressor/**/*.ts",
     "context-guard/**/*.ts",
     "grep-tool/**/*.ts",
     "model-manager/**/*.ts",
