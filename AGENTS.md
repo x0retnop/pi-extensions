@@ -49,8 +49,6 @@ You are working in the **dev workspace** for Pi Coding Agent extensions.
 | `scripts/check-pi-sync.py` | Compare installed Pi CLI version with upstream CHANGELOG and scan local code for obsolete API patterns. | After `pi` CLI updates or before risky refactors. |
 | `scripts/pi_session_inspect.py` | Forensics on `~/.pi/agent/sessions/*.jsonl`: tool-call counts, errors, edit failures. | Debugging why a tool failed or auditing recent sessions. |
 
-**Legacy / no longer needed:** `scripts/parse_pi_session.py` and `scripts/parse_pi_session_simple.py`. They were early one-off session-to-markdown converters. `pi_session_inspect.py` is strictly more useful; use `/session-memory` or `scripts/pi_session_inspect.py` instead. The two parse scripts can be removed on request.
-
 ## Style
 
 - One extension = one folder. Minimal, no frameworks.

@@ -46,6 +46,14 @@ Run this before committing code or package changes. Pure documentation changes d
 - Normal npm packages used by an extension are installed once in the shared runtime: `~/.pi/agent/`.
 - Dev types are installed in the local `node_modules/` from the root `package.json`.
 
+## Tests
+
+```bash
+python scripts/run-tests.py
+```
+
+Compiles and runs the unit-test suite in `tests/unit/`. Run it alongside `npm run typecheck` for code changes.
+
 ## Documentation
 
 - `AGENTS.md` — quick rules and navigation (auto-loaded by Pi).

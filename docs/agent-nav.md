@@ -10,6 +10,7 @@ Quick index for agents working in this repo. If you are unsure where something l
 | Dev vs runtime, copy rules, dependencies | `docs/pi-workflow.md` |
 | API types, events, tool/command shapes | `docs/pi-quickref.md` |
 | Where Pi's own `.d.ts` files live | `docs/pi-local-map.md` |
+| Run unit tests | `python scripts/run-tests.py` |
 | Pi CLI update compatibility | Run `python scripts/check-pi-sync.py`, then `docs/pi-version-sync.md` |
 | 0x010 backend control (start/stop/restart runtime) | `docs/0x010-control.md` |
 | How extensions interact with each other and the runtime | `docs/interactions.md` |
