@@ -36,14 +36,19 @@ Tests written:
 - `tests/unit/simple-gate.test.ts` — `path-guard.ts` path normalization/classification and `decideBash` decision engine.
 - `tests/unit/context-guard.test.ts` — `applyPromptRules` for date, cwd, agents, ancestorAgents, skills, roleOverride.
 - `tests/unit/pi-multi-edit.test.ts` — single edit, batch edit, replaceAll, non-unique mismatch, atomic rollback, partialApply, multi-file batch.
+- `tests/unit/0x010-client.test.ts` — HTTP mocks for `pi-web-search` status + MCP, `pi-project-memory` `apiPost`, and `pi-session-memory` search/content/status/list endpoints.
 
-## Code fix found by tests
+## Code changes for testability and fixes
 
-`pi-multi-edit/engine.ts` did not actually write successful edits when `partialApply: true` was used and one edit in the file failed. The engine reported results correctly but returned `changed: false` for the file. The test expected partial application to match the documented behavior, so the early-return was removed. Successful edits are now written and failed/skipped edits are reported separately.
+- `simple-gate/index.ts`: `decideBash` now accepts a `Config` parameter instead of reading the module-level `CONFIG`. The tool-call handler passes `CONFIG` as before.
+- `pi-multi-edit/engine.ts`: fixed `partialApply` so successful edits are actually written when one edit in the file fails; failed/skipped edits are reported separately.
+- `pi-web-search/index.ts`, `pi-project-memory/index.ts`, `pi-session-memory/index.ts`: changed `BASE_URL` from `const` to `let` and exported `setBaseUrl()` so tests can point the clients at a local mock server without touching env vars or global fetch.
+- Exported internal API helpers (`getBackendStatus`, `mcpCall`, `getMcpUrl`, `apiPost`, `apiSearch`, `apiSessionContent`, `apiStatus`, `apiRebuild`, `apiListSessions`) for testing.
 
-## Small refactor for testability
+## Docs added
 
-`simple-gate/index.ts`: `decideBash` now accepts a `Config` parameter instead of reading the module-level `CONFIG`. The tool-call handler passes `CONFIG` as before. This makes the decision engine deterministic and testable without touching `settings.json`.
+- `docs/0x010-control.md` — how to start/stop/restart the 0x010 backend runtime via the Agent HTTP API (`127.0.0.1:18080`) and `task` shortcuts.
+- Updated `docs/agent-nav.md` and `README.md` to link to the new control doc.
 
 ## How to run
 
@@ -57,9 +62,9 @@ python scripts/run-tests.py
 
 ## Still open / next time
 
-- 0x010 client tests: mock HTTP layer for `pi-web-search`, `pi-project-memory`, `pi-session-memory`. Not started; these need a small mock server or fetch injection helper.
 - `tests/` still contains old ad-hoc scratch files (`.md`, `large_test.ts`, etc.). They remain ignored; decide later whether to archive or delete them.
-- Consider adding CI-style check that runs `npm run typecheck` and `python scripts/run-tests.py` before commits.
+- Consider adding a CI-style check that runs `npm run typecheck` and `python scripts/run-tests.py` before commits.
+- The 0x010 backend control doc is intentionally short; expand it if new endpoints are added or if users need troubleshooting for embedding/main restarts.
 
 ## Quick context reminders
 
