@@ -44,8 +44,15 @@ def main() -> int:
         return rc
 
     # Run compiled tests with Node's native runner.
+    # Use glob expansion via the shell where possible; fall back to
+    # discovering all .test.js files in the unit directory.
     test_glob = OUT_DIR / "tests" / "unit" / args.pattern
-    rc = run(["node", "--test", test_glob])
+    import glob as _glob
+    candidates = _glob.glob(str(test_glob))
+    if candidates:
+        rc = run(["node", "--test", *candidates])
+    else:
+        rc = run(["node", "--test", test_glob])
     return rc
 
 
