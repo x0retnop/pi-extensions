@@ -7,9 +7,12 @@ nul
 _*.py
 .env
 node_modules/
-tests/
+tests/*
+!tests/unit/
+!tests/unit/**
 .venv/
 venv/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+.tests-out/
