@@ -12,9 +12,13 @@ const SETTINGS_PATH = path.join(getAgentDir(), "settings.json");
 // Configuration
 // ---------------------------------------------------------------------------
 
-const BASE_URL = process.env.PI_PROJECT_MEMORY_URL?.trim()
-  || process.env.PI_BACKEND_URL?.trim()
-  || "http://127.0.0.1:8000";
+// Allow runtime injection of a different base URL for tests.
+let BASE_URL =
+  process.env.PI_PROJECT_MEMORY_URL?.trim() ||
+  process.env.PI_BACKEND_URL?.trim() ||
+  "http://127.0.0.1:8000";
+
+export function setBaseUrl(url: string): void { BASE_URL = url; }
 
 // ---------------------------------------------------------------------------
 // Types
@@ -85,7 +89,7 @@ type ToolResult = {
 // Project identity
 // ---------------------------------------------------------------------------
 
-async function resolveProjectId(cwd: string): Promise<string> {
+export async function resolveProjectId(cwd: string): Promise<string> {
   try {
     const text = await fsPromises.readFile(path.join(cwd, ".project-id"), "utf-8");
     const id = text.trim().split(/\r?\n/)[0].trim();
@@ -149,7 +153,7 @@ async function saveProjectMemorySettings(settings: ProjectMemorySettings): Promi
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(parsed, null, 2), "utf-8");
 }
 
-async function apiPost(endpoint: string, body: unknown): Promise<any> {
+export async function apiPost(endpoint: string, body: unknown): Promise<any> {
   const res = await fetch(`${BASE_URL}${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

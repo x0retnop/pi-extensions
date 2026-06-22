@@ -73,9 +73,12 @@ const PROVIDER_NAMES = ["exa", "brave", "ollama_cloud", "ddg"] as const;
 const PROVIDER_DESCRIPTION =
   "Preferred provider: 'exa', 'brave', 'ollama_cloud', 'ddg'. Backend falls back to its configured chain.";
 
-const BASE_URL = process.env.PI_WEB_SEARCH_URL?.trim()
+// Allow runtime injection of a different base URL for tests.
+let BASE_URL = process.env.PI_WEB_SEARCH_URL?.trim()
   || process.env.PI_BACKEND_URL?.trim()
   || "http://127.0.0.1:8000";
+
+export function setBaseUrl(url: string): void { BASE_URL = url; }
 const MCP_PATH = process.env.PI_WEB_SEARCH_MCP_PATH?.trim() || "/mcp";
 
 interface WebAccessState {
@@ -95,7 +98,7 @@ interface BackendStatus {
   providers: Record<string, boolean>;
 }
 
-async function getBackendStatus(signal?: AbortSignal): Promise<BackendStatus | null> {
+export async function getBackendStatus(signal?: AbortSignal): Promise<BackendStatus | null> {
   try {
     const base = BASE_URL.replace(/\/+$/, "");
     const res = await fetch(`${base}/api/web_research/status`, {
@@ -149,7 +152,7 @@ interface MCPResponse {
   error?: { code: number; message: string };
 }
 
-function getMcpUrl(): string {
+export function getMcpUrl(): string {
   const base = BASE_URL.replace(/\/+$/, "");
   const path = MCP_PATH.startsWith("/") ? MCP_PATH : `/${MCP_PATH}`;
   return `${base}${path}`;
@@ -224,7 +227,7 @@ function parseMCPResponse(raw: string, requestId?: number): MCPResponse | null {
   return candidates.find((c) => c.result !== undefined || c.error !== undefined) ?? candidates[0];
 }
 
-async function mcpCall(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<MCPResponse> {
+export async function mcpCall(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<MCPResponse> {
   const url = getMcpUrl();
   const id = Date.now();
   const body: MCPRequest = {

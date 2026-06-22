@@ -3,10 +3,13 @@ import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import path from "node:path";
 
-const BASE_URL =
+// Allow runtime injection of a different base URL for tests.
+let BASE_URL =
   process.env.PI_SESSION_MEMORY_URL?.trim() ||
   process.env.PI_BACKEND_URL?.trim() ||
   "http://127.0.0.1:8000";
+
+export function setBaseUrl(url: string): void { BASE_URL = url; }
 const SEARCH_ENTRY_TYPE = "session-memory-search";
 
 interface SearchHit {
@@ -32,7 +35,7 @@ interface SessionListItem {
 // API clients
 // ---------------------------------------------------------------------------
 
-async function apiSearch(query: string, limit: number): Promise<SearchHit[]> {
+export async function apiSearch(query: string, limit: number): Promise<SearchHit[]> {
   const res = await fetch(`${BASE_URL}/api/session_index/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -46,7 +49,7 @@ async function apiSearch(query: string, limit: number): Promise<SearchHit[]> {
   return data.hits || [];
 }
 
-async function apiSessionContent(
+export async function apiSessionContent(
   sourcePath: string,
   maxMessages: number,
   maxChars: number,
@@ -78,13 +81,13 @@ async function apiSessionContent(
   return res.json();
 }
 
-async function apiStatus(): Promise<any> {
+export async function apiStatus(): Promise<any> {
   const res = await fetch(`${BASE_URL}/api/session_index/status`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
-async function apiRebuild(): Promise<any> {
+export async function apiRebuild(): Promise<any> {
   const res = await fetch(`${BASE_URL}/api/session_index/rebuild`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -94,7 +97,7 @@ async function apiRebuild(): Promise<any> {
   return res.json();
 }
 
-async function apiListSessions(
+export async function apiListSessions(
   scope: "current" | "all",
   cwd: string,
   limit = 50,
