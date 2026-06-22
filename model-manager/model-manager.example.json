@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "openrouter",
+      "enabled": true,
+      "useLatestDefault": true,
+      "lastUsedModel": "anthropic/claude-3.5-sonnet",
+      "managedModelIds": [
+        "anthropic/claude-3.5-sonnet",
+        "openai/gpt-4o"
+      ]
+    },
+    {
+      "id": "anthropic",
+      "enabled": true,
+      "useLatestDefault": true,
+      "managedModelIds": []
+    }
+  ],
+  "favorites": [
+    { "providerId": "openrouter", "modelId": "anthropic/claude-3.5-sonnet" },
+    { "providerId": "anthropic" }
+  ],
+  "global": {
+    "defaultProvider": "openrouter",
+    "rememberLastUsed": true,
+    "displaySpecs": true
+  }
+}

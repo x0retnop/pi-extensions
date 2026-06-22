@@ -17,6 +17,7 @@
     "auto-trust/**/*.ts",
     "context-guard/**/*.ts",
     "grep-tool/**/*.ts",
+    "model-manager/**/*.ts",
     "pi-multi-edit/**/*.ts",
     "pi-project-memory/**/*.ts",
     "pi-session-memory/**/*.ts",
