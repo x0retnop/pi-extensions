@@ -48,6 +48,20 @@ task server:start C=runtime
 | `pi-project-memory` | `POST /api/project_memory/*` |
 | `pi-session-memory` | `GET/POST /api/session_index/*` |
 
+## Tests for these extensions
+
+The Pi extension workspace has HTTP-client tests that run against a local mock server. They do not require a running 0x010 backend:
+
+```bash
+cd "C:/10x001/pi extensions"
+python scripts/run-tests.py
+```
+
+The mock tests cover:
+- `pi-web-search`: status endpoint + MCP JSON-RPC/SSE call.
+- `pi-project-memory`: fact add request.
+- `pi-session-memory`: search, content read, status, list.
+
 ## Troubleshooting
 
 1. Check overall status: `xh GET http://127.0.0.1:18080/status`.
