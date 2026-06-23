@@ -287,7 +287,7 @@ Relevant mappings:
 | `compactionSummary` | `user` (wrapped in XML) |
 | `branchSummary` | `user` (wrapped in XML) |
 
-**Key point:** a `display: false` custom message is **still sent to the LLM** as a user message. The `display` flag only controls TUI visibility. If you want a custom trigger message to be completely invisible to the model, you must strip it in a `context` hook, but then you must ensure the resulting message array does not end with an `assistant` message (see §15).
+**Key point:** a `display: false` custom message is **still sent to the LLM** as a user message. The `display` flag only controls TUI visibility. A `context` hook can filter it out, but that risks breaking alternating roles if the filtered array ends with an `assistant` message (see §15). In practice, keeping a minimal empty user message (e.g. `content: " "`) is safer and most models tolerate it.
 
 ---
 

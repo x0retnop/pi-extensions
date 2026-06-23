@@ -120,16 +120,6 @@ export default function aRewind(pi: ExtensionAPI) {
 		updateTimerStatus(ctx);
 	});
 
-	pi.on("context", async (event: any) => {
-		const cleaned = event.messages.filter(
-			(m: any) => !(m.role === "custom" && m.customType === "a-retry-trigger")
-		);
-		if (cleaned.length !== event.messages.length) {
-			return { messages: cleaned };
-		}
-		return undefined;
-	});
-
 	pi.registerCommand("a-rewind", {
 		description: "Rewind session to before the latest assistant message",
 		handler: async (_args: string, ctx: any) => {
