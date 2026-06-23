@@ -9,10 +9,18 @@ export function isBuiltInProvider(providerId: string): boolean {
   return builtInProviders.has(providerId as any);
 }
 
-export function isCuratableProvider(providerId: string): boolean {
-  // Only custom providers and the built-in providers we explicitly support
-  // for model curation / sync can be registered dynamically.
-  return !isBuiltInProvider(providerId) || providerId === "openrouter" || providerId === "opencode-go";
+export function isCuratableProvider(providerId: string, managed?: ManagedProvider): boolean {
+  // Built-in providers we explicitly support for sync/curation.
+  if (providerId === "openrouter" || providerId === "opencode-go") return true;
+  if (isBuiltInProvider(providerId)) return false;
+  // Custom provider from models.json: only curate if we have its connection
+  // details (meaning it was added through this extension's TUI). Otherwise we
+  // must not touch it, so provider-level headers/compat from models.json stay
+  // intact.
+  if (managed) {
+    return !!managed.baseUrl && !!managed.apiKey && !!managed.api;
+  }
+  return true;
 }
 
 export function getProviderModels(registry: ExtensionContext["modelRegistry"], providerId: string): Model<Api>[] {
@@ -144,11 +152,16 @@ export function buildCuratedProviderConfig(
   // Custom providers store their own connection details.
   if (!isBuiltInProvider(providerId)) {
     if (!managed.baseUrl || !managed.apiKey || !managed.api) return undefined;
+    // Preserve provider-level headers from the original registry models
+    // (e.g. custom User-Agent set in models.json).
+    const providerHeaders = selectedModels[0]?.headers;
+    const displayName = ctx.modelRegistry.getProviderDisplayName(providerId);
     return {
-      name: managed.name || managed.id,
+      name: managed.name || displayName || managed.id,
       baseUrl: managed.baseUrl,
       apiKey: managed.apiKey,
       api: managed.api,
+      headers: providerHeaders,
       models: selectedModels.map(modelToProviderConfig),
     };
   }
@@ -204,16 +217,16 @@ export function applyCuratedRegistrations(
   managed: ManagedProvider[],
 ): void {
   for (const p of managed) {
-    const curatable = isCuratableProvider(p.id);
-    if (!curatable) continue;
     const builtIn = isBuiltInProvider(p.id);
+    const curatable = isCuratableProvider(p.id, p);
     const hadCuratedModels = (p.cachedModels?.length ?? 0) > 0;
     if (!p.enabled || p.managedModelIds.length === 0) {
-      // For custom providers we added, unregister when they are disabled or have
-      // no curated models. For built-in providers an empty curation means "use
-      // the built-in as-is", unless we previously curated it (cachedModels is
-      // non-empty) — in that case unregister so Pi can restore the built-in.
-      if (!builtIn || hadCuratedModels) {
+      // For custom providers added through this extension, unregister when they
+      // are disabled or have no curated models. For built-in providers an empty
+      // curation means "use the built-in as-is", unless we previously curated
+      // it (cachedModels is non-empty) — in that case unregister so Pi can
+      // restore the built-in.
+      if (curatable || (builtIn && hadCuratedModels)) {
         try {
           pi.unregisterProvider(p.id);
         } catch {
@@ -222,6 +235,7 @@ export function applyCuratedRegistrations(
       }
       continue;
     }
+    if (!curatable) continue;
     const config = buildCuratedProviderConfig(ctx, p.id, p);
     if (!config) continue;
     try {

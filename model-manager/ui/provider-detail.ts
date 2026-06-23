@@ -58,7 +58,7 @@ export class ProviderDetail {
     this.onAddModel = onAddModel;
     this.onUse = onUse;
     this.onToggleHidden = onToggleHidden;
-    this.canCurate = isCuratableProvider(providerId);
+    this.canCurate = isCuratableProvider(providerId, this.managed);
     this.managed = config.providers.find((p) => p.id === providerId) ?? {
       id: providerId,
       enabled: true,
@@ -91,7 +91,7 @@ export class ProviderDetail {
       lines.push(truncateToWidth(this.theme.fg("muted", "Filter: ") + this.searchInput.render(width - 8).join(""), width));
     }
     if (!this.canCurate) {
-      lines.push(truncateToWidth(this.theme.fg("dim", "  (model curation is only available for OpenRouter, OpenCode Go and custom providers)"), width));
+      lines.push(truncateToWidth(this.theme.fg("dim", "  (model curation is only available for OpenRouter, OpenCode Go and custom providers added via /mm)"), width));
     }
     lines.push("");
 

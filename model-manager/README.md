@@ -43,6 +43,14 @@ When curating a built-in provider, the manager keeps the original model metadata
 (headers, compat, specs) from Pi's registry for models Pi already knows. It only
 falls back to cached defaults for brand-new models returned by the sync endpoint.
 
+Custom providers already defined in `models.json` are **never** re-registered by
+the manager; it only hides/shows them and remembers your last used model and
+favorites. This keeps provider-level `headers`, `compat`, env-key references
+(`$KIMI_API_KEY`) and `defaultModel` exactly as you configured them.
+
+If you want to curate a custom provider through `/mm`, add it again via
+**Add new provider** so the manager owns its connection details.
+
 ## Usage
 
 Run `/mm` (or `/model-manager`) to open the model manager.
