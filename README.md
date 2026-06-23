@@ -55,6 +55,21 @@ python scripts/run-tests.py
 
 Compiles and runs the unit-test suite in `tests/unit/`. Run it alongside `npm run typecheck` for code changes.
 
+## Scripts
+
+Utility scripts live in `scripts/`:
+
+- `scripts/run-tests.py` — compile and run unit tests.
+- `scripts/check-pi-sync.py` — Pi CLI upgrade compatibility check.
+- `scripts/pi_session_inspect.py` — session log forensics.
+- `scripts/pi-session-compressor-tune.py` — analyze recent Pi sessions and suggest `context-compressor` settings.
+  Use `--recent N`, `--cwd-contains "..."`, or `--json` to narrow the analysis.
+
+## Skills
+
+`skills/` holds development copies of Pi agent skills (currently `kimi-webbridge` and `skill-craft`).
+They are edited here and copied to `~/.pi/agent/skills/` manually, just like extensions.
+
 ## Documentation
 
 - `AGENTS.md` — quick rules and navigation (auto-loaded by Pi).

@@ -28,6 +28,7 @@ Quick index for agents working in this repo. If you are unsure where something l
 | Built-in tool implementations | `dist/core/tools/*.js` inside Pi install (see `pi-local-map.md`) |
 | Agent loop snapshot behavior | `docs/pi-tool-internals.md` §9 |
 | Session log forensics | `scripts/pi_session_inspect.py` |
+| Author or review Pi skills | `skills/` (copied to `~/.pi/agent/skills/` manually) |
 
 ## "What should I remember every session?"
 
