@@ -81,9 +81,10 @@ export type UiAction =
   | { type: "provider"; providerId: string }
   | { type: "useModel"; providerId: string; modelId: string }
   | { type: "settings" }
-  | { type: "openrouter" }
+  | { type: "syncProvider"; providerId: string }
   | { type: "addProvider" }
   | { type: "refresh" }
   | { type: "help" }
+  | { type: "viewHidden" }
   | { type: "toggleHidden"; providerId: string }
   | { type: "persist" };

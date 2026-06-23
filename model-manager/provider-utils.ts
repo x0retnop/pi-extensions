@@ -9,6 +9,12 @@ export function isBuiltInProvider(providerId: string): boolean {
   return builtInProviders.has(providerId as any);
 }
 
+export function isCuratableProvider(providerId: string): boolean {
+  // Only custom providers and the built-in providers we explicitly support
+  // for model curation / sync can be registered dynamically.
+  return !isBuiltInProvider(providerId) || providerId === "openrouter" || providerId === "opencode-go";
+}
+
 export function getProviderModels(registry: ExtensionContext["modelRegistry"], providerId: string): Model<Api>[] {
   return registry.getAll().filter((m) => m.provider === providerId);
 }
@@ -147,7 +153,7 @@ export function buildCuratedProviderConfig(
     };
   }
 
-  // For built-in providers we only support OpenRouter curation in this MVP.
+  // For built-in providers we only support OpenRouter and OpenCode Go curation.
   if (providerId === "openrouter") {
     const baseUrl = selectedModels[0]?.baseUrl || "https://openrouter.ai/api/v1";
     const auth = ctx.modelRegistry.authStorage.get("openrouter");
@@ -155,6 +161,20 @@ export function buildCuratedProviderConfig(
     if (!apiKey) return undefined;
     return {
       name: "OpenRouter",
+      baseUrl,
+      apiKey,
+      api: "openai-completions" as any,
+      models: selectedModels.map(modelToProviderConfig),
+    };
+  }
+
+  if (providerId === "opencode-go") {
+    const baseUrl = selectedModels[0]?.baseUrl || "https://opencode.ai/zen/go/v1";
+    const auth = ctx.modelRegistry.authStorage.get("opencode-go");
+    const apiKey = auth?.type === "api_key" ? auth.key : process.env.OPENCODE_API_KEY;
+    if (!apiKey) return undefined;
+    return {
+      name: "OpenCode Go",
       baseUrl,
       apiKey,
       api: "openai-completions" as any,
@@ -184,10 +204,10 @@ export function applyCuratedRegistrations(
   managed: ManagedProvider[],
 ): void {
   for (const p of managed) {
-    const isCuratable = !isBuiltInProvider(p.id) || p.id === "openrouter";
+    const curatable = isCuratableProvider(p.id);
     if (!p.enabled || p.managedModelIds.length === 0) {
       // Only unregister providers this extension may have previously registered.
-      if (isCuratable) {
+      if (curatable) {
         try {
           pi.unregisterProvider(p.id);
         } catch {
@@ -196,7 +216,7 @@ export function applyCuratedRegistrations(
       }
       continue;
     }
-    if (!isCuratable) continue; // Built-in providers other than OpenRouter cannot be curated here.
+    if (!curatable) continue; // Built-in providers other than OpenRouter/OpenCode Go cannot be curated here.
     const config = buildCuratedProviderConfig(ctx, p.id, p);
     if (!config) continue;
     try {

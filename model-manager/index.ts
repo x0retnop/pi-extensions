@@ -9,19 +9,49 @@ import {
   buildCuratedProviderConfig,
   isBuiltInProvider,
 } from "./provider-utils.js";
-import { openRouterModelToCached } from "./openrouter.js";
+import { fetchOpenRouterModels, openRouterModelToCached } from "./openrouter.js";
+import { fetchOpencodeModels, opencodeModelToCached } from "./opencode.js";
 import { MainScreen } from "./ui/main-screen.js";
 import { ProviderDetail } from "./ui/provider-detail.js";
 import { SettingsScreen } from "./ui/settings-screen.js";
-import { OpenRouterSyncScreen } from "./ui/openrouter-sync.js";
+import { ProviderSyncScreen } from "./ui/provider-sync.js";
+import { HiddenProvidersScreen } from "./ui/hidden-providers.js";
 import { AddProviderScreen, type NewProviderValues } from "./ui/add-provider.js";
 import { AddModelScreen, type NewModelValues } from "./ui/add-model.js";
-import type { OpenRouterModel } from "./openrouter.js";
+import type { CachedModel } from "./types.js";
 
 const CUSTOM_TYPE = "model-manager-state";
 
 export default function modelManagerExtension(pi: ExtensionAPI) {
   let config = loadConfig();
+
+  const SYNCABLE_PROVIDERS: Record<
+    string,
+    {
+      label: string;
+      fetch: (ctx: ExtensionContext | ExtensionCommandContext) => Promise<{ id: string }[]>;
+      toCached: (m: any) => CachedModel;
+    }
+  > = {
+    openrouter: {
+      label: "OpenRouter",
+      fetch: async (ctx) => {
+        const auth = ctx.modelRegistry.authStorage.get("openrouter");
+        const apiKey = auth?.type === "api_key" ? auth.key : process.env.OPENROUTER_API_KEY;
+        return fetchOpenRouterModels(apiKey);
+      },
+      toCached: openRouterModelToCached,
+    },
+    "opencode-go": {
+      label: "OpenCode Go",
+      fetch: async (ctx) => {
+        const auth = ctx.modelRegistry.authStorage.get("opencode-go");
+        const apiKey = auth?.type === "api_key" ? auth.key : process.env.OPENCODE_API_KEY;
+        return fetchOpencodeModels(apiKey);
+      },
+      toCached: opencodeModelToCached,
+    },
+  };
 
   function persist() {
     saveConfig(config);
@@ -134,24 +164,7 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
             persist();
             return;
           case "toggleHidden": {
-            const hidden = new Set(config.global.hiddenProviderIds);
-            const wasHidden = hidden.has(action.providerId);
-            if (wasHidden) {
-              hidden.delete(action.providerId);
-            } else {
-              hidden.add(action.providerId);
-            }
-            config.global.hiddenProviderIds = Array.from(hidden);
-            // For providers managed by this extension, hiding also disables them
-            // so they disappear from Pi's registry; unhiding re-enables them.
-            const managed = config.providers.find((p) => p.id === action.providerId);
-            if (managed) {
-              managed.enabled = wasHidden;
-            }
-            persist();
-            apply(ctx);
-            main.refresh(config);
-            notify(ctx, wasHidden ? `Provider ${action.providerId} restored` : `Provider ${action.providerId} hidden`, "info");
+            toggleHiddenProvider(ctx, action.providerId, false);
             return;
           }
           case "settings":
@@ -170,6 +183,7 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
                 return;
               }
               const isCustom = !isBuiltInProvider(action.providerId);
+              const syncSource = SYNCABLE_PROVIDERS[action.providerId];
               subview = new ProviderDetail(
                 tui,
                 theme,
@@ -189,15 +203,17 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
                   main.refresh(config);
                 },
                 backToMain,
-                action.providerId === "openrouter"
+                syncSource
                   ? () => {
-                      subview = new OpenRouterSyncScreen(
+                      subview = new ProviderSyncScreen(
                         tui,
                         theme,
                         kb,
                         ctx,
+                        syncSource.label,
+                        () => syncSource.fetch(ctx),
                         (selectedIds, models) => {
-                          handleOpenRouterSync(ctx, selectedIds, models);
+                          handleSyncProvider(ctx, action.providerId, selectedIds, models);
                           backToMain();
                         },
                         backToMain,
@@ -205,6 +221,7 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
                       tui.requestRender();
                     }
                   : undefined,
+                syncSource?.label,
                 isCustom
                   ? () => {
                       subview = new AddModelScreen(
@@ -223,42 +240,51 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
                     }
                   : undefined,
                 (model) => useModel(ctx, model.provider, model.id),
-                () => {
-                  const hidden = new Set(config.global.hiddenProviderIds);
-                  const wasHidden = hidden.has(action.providerId);
-                  if (wasHidden) {
-                    hidden.delete(action.providerId);
-                  } else {
-                    hidden.add(action.providerId);
-                  }
-                  config.global.hiddenProviderIds = Array.from(hidden);
-                  const managed = config.providers.find((p) => p.id === action.providerId);
-                  if (managed) {
-                    managed.enabled = wasHidden;
-                  }
-                  persist();
-                  apply(ctx);
-                  backToMain();
-                  notify(ctx, wasHidden ? `Provider ${action.providerId} restored` : `Provider ${action.providerId} hidden`, "info");
-                },
+                () => toggleHiddenProvider(ctx, action.providerId, true),
               );
             }
             break;
           case "useModel":
             useModel(ctx, action.providerId, action.modelId);
             return;
-          case "openrouter":
-            subview = new OpenRouterSyncScreen(
+          case "viewHidden":
+            subview = new HiddenProvidersScreen(
               tui,
               theme,
               kb,
               ctx,
-              (selectedIds, models) => {
-                handleOpenRouterSync(ctx, selectedIds, models);
-                backToMain();
+              config,
+              (innerAction) => {
+                if (innerAction.type === "toggleHidden") {
+                  toggleHiddenProvider(ctx, innerAction.providerId, false);
+                } else {
+                  handleAction(innerAction);
+                }
               },
               backToMain,
             );
+            break;
+          case "syncProvider":
+            {
+              const source = SYNCABLE_PROVIDERS[action.providerId];
+              if (!source) {
+                notify(ctx, `Provider ${action.providerId} does not support sync`, "error");
+                return;
+              }
+              subview = new ProviderSyncScreen(
+                tui,
+                theme,
+                kb,
+                ctx,
+                source.label,
+                () => source.fetch(ctx),
+                (selectedIds, models) => {
+                  handleSyncProvider(ctx, action.providerId, selectedIds, models);
+                  backToMain();
+                },
+                backToMain,
+              );
+            }
             break;
           case "addProvider":
             subview = new AddProviderScreen(
@@ -278,6 +304,37 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
       }
 
       const main = new MainScreen(tui, theme, kb, ctx, config, handleAction);
+
+      function toggleHiddenProvider(
+        ctx: ExtensionContext | ExtensionCommandContext,
+        providerId: string,
+        goBack: boolean,
+      ): void {
+        const hidden = new Set(config.global.hiddenProviderIds);
+        const wasHidden = hidden.has(providerId);
+        if (wasHidden) {
+          hidden.delete(providerId);
+        } else {
+          hidden.add(providerId);
+        }
+        config.global.hiddenProviderIds = Array.from(hidden);
+        // For providers managed by this extension, hiding also disables them
+        // so they disappear from Pi's registry; unhiding re-enables them.
+        const managed = config.providers.find((p) => p.id === providerId);
+        if (managed) {
+          managed.enabled = wasHidden;
+        }
+        persist();
+        apply(ctx);
+        main.refresh(config);
+        if (goBack) {
+          backToMain();
+        } else if (subview && "refresh" in subview && typeof (subview as any).refresh === "function") {
+          (subview as any).refresh(config);
+        }
+        tui.requestRender();
+        notify(ctx, wasHidden ? `Provider ${providerId} restored` : `Provider ${providerId} hidden`, "info");
+      }
 
       const component: Component = {
         render(width: number) {
@@ -301,35 +358,41 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
     });
   }
 
-  function handleOpenRouterSync(
+  function handleSyncProvider(
     ctx: ExtensionContext | ExtensionCommandContext,
+    providerId: string,
     selectedIds: string[],
-    models: OpenRouterModel[],
+    models: { id: string }[],
   ) {
     if (selectedIds.length === 0) {
       notify(ctx, "No models selected", "warning");
       return;
     }
-    const managed = getManagedProvider(config, "openrouter");
+    const source = SYNCABLE_PROVIDERS[providerId];
+    if (!source) {
+      notify(ctx, `Provider ${providerId} does not support sync`, "error");
+      return;
+    }
+    const managed = getManagedProvider(config, providerId);
     managed.managedModelIds = selectedIds;
     managed.enabled = true;
-    managed.cachedModels = models.filter((m) => selectedIds.includes(m.id)).map(openRouterModelToCached);
-    // Register curated OpenRouter provider immediately.
-    const cfg = buildCuratedProviderConfig(ctx, "openrouter", managed);
+    managed.cachedModels = models.filter((m) => selectedIds.includes(m.id)).map(source.toCached);
+    // Register curated provider immediately.
+    const cfg = buildCuratedProviderConfig(ctx, providerId, managed);
     if (!cfg) {
-      notify(ctx, "OpenRouter: curated models saved, but no API key is configured", "warning");
+      notify(ctx, `${source.label}: curated models saved, but no API key is configured`, "warning");
       persist();
       return;
     }
     try {
-      pi.registerProvider("openrouter", cfg);
+      pi.registerProvider(providerId, cfg);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      notify(ctx, `OpenRouter registration failed: ${msg}`, "error");
+      notify(ctx, `${source.label} registration failed: ${msg}`, "error");
       return;
     }
     persist();
-    notify(ctx, `OpenRouter: ${selectedIds.length} model(s) curated`, "info");
+    notify(ctx, `${source.label}: ${selectedIds.length} model(s) curated`, "info");
   }
 
   function handleAddProvider(ctx: ExtensionContext | ExtensionCommandContext, values: NewProviderValues) {

@@ -4,13 +4,11 @@ import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/
 import type { TUI, KeybindingsManager } from "@earendil-works/pi-tui";
 import { getKeybindings, Input, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ManagedProvider, ModelManagerConfig, FavoriteItem } from "../types.js";
-import { getProviderModels, isBuiltInProvider } from "../provider-utils.js";
+import { getProviderModels, isCuratableProvider } from "../provider-utils.js";
 
-interface ModelRow {
-  model: Model<Api>;
-  managed: boolean;
-  favorite: boolean;
-}
+type DetailRow =
+  | { type: "sync" }
+  | { type: "model"; model: Model<Api>; managed: boolean; favorite: boolean };
 
 export class ProviderDetail {
   private tui: TUI;
@@ -21,12 +19,13 @@ export class ProviderDetail {
   private onChange: (updated: ManagedProvider) => void;
   private onUse?: (model: Model<Api>) => void;
   private onSync?: () => void;
+  private syncLabel?: string;
   private onAddModel?: () => void;
   private onToggleHidden?: () => void;
   private onBack: () => void;
   private managed: ManagedProvider;
-  private models: ModelRow[] = [];
-  private filteredModels: ModelRow[] = [];
+  private modelRows: Extract<DetailRow, { type: "model" }>[] = [];
+  private filteredRows: Extract<DetailRow, { type: "model" }>[] = [];
   private selectedIndex = 0;
   private searchMode = false;
   private searchInput = new Input();
@@ -42,6 +41,7 @@ export class ProviderDetail {
     onChange: (updated: ManagedProvider) => void,
     onBack: () => void,
     onSync?: () => void,
+    syncLabel?: string,
     onAddModel?: () => void,
     onUse?: (model: Model<Api>) => void,
     onToggleHidden?: () => void,
@@ -54,10 +54,11 @@ export class ProviderDetail {
     this.onChange = onChange;
     this.onBack = onBack;
     this.onSync = onSync;
+    this.syncLabel = syncLabel;
     this.onAddModel = onAddModel;
     this.onUse = onUse;
     this.onToggleHidden = onToggleHidden;
-    this.canCurate = !isBuiltInProvider(providerId) || providerId === "openrouter";
+    this.canCurate = isCuratableProvider(providerId);
     this.managed = config.providers.find((p) => p.id === providerId) ?? {
       id: providerId,
       enabled: true,
@@ -90,11 +91,11 @@ export class ProviderDetail {
       lines.push(truncateToWidth(this.theme.fg("muted", "Filter: ") + this.searchInput.render(width - 8).join(""), width));
     }
     if (!this.canCurate) {
-      lines.push(truncateToWidth(this.theme.fg("dim", "  (model curation is only available for OpenRouter and custom providers)"), width));
+      lines.push(truncateToWidth(this.theme.fg("dim", "  (model curation is only available for OpenRouter, OpenCode Go and custom providers)"), width));
     }
     lines.push("");
 
-    const rows = this.searchMode ? this.filteredModels : this.models;
+    const rows = this.displayRows();
     if (rows.length === 0) {
       lines.push(this.theme.fg("dim", "  No models found."));
     } else {
@@ -102,7 +103,7 @@ export class ProviderDetail {
       const start = Math.max(0, Math.min(this.selectedIndex - Math.floor(maxVisible / 2), rows.length - maxVisible));
       const end = Math.min(start + maxVisible, rows.length);
       for (let i = start; i < end; i++) {
-        lines.push(this.renderModel(rows[i], i === this.selectedIndex, width));
+        lines.push(this.renderRow(rows[i], i === this.selectedIndex, width));
       }
       if (start > 0 || end < rows.length) {
         lines.push(this.theme.fg("dim", `  (${this.selectedIndex + 1}/${rows.length})`));
@@ -110,9 +111,9 @@ export class ProviderDetail {
     }
 
     lines.push("");
-    const hints = ["↑↓ move", "Enter use", "* favorite", "Esc back"];
+    const hints = ["↑↓ move", "Enter use/sync", "* favorite", "Esc back"];
     if (this.canCurate) hints.push("Space manage", "a all/none");
-    if (this.providerId === "openrouter") hints.push("s sync");
+    if (this.onSync) hints.push("s sync");
     if (this.onAddModel) hints.push("n add model");
     hints.push("h hide provider");
     if (this.searchMode) hints.push("Enter close filter");
@@ -159,8 +160,8 @@ export class ProviderDetail {
       this.toggleAll();
       return;
     }
-    if ((data === "s" || data === "S") && this.providerId === "openrouter") {
-      this.onSync?.();
+    if ((data === "s" || data === "S") && this.onSync) {
+      this.onSync();
       return;
     }
     if ((data === "n" || data === "N") && this.onAddModel) {
@@ -172,7 +173,8 @@ export class ProviderDetail {
       return;
     }
 
-    if (this.models.length === 0) {
+    const rows = this.displayRows();
+    if (rows.length === 0) {
       if (kb.matches(data, "tui.select.cancel") || data === "q") {
         this.onBack();
       }
@@ -181,9 +183,9 @@ export class ProviderDetail {
     }
 
     if (kb.matches(data, "tui.select.up")) {
-      this.selectedIndex = this.selectedIndex === 0 ? this.models.length - 1 : this.selectedIndex - 1;
+      this.selectedIndex = this.selectedIndex === 0 ? rows.length - 1 : this.selectedIndex - 1;
     } else if (kb.matches(data, "tui.select.down")) {
-      this.selectedIndex = this.selectedIndex === this.models.length - 1 ? 0 : this.selectedIndex + 1;
+      this.selectedIndex = this.selectedIndex === rows.length - 1 ? 0 : this.selectedIndex + 1;
     } else if (kb.matches(data, "tui.select.confirm")) {
       this.useSelected();
     } else if (kb.matches(data, "tui.select.cancel") || data === "q") {
@@ -192,36 +194,49 @@ export class ProviderDetail {
     this.tui.requestRender();
   }
 
+  private displayRows(): DetailRow[] {
+    const models = this.searchMode ? this.filteredRows : this.modelRows;
+    if (this.onSync) {
+      return [{ type: "sync" }, ...models];
+    }
+    return models;
+  }
+
   private loadModels(): void {
     const managedIds = new Set(this.managed.managedModelIds);
     const all = getProviderModels(this.ctx.modelRegistry, this.providerId);
-    this.models = all.map((m) => ({
+    this.modelRows = all.map((m) => ({
+      type: "model",
       model: m,
       managed: managedIds.has(m.id),
       favorite: this.isFavorite(m.id),
     }));
     this.applyFilter(this.searchMode ? this.searchInput.getValue() : "");
-    if (this.models.length === 0) {
+    if (this.displayRows().length === 0) {
       this.selectedIndex = 0;
-    } else if (this.selectedIndex >= this.models.length) {
-      this.selectedIndex = Math.max(0, this.models.length - 1);
+    } else if (this.selectedIndex >= this.displayRows().length) {
+      this.selectedIndex = Math.max(0, this.displayRows().length - 1);
     }
   }
 
   private applyFilter(query: string): void {
     if (!query) {
-      this.filteredModels = this.models;
+      this.filteredRows = this.modelRows;
       return;
     }
     const q = query.toLowerCase();
-    this.filteredModels = this.models.filter((r) =>
-      `${r.model.name} ${r.model.id}`.toLowerCase().includes(q),
+    this.filteredRows = this.modelRows.filter((r) =>
+      r.type === "model" && `${r.model.name} ${r.model.id}`.toLowerCase().includes(q),
     );
     this.selectedIndex = 0;
   }
 
-  private renderModel(row: ModelRow, selected: boolean, width: number): string {
+  private renderRow(row: DetailRow, selected: boolean, width: number): string {
     const prefix = selected ? this.theme.fg("accent", "> ") : "  ";
+    if (row.type === "sync") {
+      const label = selected ? this.theme.fg("accent", `→ Sync ${this.syncLabel ?? "provider"} models`) : this.theme.fg("text", `→ Sync ${this.syncLabel ?? "provider"} models`);
+      return truncateToWidth(`${prefix}${label}`, width);
+    }
     const managed = row.managed ? this.theme.fg("success", "[x]") : this.theme.fg("dim", "[ ]");
     const star = row.favorite ? this.theme.fg("success", "*") : this.theme.fg("dim", " ");
     const name = selected ? this.theme.fg("accent", row.model.name) : this.theme.fg("text", row.model.name);
@@ -233,29 +248,35 @@ export class ProviderDetail {
   }
 
   private useSelected(): void {
-    const rows = this.searchMode ? this.filteredModels : this.models;
+    const rows = this.displayRows();
     const row = rows[this.selectedIndex];
     if (!row) return;
+    if (row.type === "sync") {
+      this.onSync?.();
+      return;
+    }
     this.onUse?.(row.model);
   }
 
   private toggleManaged(): void {
-    const rows = this.searchMode ? this.filteredModels : this.models;
+    const rows = this.displayRows();
     const row = rows[this.selectedIndex];
-    if (!row) return;
+    if (!row || row.type !== "model") return;
     row.managed = !row.managed;
     this.commitManaged();
   }
 
   private toggleAll(): void {
-    if (this.models.length === 0) return;
-    const target = this.models.some((r) => !r.managed);
-    for (const row of this.models) row.managed = target;
+    if (this.modelRows.length === 0) return;
+    const target = this.modelRows.some((r) => !r.managed);
+    for (const row of this.modelRows) row.managed = target;
     this.commitManaged();
   }
 
   private commitManaged(): void {
-    this.managed.managedModelIds = this.models.filter((r) => r.managed).map((r) => r.model.id);
+    this.managed.managedModelIds = this.modelRows
+      .filter((r) => r.type === "model" && r.managed)
+      .map((r) => (r as Extract<DetailRow, { type: "model" }>).model.id);
     this.onChange(this.managed);
   }
 
@@ -266,9 +287,9 @@ export class ProviderDetail {
   }
 
   private toggleFavorite(): void {
-    const rows = this.searchMode ? this.filteredModels : this.models;
+    const rows = this.displayRows();
     const row = rows[this.selectedIndex];
-    if (!row) return;
+    if (!row || row.type !== "model") return;
     row.favorite = !row.favorite;
     const fav: FavoriteItem = { providerId: this.providerId, modelId: row.model.id };
     if (row.favorite) {

@@ -1,18 +1,24 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { TUI, KeybindingsManager } from "@earendil-works/pi-tui";
-import { fetchOpenRouterModels } from "../openrouter.js";
-import type { OpenRouterModel } from "../openrouter.js";
 import { CheckboxList, type CheckboxItem } from "./components.js";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 
-export class OpenRouterSyncScreen {
+export interface SyncModel {
+  id: string;
+  name?: string;
+  description?: string;
+}
+
+export class ProviderSyncScreen<T extends SyncModel> {
   private tui: TUI;
   private theme: Theme;
   private ctx: ExtensionContext | ExtensionCommandContext;
-  private onDone: (selectedIds: string[], models: OpenRouterModel[]) => void;
+  private title: string;
+  private fetchModels: () => Promise<T[]>;
+  private onDone: (selectedIds: string[], models: T[]) => void;
   private onCancel: () => void;
-  private state: { type: "loading" } | { type: "error"; message: string } | { type: "list"; list: CheckboxList; models: OpenRouterModel[] } = {
+  private state: { type: "loading" } | { type: "error"; message: string } | { type: "list"; list: CheckboxList; models: T[] } = {
     type: "loading",
   };
 
@@ -21,22 +27,24 @@ export class OpenRouterSyncScreen {
     theme: Theme,
     _kb: KeybindingsManager,
     ctx: ExtensionContext | ExtensionCommandContext,
-    onDone: (selectedIds: string[], models: OpenRouterModel[]) => void,
+    title: string,
+    fetchModels: () => Promise<T[]>,
+    onDone: (selectedIds: string[], models: T[]) => void,
     onCancel: () => void,
   ) {
     this.tui = tui;
     this.theme = theme;
     this.ctx = ctx;
+    this.title = title;
+    this.fetchModels = fetchModels;
     this.onDone = onDone;
     this.onCancel = onCancel;
     this.load();
   }
 
   private async load(): Promise<void> {
-    const auth = this.ctx.modelRegistry.authStorage.get("openrouter");
-    const apiKey = auth?.type === "api_key" ? auth.key : process.env.OPENROUTER_API_KEY;
     try {
-      const models = await fetchOpenRouterModels(apiKey);
+      const models = await this.fetchModels();
       const items: CheckboxItem[] = models.map((m) => ({
         id: m.id,
         label: m.name ? `${m.name} (${m.id})` : m.id,
@@ -63,10 +71,10 @@ export class OpenRouterSyncScreen {
 
   render(width: number): string[] {
     const lines: string[] = [];
-    lines.push(truncateToWidth(this.theme.fg("accent", this.theme.bold("Model Manager > Sync OpenRouter")), width));
+    lines.push(truncateToWidth(this.theme.fg("accent", this.theme.bold(`Model Manager > ${this.title}`)), width));
     lines.push("");
     if (this.state.type === "loading") {
-      lines.push(this.theme.fg("dim", "  Fetching models from OpenRouter..."));
+      lines.push(this.theme.fg("dim", `  Fetching models from ${this.title}...`));
     } else if (this.state.type === "error") {
       lines.push(this.theme.fg("error", `  Error: ${this.state.message}`));
       lines.push("");

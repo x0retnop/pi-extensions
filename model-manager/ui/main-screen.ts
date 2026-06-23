@@ -80,7 +80,7 @@ export class MainScreen {
       truncateToWidth(
         this.theme.fg(
           "dim",
-          "↑↓ move · Enter open/use · u use default · h hide/unhide · * favorite · / filter · g/G top/bottom · ? help · Esc close",
+          "↑↓ move · Enter open/use · u use default · h hide · H hidden · * favorite · / filter · g/G top/bottom · ? help · Esc close",
         ),
         width,
       ),
@@ -122,8 +122,12 @@ export class MainScreen {
       this.useCurrent();
       return;
     }
-    if (data === "h" || data === "H") {
+    if (data === "h") {
       this.toggleHidden();
+      return;
+    }
+    if (data === "H") {
+      this.onAction({ type: "viewHidden" });
       return;
     }
     if (data === "g") {
@@ -263,7 +267,7 @@ export class MainScreen {
   private rebuildRows(): void {
     const views = getProviderViews(this.ctx, this.config);
     const visible = views.filter((v) => !v.hidden);
-    const hidden = views.filter((v) => v.hidden);
+    const hiddenCount = views.filter((v) => v.hidden).length;
     const newRows: Row[] = [];
 
     // Pinned favorites
@@ -289,18 +293,12 @@ export class MainScreen {
       }
     }
 
-    // Hidden providers
-    if (hidden.length > 0) {
-      newRows.push({ type: "header", label: "Hidden Providers" });
-      for (const view of hidden) {
-        newRows.push({ type: "provider", view });
-      }
-    }
-
     // Quick actions
     newRows.push({ type: "header", label: "Quick Actions" });
     newRows.push({ type: "action", action: { type: "addProvider" }, label: "Add new provider" });
-    newRows.push({ type: "action", action: { type: "openrouter" }, label: "Sync OpenRouter models" });
+    if (hiddenCount > 0) {
+      newRows.push({ type: "action", action: { type: "viewHidden" }, label: `Hidden providers (${hiddenCount})` });
+    }
     newRows.push({ type: "action", action: { type: "settings" }, label: "Global settings" });
     newRows.push({ type: "action", action: { type: "refresh" }, label: "Refresh all" });
     newRows.push({ type: "action", action: { type: "help" }, label: "Help / shortcuts" });
