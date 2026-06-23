@@ -288,3 +288,16 @@ Relevant mappings:
 | `branchSummary` | `user` (wrapped in XML) |
 
 **Key point:** a `display: false` custom message is **still sent to the LLM** as a user message. The `display` flag only controls TUI visibility. If you want a custom trigger message to be completely invisible to the model, you must strip it in a `context` hook, but then you must ensure the resulting message array does not end with an `assistant` message (see §15).
+
+---
+
+## 18. Large `sendMessage` / `sendUserMessage` Calls Can Corrupt Session Context
+
+When an extension (or an agent trying to write an extension) injects a very large message via `pi.sendMessage()` or `pi.sendUserMessage()`, the content is serialized into the session JSONL. If the payload exceeds practical limits:
+- The session file grows rapidly.
+- The model context overflows or hits token limits.
+- Most critically, **if the injected text contains tool call artifacts** (e.g., the agent echoing `Write tool call:` blocks, JSON snippets, or `Proceed. Use tools.` loops), the model begins to see these artifacts as part of the conversation and degrades into text-only responses instead of tool calls.
+
+**Rule of thumb:** never push more than ~8 KB through `sendMessage`/`sendUserMessage`. For large files, use `bash` with a heredoc, the built-in `write` tool, or `pi.exec()` to write directly to disk.
+
+Real-world symptom: the agent starts outputting prose like `Write tool call: { ... }` instead of actually calling tools. If you see this in a session, the context is poisoned — rewind to before the injection or start a new session.

@@ -26,7 +26,9 @@ Session navigation helpers, a basic task timer, and a manual retry command for r
 
 - Rewinding uses `ctx.navigateTree()`, which creates a branch without deleting history.
 - Task timing is purely informational; it does not affect session logic.
-- `/retry` uses `pi.sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })`. The trigger message has `display: false`, so it is invisible in the TUI, but it still enters the LLM context as an empty user message (all custom messages convert to `role: "user"`).
+- `/retry` uses `pi.sendMessage(..., { triggerTurn: true, deliverAs: "followUp" })` with a hidden trigger message (`customType: "a-retry-trigger"`, `display: false`).
+- A `context` hook strips the trigger completely before it reaches the LLM. This simulates `agent.continue()` — the model sees the same context it would have seen if the interruption never happened, with no empty user message polluting the prompt.
+- **Never inject massive text through `pi.sendMessage` or `pi.sendUserMessage` in a single call.** Large messages (>~8 KB) can corrupt the session JSONL or overflow context, causing model degradation (text-only responses instead of tool calls). Write large files via `bash` with a heredoc or `write` tool instead.
 
 ## Source
 
