@@ -37,9 +37,23 @@ To sync, open the provider detail (`Enter` on a provider) and choose **Sync … 
 
 ## How curation interacts with built-in and custom providers
 
-- **Custom providers** from `models.json` or added through the TUI are left alone unless you explicitly enable them in the manager (e.g. set `managedModelIds` or add models). When disabled/empty they are unregistered.
-- **Built-in providers** (`opencode-go`, `openrouter`, etc.) are only overridden when you actually curate models via sync. If a built-in provider has no curated models, the manager does **not** unregister it, so Pi's default configuration (headers, compat, pricing, etc.) stays intact.
-- When curating a built-in provider, the manager first looks at Pi's existing registry models for that provider and keeps their full metadata (specs, headers, compat). Fallback cached definitions are only used for models that Pi does not already know about. This prevents custom `User-Agent` headers or model compat flags from being lost for known models.
+- **Custom providers already defined in `models.json`** are left completely alone.
+  The manager only hides/shows them and remembers `lastUsedModel` / favorites.
+  It never unregisters or re-registers them, so their `headers`, `compat`,
+  env-key (`$KIMI_API_KEY`), `defaultModel`, etc. stay intact.
+- **Custom providers added through the TUI** can be curated. When disabled/empty
+  they are unregistered.
+- **Built-in providers** (`opencode-go`, `openrouter`, etc.) are only overridden
+  when you actually curate models via sync. If a built-in provider has no curated
+  models, the manager does **not** unregister it, so Pi's default configuration
+  (headers, compat, pricing, etc.) stays intact.
+- When curating a built-in provider, the manager first looks at Pi's existing
+  registry models for that provider and keeps their full metadata (specs, headers,
+  compat). Fallback cached definitions are only used for brand-new models returned
+  by the sync endpoint.
+- When curating a **custom provider added via /mm**, the manager preserves the
+  provider-level `headers` (e.g. a custom `User-Agent`) taken from the registry
+  models.
 
 ## Hidden providers
 
