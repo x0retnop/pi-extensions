@@ -5,7 +5,7 @@ import type { TUI, KeybindingsManager } from "@earendil-works/pi-tui";
 import { getKeybindings, Input, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ManagedProvider, ModelManagerConfig, FavoriteItem } from "../types.js";
 import { getProviderModels, isCuratableProvider } from "../provider-utils.js";
-import { loadModelNotes } from "../model-notes.js";
+import { loadModelNotes, getModelNote, type ModelNotes } from "../model-notes.js";
 import { wrapLines } from "./components.js";
 
 type DetailRow =
@@ -32,7 +32,7 @@ export class ProviderDetail {
   private searchMode = false;
   private searchInput = new Input();
   private canCurate: boolean;
-  private notes: Map<string, string>;
+  private notes: ModelNotes;
 
   constructor(
     tui: TUI,
@@ -68,7 +68,7 @@ export class ProviderDetail {
       managedModelIds: [],
     };
     this.canCurate = isCuratableProvider(providerId, this.managed);
-    this.notes = loadModelNotes().get(providerId) ?? new Map();
+    this.notes = loadModelNotes();
     this.loadModels();
   }
 
@@ -78,8 +78,9 @@ export class ProviderDetail {
 
   render(width: number): string[] {
     const lines: string[] = [];
-    const name = this.ctx.modelRegistry.getProviderDisplayName(this.providerId) || this.providerId;
-    lines.push(truncateToWidth(this.theme.fg("accent", this.theme.bold(`Providers > ${name}`)), width));
+    const displayName = this.ctx.modelRegistry.getProviderDisplayName(this.providerId) || this.providerId;
+    lines.push(truncateToWidth(this.theme.fg("accent", this.theme.bold(`Providers > ${displayName}`)), width));
+    lines.push(truncateToWidth(this.theme.fg("muted", `  provider id: ${this.providerId}`), width));
 
     const isHidden = this.config.global.hiddenProviderIds.includes(this.providerId);
     if (isHidden) {
@@ -118,7 +119,7 @@ export class ProviderDetail {
     const selectedRow = rows[this.selectedIndex];
     if (selectedRow?.type === "model") {
       const model = selectedRow.model;
-      const note = this.notes.get(model.id);
+      const note = getModelNote(this.notes, this.providerId, model.id);
       if (note) {
         lines.push("");
         lines.push(truncateToWidth(this.theme.fg("muted", `  id: ${model.id}`), width));
@@ -261,7 +262,11 @@ export class ProviderDetail {
     const managed = row.managed ? this.theme.fg("success", "[x]") : this.theme.fg("dim", "[ ]");
     const star = row.favorite ? this.theme.fg("success", "*") : this.theme.fg("dim", " ");
     const name = selected ? this.theme.fg("accent", row.model.name) : this.theme.fg("text", row.model.name);
-    const noteMark = this.notes.has(row.model.id) ? this.theme.fg("accent", " (!)") : "";
+    const noteMark = this.notes.byProvider.has(this.providerId) && this.notes.byProvider.get(this.providerId)!.has(row.model.id)
+      ? this.theme.fg("accent", " (!)")
+      : getModelNote(this.notes, this.providerId, row.model.id)
+        ? this.theme.fg("dim", " (!)")
+        : "";
     const specs = this.config.global.displaySpecs
       ? this.theme.fg("dim", `  ${row.model.contextWindow.toLocaleString()} ctx · ${row.model.maxTokens.toLocaleString()} max`)
       : "";
