@@ -223,7 +223,7 @@ export class Form implements Component {
   }
 }
 
-function wrapLines(text: string, width: number): string[] {
+export function wrapLines(text: string, width: number): string[] {
   const words = text.split(/\s+/);
   const lines: string[] = [];
   let current = "";

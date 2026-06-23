@@ -5,6 +5,8 @@ import type { TUI, KeybindingsManager } from "@earendil-works/pi-tui";
 import { getKeybindings, Input, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ManagedProvider, ModelManagerConfig, FavoriteItem } from "../types.js";
 import { getProviderModels, isCuratableProvider } from "../provider-utils.js";
+import { loadModelNotes } from "../model-notes.js";
+import { wrapLines } from "./components.js";
 
 type DetailRow =
   | { type: "sync" }
@@ -30,6 +32,7 @@ export class ProviderDetail {
   private searchMode = false;
   private searchInput = new Input();
   private canCurate: boolean;
+  private notes: Map<string, string>;
 
   constructor(
     tui: TUI,
@@ -58,13 +61,14 @@ export class ProviderDetail {
     this.onAddModel = onAddModel;
     this.onUse = onUse;
     this.onToggleHidden = onToggleHidden;
-    this.canCurate = isCuratableProvider(providerId, this.managed);
     this.managed = config.providers.find((p) => p.id === providerId) ?? {
       id: providerId,
       enabled: true,
       useLatestDefault: true,
       managedModelIds: [],
     };
+    this.canCurate = isCuratableProvider(providerId, this.managed);
+    this.notes = loadModelNotes().get(providerId) ?? new Map();
     this.loadModels();
   }
 
@@ -107,6 +111,23 @@ export class ProviderDetail {
       }
       if (start > 0 || end < rows.length) {
         lines.push(this.theme.fg("dim", `  (${this.selectedIndex + 1}/${rows.length})`));
+      }
+    }
+
+    // Show id + note for the selected model.
+    const selectedRow = rows[this.selectedIndex];
+    if (selectedRow?.type === "model") {
+      const model = selectedRow.model;
+      const note = this.notes.get(model.id);
+      if (note) {
+        lines.push("");
+        lines.push(truncateToWidth(this.theme.fg("muted", `  id: ${model.id}`), width));
+        for (const line of wrapLines(note, width - 4)) {
+          lines.push(truncateToWidth(this.theme.fg("dim", `    ${line}`), width));
+        }
+      } else if (model.id !== model.name) {
+        lines.push("");
+        lines.push(truncateToWidth(this.theme.fg("muted", `  id: ${model.id}`), width));
       }
     }
 
@@ -240,10 +261,11 @@ export class ProviderDetail {
     const managed = row.managed ? this.theme.fg("success", "[x]") : this.theme.fg("dim", "[ ]");
     const star = row.favorite ? this.theme.fg("success", "*") : this.theme.fg("dim", " ");
     const name = selected ? this.theme.fg("accent", row.model.name) : this.theme.fg("text", row.model.name);
+    const noteMark = this.notes.has(row.model.id) ? this.theme.fg("accent", " (!)") : "";
     const specs = this.config.global.displaySpecs
       ? this.theme.fg("dim", `  ${row.model.contextWindow.toLocaleString()} ctx · ${row.model.maxTokens.toLocaleString()} max`)
       : "";
-    const line = `${prefix}${managed} ${star} ${name}${specs}`;
+    const line = `${prefix}${managed} ${star} ${name}${noteMark}${specs}`;
     return truncateToWidth(line, width);
   }
 
