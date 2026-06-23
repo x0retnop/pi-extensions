@@ -99,7 +99,7 @@ export async function compressContext(
       throw new Error("Transcript too short after fitting");
     }
 
-    const systemPrompt = `${prompt}\n\n--- CONVERSATION HISTORY ---\n\n${fittedTranscript}`;
+    const systemPrompt = `${prompt}\n\n<conversation_history>\n${fittedTranscript}\n</conversation_history>`;
 
     const summary = await completeSimple(
       model,
@@ -177,7 +177,37 @@ export function injectKeyFacts(messages: any[], state: CompressorState): any[] {
 
 export function trimMessages(messages: any[], keep: number): any[] {
   if (messages.length <= keep) return messages;
-  return messages.slice(-keep);
+  const trimmed = messages.slice(-keep);
+  // Trimming in the middle of a tool-call block leaves orphaned toolResult
+  // messages and causes provider errors. If the trim is unsafe, keep the full
+  // context instead.
+  if (!isToolContextValid(trimmed)) {
+    return messages;
+  }
+  return trimmed;
+}
+
+function isToolContextValid(messages: any[]): boolean {
+  const toolCallIds = new Set<string>();
+  const toolResultIds = new Set<string>();
+  for (const m of messages) {
+    if (m.role === "assistant" && Array.isArray(m.content)) {
+      for (const c of m.content) {
+        if (c.type === "toolCall" && c.id) {
+          toolCallIds.add(c.id);
+        }
+      }
+    } else if (m.role === "toolResult" && m.toolCallId) {
+      toolResultIds.add(m.toolCallId);
+    }
+  }
+  for (const id of toolResultIds) {
+    if (!toolCallIds.has(id)) return false;
+  }
+  for (const id of toolCallIds) {
+    if (!toolResultIds.has(id)) return false;
+  }
+  return true;
 }
 
 export function fitTranscript(transcript: string, contextWindow: number, maxSummaryTokens: number): string {

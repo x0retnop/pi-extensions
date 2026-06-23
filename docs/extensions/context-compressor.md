@@ -28,6 +28,8 @@ Prompt files are read **only** from the same directory as `index.ts`; no search 
 
 - `/context-compressor` — open the interactive TUI.
 - `/context-compressor status` — print current settings and runtime state.
+- `python scripts/pi-session-compressor-tune.py` — analyze recent Pi sessions and suggest tuned settings for this extension.
+  Add `--recent N`, `--cwd-contains "..."`, or `--json` to narrow the analysis.
 
 ## Settings
 
