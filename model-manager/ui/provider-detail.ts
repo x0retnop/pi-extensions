@@ -276,7 +276,7 @@ export class ProviderDetail {
   private commitManaged(): void {
     this.managed.managedModelIds = this.modelRows
       .filter((r) => r.type === "model" && r.managed)
-      .map((r) => (r as Extract<DetailRow, { type: "model" }>).model.id);
+      .map((r) => r.model.id);
     this.onChange(this.managed);
   }
 

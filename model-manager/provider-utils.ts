@@ -205,9 +205,15 @@ export function applyCuratedRegistrations(
 ): void {
   for (const p of managed) {
     const curatable = isCuratableProvider(p.id);
+    if (!curatable) continue;
+    const builtIn = isBuiltInProvider(p.id);
+    const hadCuratedModels = (p.cachedModels?.length ?? 0) > 0;
     if (!p.enabled || p.managedModelIds.length === 0) {
-      // Only unregister providers this extension may have previously registered.
-      if (curatable) {
+      // For custom providers we added, unregister when they are disabled or have
+      // no curated models. For built-in providers an empty curation means "use
+      // the built-in as-is", unless we previously curated it (cachedModels is
+      // non-empty) — in that case unregister so Pi can restore the built-in.
+      if (!builtIn || hadCuratedModels) {
         try {
           pi.unregisterProvider(p.id);
         } catch {
@@ -216,10 +222,12 @@ export function applyCuratedRegistrations(
       }
       continue;
     }
-    if (!curatable) continue; // Built-in providers other than OpenRouter/OpenCode Go cannot be curated here.
     const config = buildCuratedProviderConfig(ctx, p.id, p);
     if (!config) continue;
     try {
+      // Unregister first so we can override built-in providers or refresh a
+      // previously registered custom provider, then register the curated config.
+      pi.unregisterProvider(p.id);
       pi.registerProvider(p.id, config);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

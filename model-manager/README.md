@@ -35,9 +35,13 @@ Models inside each provider come from the same live registry:
 - Custom models added manually for custom providers.
 
 Model curation (marking specific models as managed) is supported for
-**OpenRouter** and **custom providers**. For other built-in providers the
-manager can still select and use models, but it cannot hide individual models
-from Pi's registry.
+**OpenRouter**, **OpenCode Go** and **custom providers**. For other built-in
+providers the manager can still select and use models, but it cannot hide
+individual models from Pi's registry.
+
+When curating a built-in provider, the manager keeps the original model metadata
+(headers, compat, specs) from Pi's registry for models Pi already knows. It only
+falls back to cached defaults for brand-new models returned by the sync endpoint.
 
 ## Usage
 
@@ -84,9 +88,10 @@ Hidden providers now have their own screen (press `H`).
 ## Hiding providers
 
 Press `h` on any provider to hide it. Hidden providers move to the
-**Hidden Providers** section and are removed from the default provider list in
-settings. For custom providers and curated OpenRouter, hiding also disables the
-provider so it disappears from Pi's model selector until you restore it.
+**Hidden Providers** screen and are removed from the default provider list in
+settings. For custom providers and curated OpenRouter/OpenCode Go, hiding also
+disables the provider so it disappears from Pi's model selector until you
+restore it.
 
 ## Configuration
 
@@ -104,7 +109,8 @@ provider are registered dynamically via `pi.registerProvider()`.
 
 Open the provider detail and choose **Sync … models** to fetch `/v1/models`,
 multi-select the ones you want, and curate them. Only selected models will
-appear in Pi's normal model selector.
+appear in Pi's normal model selector. To disable curation and restore Pi's
+built-in configuration, open sync again and confirm with no models selected.
 
 ## Hidden providers
 
@@ -117,4 +123,4 @@ press `H` on the main screen or select **Hidden providers** from Quick Actions.
 |---|---|
 | `~/.pi/agent/models.json` | Pi's own provider/model overrides and custom providers. Read-only for this extension. |
 | `~/.pi/agent/auth.json` | API keys / OAuth tokens. The manager checks auth status here but does not write to it. |
-| `~/.pi/agent/model-manager.json` | Extension state: favorites, managed IDs, toggles, hidden provider IDs, cached OpenRouter models. |
+| `~/.pi/agent/model-manager.json` | Extension state: favorites, managed IDs, toggles, hidden provider IDs, cached sync models. |

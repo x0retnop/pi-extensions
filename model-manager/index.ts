@@ -364,13 +364,23 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
     selectedIds: string[],
     models: { id: string }[],
   ) {
-    if (selectedIds.length === 0) {
-      notify(ctx, "No models selected", "warning");
-      return;
-    }
     const source = SYNCABLE_PROVIDERS[providerId];
     if (!source) {
       notify(ctx, `Provider ${providerId} does not support sync`, "error");
+      return;
+    }
+    if (selectedIds.length === 0) {
+      const managed = getManagedProvider(config, providerId);
+      if (managed.managedModelIds.length > 0 || (managed.cachedModels?.length ?? 0) > 0) {
+        // Empty selection on a previously curated provider disables curation.
+        managed.managedModelIds = [];
+        managed.cachedModels = undefined;
+        persist();
+        apply(ctx);
+        notify(ctx, `${source.label} curation disabled — Pi's built-in configuration restored`, "info");
+      } else {
+        notify(ctx, "No models selected", "warning");
+      }
       return;
     }
     const managed = getManagedProvider(config, providerId);
@@ -385,6 +395,7 @@ export default function modelManagerExtension(pi: ExtensionAPI) {
       return;
     }
     try {
+      pi.unregisterProvider(providerId);
       pi.registerProvider(providerId, cfg);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
