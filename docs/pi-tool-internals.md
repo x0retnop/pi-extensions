@@ -139,12 +139,7 @@ Extension tools are active unless excluded by:
 
 ## 6. How to inspect active vs registered tools
 
-Use the `tool-dev` extension commands (no LLM call):
-
-- `/tools` — shows only active tools (what the LLM sees right now).
-- `/tools-all` — shows all registered tools with full schemas and active/inactive status.
-
-Programmatically from an extension:
+There is no built-in command for this; inspect programmatically from an extension:
 
 ```ts
 const all = pi.getAllTools();           // ToolInfo[]

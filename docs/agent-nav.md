@@ -60,5 +60,5 @@ Quick index for agents working in this repo. If you are unsure where something l
 | Understand what tool fields are sent to the LLM | `docs/pi-tool-internals.md` |
 | Check why a tool is active or inactive | `docs/pi-tool-internals.md` §5 |
 | Understand when `pi.setActiveTools()` actually takes effect | `docs/pi-tool-internals.md` §9 |
-| Inspect active vs registered tools | `/tools` and `/tools-all` (tool-dev extension) |
+| Inspect active vs registered tools | `pi.getActiveTools()` / `pi.getAllTools()` in an extension (or `docs/pi-tool-internals.md` §6) |
 | Write a tool description that steers the LLM | `docs/pi-tool-internals.md` §7 |
