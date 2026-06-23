@@ -50,26 +50,37 @@ export function shouldTrigger(
   eventMessages: any[],
   state: CompressorState,
   settings: CompressorSettings,
-): boolean {
-  if (!settings.enabled || settings.mode !== "auto" || state.isCompressing) return false;
-  if (eventMessages.length < settings.minMessagesToSummarize) return false;
+): { trigger: boolean; reason: "token" | "step" | null } {
+  if (!settings.enabled || settings.mode !== "auto" || state.isCompressing) {
+    return { trigger: false, reason: null };
+  }
+  if (eventMessages.length < settings.minMessagesToSummarize) {
+    return { trigger: false, reason: null };
+  }
 
   const stepsSinceLast = state.stepCounter - state.lastCompressionStep;
-  if (stepsSinceLast < 2) return false;
+  if (stepsSinceLast < 2) {
+    return { trigger: false, reason: null };
+  }
 
   const usage = ctx.getContextUsage();
-  const tokenTrigger = usage?.percent !== null && usage.percent >= settings.tokenThresholdPercent;
-  const stepTrigger = stepsSinceLast >= settings.stepInterval;
-
-  return tokenTrigger || stepTrigger;
+  if (usage?.percent !== null && usage.percent >= settings.tokenThresholdPercent) {
+    return { trigger: true, reason: "token" };
+  }
+  if (stepsSinceLast >= settings.stepInterval) {
+    return { trigger: true, reason: "step" };
+  }
+  return { trigger: false, reason: null };
 }
 
 export async function compressContext(
   ctx: ExtensionContext,
   settings: CompressorSettings,
   state: CompressorState,
-): Promise<void> {
-  if (state.isCompressing) return;
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (state.isCompressing) {
+    return { ok: true };
+  }
   state.isCompressing = true;
 
   try {
@@ -149,13 +160,15 @@ export async function compressContext(
     if (settings.debug) {
       console.error(`[context-compressor] summarized with "${promptName}" (${fittedTranscript.length} chars) -> ${keyFacts.length} chars`);
     }
+    return { ok: true };
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     state.consecutiveFailures++;
     if (settings.debug) {
-      const msg = err instanceof Error ? err.message : String(err);
       console.error(`[context-compressor] compression failed: ${msg}`);
     }
     // Keep any previous keyFacts as fallback; do not clear.
+    return { ok: false, error: msg };
   } finally {
     state.isCompressing = false;
   }

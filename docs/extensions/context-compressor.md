@@ -53,3 +53,5 @@ Prompt files are read **only** from the same directory as `index.ts`; no search 
 - KEY FACTS are injected as a `custom` message with `customType: "context-compressor"`. It is converted to a user-facing message for the LLM.
 - Runtime state is per-session and in-memory; it resets on `session_start`.
 - Built-in compaction resets compression tracking so the extension does not immediately re-trigger.
+- The status bar shows `cc: <mode>`, plus the last summary size/time when available, or `fail` after consecutive failures.
+- Each summary posts a visible `customType: "context-compressor-summary"` chat marker with the trigger reason and summary size. The marker is filtered from the LLM context on subsequent turns.
