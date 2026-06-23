@@ -120,6 +120,39 @@ netstat -ano | grep -E '8000|8088'
 - **Installed custom provider package:** `npm:pi-provider-kimi-code` (provider id `kimi-coding`, endpoint `https://api.kimi.com/coding/v1`)
 - **Local backends:** 0x010 MCP gateway on `127.0.0.1:8000`, embedding server on `127.0.0.1:8088`
 
+## Streaming, transports, and timeouts
+
+Pi always streams chat completions. There is **no built-in switch to turn streaming off**. The provider implementations in `@earendil-works/pi-ai` send `stream: true` to the upstream API and emit `text_delta` / `toolcall_delta` events as chunks arrive.
+
+### What you can tune
+
+| Setting | Type | Default | Effect |
+|---|---|---|---|
+| `transport` | string | `"auto"` | Provider transport preference: `"sse"`, `"websocket"`, `"websocket-cached"`, or `"auto"`. Only providers that support multiple transports actually switch. For `opencode-go` (OpenAI-compatible) the effective transport is SSE, so changing this usually has no effect. |
+| `httpIdleTimeoutMs` | number | `300000` | Idle timeout for HTTP headers/body and for provider stream idle timeouts. Set to `0` to disable. Increase this if long pauses inside a stream cause "Connection error". |
+| `websocketConnectTimeoutMs` | number | `15000` | WebSocket handshake timeout. Set to `0` to disable. Only relevant for providers that use WebSocket transport. |
+| `retry.provider.timeoutMs` | number | SDK default | Provider/SDK request timeout. |
+| `retry.provider.maxRetries` | number | `0` | Provider-level retries. Keep at `0` unless you explicitly want provider-level retries before Pi's own retry loop. |
+
+### Example settings to test a timeout-related dropout
+
+```json
+{
+  "transport": "sse",
+  "httpIdleTimeoutMs": 0,
+  "retry": {
+    "provider": {
+      "timeoutMs": 3600000,
+      "maxRetries": 0
+    }
+  }
+}
+```
+
+### If you really need non-streaming
+
+There is no CLI flag or setting. The only way is to write a custom provider extension that implements `streamSimple` and makes a non-streaming (`stream: false`) request upstream, then manually emits the required streaming events (`start`, `text_start`, `text_delta`, `text_end`, `done`) from the complete response. This is a workaround, not a first-class feature.
+
 ## See also
 
 - `docs/pi-providers-models.md` — how providers/models are loaded and how to add custom endpoints.
