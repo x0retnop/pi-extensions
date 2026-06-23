@@ -89,6 +89,18 @@ export default function aRewind(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event: any, ctx: any) => {
 		resetTimerState();
 		updateTimerStatus(ctx);
+
+		if (_event.reason === "resume") {
+			const leaf = ctx?.sessionManager?.getLeafEntry?.();
+			if (leaf?.type === "message" && leaf.message?.role === "assistant") {
+				const sr = leaf.message.stopReason;
+				if (sr === "aborted" || sr === "error") {
+					notify(ctx, `Resumed with interrupted turn (${sr}). Use /a-rewind or /a-rewind-step, then /retry.`, "warning");
+				} else if (sr === "toolUse") {
+					notify(ctx, "Resumed with incomplete tool turn. Use /a-rewind or /a-rewind-step, then /retry.", "warning");
+				}
+			}
+		}
 	});
 
 	pi.on("before_agent_start", async (_event: any, ctx: any) => {
@@ -262,6 +274,47 @@ export default function aRewind(pi: ExtensionAPI) {
 					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
 					notify(ctx, "task timer display disabled", "info");
 				}
+			} catch (err) {
+				notify(ctx, formatError(err), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("retry", {
+		description: "Continue the agent loop from the current session leaf",
+		handler: async (_args: string, ctx: any) => {
+			try {
+				if (typeof ctx?.waitForIdle === "function") {
+					await ctx.waitForIdle();
+				}
+
+				const leaf = ctx?.sessionManager?.getLeafEntry?.();
+				if (!leaf) {
+					notify(ctx, "no current leaf found in session.", "warning");
+					return;
+				}
+
+				if (leaf.type === "message" && leaf.message?.role === "assistant") {
+					const sr = leaf.message.stopReason;
+					if (sr === "aborted" || sr === "error") {
+						notify(ctx, `Last turn was interrupted (${sr}). Rewind first with /a-rewind or /a-rewind-step.`, "warning");
+						return;
+					}
+					if (sr === "toolUse") {
+						notify(ctx, "Last turn has pending tool calls without results. Rewind first with /a-rewind or /a-rewind-step.", "warning");
+						return;
+					}
+					if (sr === "stop") {
+						notify(ctx, "Last turn already completed. Nothing to retry.", "info");
+						return;
+					}
+				}
+
+				await pi.sendMessage(
+					{ customType: "a-retry-trigger", content: " ", display: false },
+					{ triggerTurn: true, deliverAs: "followUp" }
+				);
+				notify(ctx, "Continuing...", "info");
 			} catch (err) {
 				notify(ctx, formatError(err), "error");
 			}

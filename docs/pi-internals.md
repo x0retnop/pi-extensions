@@ -220,3 +220,71 @@ Key types live in `dist/core/extensions/index.d.ts` (and re-exported from packag
 - **AGENTS.md is wrapped unconditionally.** If you want raw AGENTS.md text without `<project_context>` tags, load the file yourself in an extension and inject via `before_agent_start`.
 - **`before_agent_start` runs on EVERY turn**, including continuations after compaction or steering. Keep it fast.
 - **Extension `messages` from `before_agent_start` go into the LLM context** as `role: "custom"`, which `convertToLlm` transforms to `role: "user"`.
+
+---
+
+## 14. Auto-Retry Mechanism (`AgentSession._prepareRetry`)
+
+Pi has an internal auto-retry that fires **during an active stream** when the provider returns a retryable error (`stopReason: "error"`, 429, 5xx, timeouts, connection lost, etc.).
+
+What it does:
+1. Checks `_isRetryableError(message)` against a hard-coded regex (`overloaded`, `rate limit`, `429`, `500`, `502`, `503`, `504`, `network error`, `connection lost`, `timeout`, `terminated`, etc.).
+2. Removes the broken `assistant` message from **agent state** (`messages.slice(0, -1)`), but **leaves it in the session JSONL**.
+3. Waits exponential backoff (`baseDelayMs * 2^(attempt-1)`).
+4. Calls `agent.continue()` — the loop resumes as if the failed turn never happened.
+
+**Critical limitation:** this only works while the `AgentSession` instance is alive. After `pi -c` / `--resume` the runtime is recreated from the session file, so the retry counter and agent state are lost. The aborted/error message remains in the session and will be fed to the LLM on resume unless an extension filters it out.
+
+Source: `dist/core/agent-session.js` (`_prepareRetry`, `_isRetryableError`, `_willRetryAfterAgentEnd`).
+
+---
+
+## 15. `agentLoopContinue` Requires Non-Assistant Last Message
+
+The core agent loop (`@earendil-works/pi-agent-core/dist/agent-loop.js`) exposes two entry points:
+- `agentLoop(prompts, …)` — starts a new turn, appends `prompts` to context.
+- `agentLoopContinue(context, …)` — resumes without adding a prompt.
+
+`agentLoopContinue` throws if the last message in `context.messages` has `role === "assistant"`. This means you **cannot** simply continue when the conversation ends on an incomplete assistant message — you must either:
+- Remove/truncate the trailing assistant before calling continue (what internal auto-retry does), or
+- Append a user message (even an empty one) so the last role is `user`.
+
+Extensions that want to trigger a seamless continuation after an interruption must therefore inject a hidden user trigger (e.g. via `pi.sendMessage`) rather than calling a hypothetical "continue" API.
+
+---
+
+## 16. `ExtensionContext.sessionManager` Is Readonly in Event Handlers
+
+`ExtensionContext` exposes:
+```typescript
+sessionManager: ReadonlySessionManager;
+```
+
+This interface includes **only getters**: `getBranch`, `getEntries`, `getLeafEntry`, `getEntry`, `getLabel`, `getSessionFile`, etc.
+
+**It does NOT include `branch()` or `navigateTree()`**. Those are available only on the full `SessionManager` class and on `ExtensionCommandContext` (slash-command handlers).
+
+Implication: an extension cannot programmatically rewind the session from inside `session_start`, `before_agent_start`, or other event handlers. Rewinding must happen either:
+- From a registered command handler (`pi.registerCommand`), or
+- By asking the user to run a built-in command like `/tree`.
+
+Source: `dist/core/extensions/types.d.ts` (`ExtensionContext`) and `dist/core/session-manager.d.ts` (`ReadonlySessionManager`).
+
+---
+
+## 17. `convertToLlm` Always Turns Custom Messages into `role: "user"`
+
+Before each provider request, Pi calls `convertToLlm(messages)` (`dist/core/messages.js`).
+
+Relevant mappings:
+| `AgentMessage.role` | LLM `role` |
+|---|---|
+| `user` | `user` |
+| `assistant` | `assistant` |
+| `toolResult` | `toolResult` |
+| `custom` | `user` (content passed through as-is) |
+| `bashExecution` | `user` (formatted shell output) |
+| `compactionSummary` | `user` (wrapped in XML) |
+| `branchSummary` | `user` (wrapped in XML) |
+
+**Key point:** a `display: false` custom message is **still sent to the LLM** as a user message. The `display` flag only controls TUI visibility. If you want a custom trigger message to be completely invisible to the model, you must strip it in a `context` hook, but then you must ensure the resulting message array does not end with an `assistant` message (see §15).
