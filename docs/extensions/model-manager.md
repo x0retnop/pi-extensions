@@ -7,8 +7,19 @@ Dynamic provider and model registration with a TUI.
 - Lets the user manage custom providers and models via `/mm` (or `/model-manager`).
 - Registers curated providers via `pi.registerProvider()` on `session_start` and `session_tree`.
 - Remembers the last used model per provider (`model_select` event).
-- Supports OpenRouter sync.
-- Allows hiding providers you never use, with a dedicated **Hidden Providers** section to restore them.
+- Supports model sync for **OpenRouter** and **OpenCode Go**.
+- Allows hiding providers you never use, with a dedicated **Hidden Providers** screen to restore them.
+
+## Syncable providers
+
+Sync fetches the public model list, lets the user multi-select models, and registers only the selection as a curated provider.
+
+| Provider | Sync endpoint | API key source |
+|---|---|---|
+| `openrouter` | `https://openrouter.ai/api/v1/models` | `auth.json` key for `openrouter`, or `OPENROUTER_API_KEY` env |
+| `opencode-go` | `https://opencode.ai/zen/go/v1/models` | `auth.json` key for `opencode-go`, or `OPENCODE_API_KEY` env |
+
+To sync, open the provider detail (`Enter` on a provider) and choose **Sync … models** (first item), or press `s`.
 
 ## Commands
 
@@ -18,11 +29,39 @@ Dynamic provider and model registration with a TUI.
 ## Important behaviors
 
 - Config is stored in `~/.pi/agent/model-manager.json`, not in `settings.json`.
-- `applyCuratedRegistrations()` re-registers all enabled, curatable providers on every `session_start` / `session_tree`. Built-in providers other than OpenRouter are left to Pi.
+- `applyCuratedRegistrations()` re-registers all enabled, curatable providers on every `session_start` / `session_tree`. Built-in providers other than OpenRouter and OpenCode Go are left to Pi.
 - If `global.defaultProvider` is set, the extension tries to restore that model on session start.
 - Custom providers added through the TUI are saved and re-registered automatically.
 - Built-in providers are detected and not duplicated.
-- Providers in `global.hiddenProviderIds` are moved to a **Hidden Providers** section in the TUI. For custom/OpenRouter providers hiding also disables them.
+- Hidden providers are no longer shown on the main list; use **Quick Actions > Hidden providers** (or press `H`) to open the hidden providers screen. For custom/OpenRouter/OpenCode Go providers hiding also disables them.
+
+## Hidden providers
+
+- Press `h` on a visible provider to hide it.
+- Press `H` on the main screen (or select **Hidden providers** in Quick Actions) to open the hidden providers screen.
+- In the hidden screen, select a provider and press `Enter` or `h` to restore it.
+
+## Adding a new syncable provider
+
+To add another provider that exposes an OpenAI-compatible `/models` endpoint:
+
+1. Create a fetcher module (e.g. `model-manager/<provider>.ts`) exporting:
+   - `fetch<Provider>Models(apiKey?)`
+   - `<provider>ModelToCached(m)` -> `CachedModel`
+2. Import the fetcher in `model-manager/index.ts` and add the provider to `SYNCABLE_PROVIDERS`:
+   ```ts
+   "my-provider": {
+     label: "My Provider",
+     fetch: (ctx) => {
+       const auth = ctx.modelRegistry.authStorage.get("my-provider");
+       const apiKey = auth?.type === "api_key" ? auth.key : process.env.MY_PROVIDER_API_KEY;
+       return fetchMyProviderModels(apiKey);
+     },
+     toCached: myProviderModelToCached,
+   },
+   ```
+3. If the provider is **built-in**, add a matching branch in `buildCuratedProviderConfig()` inside `model-manager/provider-utils.ts` so the extension knows how to build its `ProviderConfig` (base URL, API key env variable, etc.).
+4. Update this doc and `model-manager/README.md`.
 
 ## State
 
@@ -35,3 +74,6 @@ Dynamic provider and model registration with a TUI.
 - `model-manager/config.ts` — persistence.
 - `model-manager/provider-utils.ts` — built-in vs curated provider logic.
 - `model-manager/openrouter.ts` — OpenRouter model sync.
+- `model-manager/opencode.ts` — OpenCode Go model sync.
+- `model-manager/ui/provider-sync.ts` — generic model-list sync screen.
+- `model-manager/ui/hidden-providers.ts` — hidden providers screen.
