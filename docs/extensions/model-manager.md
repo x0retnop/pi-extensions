@@ -19,7 +19,7 @@ Sync fetches the public model list, lets the user multi-select models, and regis
 | `openrouter` | `https://openrouter.ai/api/v1/models` | `auth.json` key for `openrouter`, or `OPENROUTER_API_KEY` env |
 | `opencode-go` | `https://opencode.ai/zen/go/v1/models` | `auth.json` key for `opencode-go`, or `OPENCODE_API_KEY` env |
 
-To sync, open the provider detail (`Enter` on a provider) and choose **Sync … models** (first item), or press `s`.
+To sync, open the provider detail (`Enter` on a provider) and choose **Sync … models** (first item), or press `s`. Confirming sync with no models selected disables curation and restores Pi's built-in configuration for that provider.
 
 ## Commands
 
@@ -34,6 +34,12 @@ To sync, open the provider detail (`Enter` on a provider) and choose **Sync … 
 - Custom providers added through the TUI are saved and re-registered automatically.
 - Built-in providers are detected and not duplicated.
 - Hidden providers are no longer shown on the main list; use **Quick Actions > Hidden providers** (or press `H`) to open the hidden providers screen. For custom/OpenRouter/OpenCode Go providers hiding also disables them.
+
+## How curation interacts with built-in and custom providers
+
+- **Custom providers** from `models.json` or added through the TUI are left alone unless you explicitly enable them in the manager (e.g. set `managedModelIds` or add models). When disabled/empty they are unregistered.
+- **Built-in providers** (`opencode-go`, `openrouter`, etc.) are only overridden when you actually curate models via sync. If a built-in provider has no curated models, the manager does **not** unregister it, so Pi's default configuration (headers, compat, pricing, etc.) stays intact.
+- When curating a built-in provider, the manager first looks at Pi's existing registry models for that provider and keeps their full metadata (specs, headers, compat). Fallback cached definitions are only used for models that Pi does not already know about. This prevents custom `User-Agent` headers or model compat flags from being lost for known models.
 
 ## Hidden providers
 
