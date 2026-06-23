@@ -287,7 +287,7 @@ Relevant mappings:
 | `compactionSummary` | `user` (wrapped in XML) |
 | `branchSummary` | `user` (wrapped in XML) |
 
-**Key point:** a `display: false` custom message is **still sent to the LLM** as a user message. The `display` flag only controls TUI visibility. A `context` hook can filter it out, but that risks breaking alternating roles if the filtered array ends with an `assistant` message (see §15). In practice, keeping a minimal empty user message (e.g. `content: " "`) is safer and most models tolerate it.
+**Key point:** a `display: false` custom message is **still sent to the LLM** as a user message. The `display` flag only controls TUI visibility. A `context` hook can filter it out; if you do, append a minimal empty `user` placeholder whenever the filtered array would end with an `assistant` message, otherwise the provider may reject the request (see §15). `a-rewind` uses this guarded filtering for its `/retry` trigger.
 
 ---
 

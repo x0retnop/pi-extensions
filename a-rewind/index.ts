@@ -120,6 +120,26 @@ export default function aRewind(pi: ExtensionAPI) {
 		updateTimerStatus(ctx);
 	});
 
+	// Strip the internal retry trigger from the LLM context. It is only needed to
+	// start a turn, not to be seen by the model. Keep the conversation safe by
+	// ensuring the filtered context never ends on an assistant message.
+	pi.on("context", async (event: any) => {
+		const cleaned = event.messages.filter(
+			(m: any) => !(m.role === "custom" && m.customType === "a-retry-trigger"),
+		);
+		if (cleaned.length === event.messages.length) {
+			return undefined;
+		}
+		if (cleaned.length > 0 && cleaned[cleaned.length - 1].role === "assistant") {
+			cleaned.push({
+				role: "user",
+				content: " ",
+				timestamp: Date.now(),
+			});
+		}
+		return { messages: cleaned };
+	});
+
 	pi.registerCommand("a-rewind", {
 		description: "Rewind session to before the latest assistant message",
 		handler: async (_args: string, ctx: any) => {
@@ -312,7 +332,7 @@ export default function aRewind(pi: ExtensionAPI) {
 
 				await pi.sendMessage(
 					{ customType: "a-retry-trigger", content: " ", display: false },
-					{ triggerTurn: true, deliverAs: "followUp" }
+					{ triggerTurn: true }
 				);
 				notify(ctx, "Continuing...", "info");
 			} catch (err) {
