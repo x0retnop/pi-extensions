@@ -10,6 +10,7 @@ Quick index for agents working in this repo. If you are unsure where something l
 | Dev vs runtime, copy rules, dependencies | `docs/pi-workflow.md` |
 | API types, events, tool/command shapes | `docs/pi-quickref.md` |
 | Where Pi's own `.d.ts` files live | `docs/pi-local-map.md` |
+| Pi runtime network, proxy, VPN, endpoints | `docs/pi-network-runtime.md` |
 | Run unit tests | `python scripts/run-tests.py` |
 | Pi CLI update compatibility | Run `python scripts/check-pi-sync.py`, then `docs/pi-version-sync.md` |
 | 0x010 backend control (start/stop/restart runtime) | `docs/0x010-control.md` |
@@ -48,6 +49,7 @@ Quick index for agents working in this repo. If you are unsure where something l
 | Update roles or add a new role | `docs/extensions/role-sw.md`, then create a file in `~/.pi/agent/roles/` (user copies it) |
 | Bump supported Pi CLI version | `docs/pi-version-sync.md` → follow the checklist |
 | Fix a tool override bug | `docs/extensions/<name>.md` + `docs/pi-tool-internals.md` |
+| Debug Pi network, provider timeouts, or proxy/VPN issues | `docs/pi-network-runtime.md` |
 | Debug missing tools after session change | `docs/extensions/context-guard.md`, `docs/interactions.md` |
 | Understand why system prompt looks different | `docs/extensions/context-guard.md` § prompt rules |
 
