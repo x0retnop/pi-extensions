@@ -17,6 +17,11 @@ interface DumpSnapshot {
   capturedAt: number;
   prompt?: string;
   images?: ImageContent[];
+  /** Base system prompt captured at before_agent_start (before extension mutations). */
+  baseSystemPrompt?: string;
+  /** Final system prompt extracted from the provider payload (after all extensions). */
+  finalSystemPrompt?: string;
+  /** The system prompt displayed in the dump. */
   systemPrompt?: string;
   systemPromptOptions?: any;
   messages?: any[];
@@ -25,10 +30,34 @@ interface DumpSnapshot {
 
 let snapshot: DumpSnapshot = { capturedAt: 0 };
 
+function extractSystemPromptFromPayload(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const p = payload as Record<string, any>;
+  // Anthropic-style: top-level `system` field.
+  if (p.system !== undefined) {
+    if (typeof p.system === "string") return p.system;
+    if (Array.isArray(p.system)) {
+      return p.system.map((b: any) => (typeof b === "string" ? b : b?.text ?? "")).join("\n");
+    }
+  }
+  // OpenAI-style: first message with role "system".
+  if (Array.isArray(p.messages)) {
+    const sys = p.messages.find((m: any) => m?.role === "system");
+    if (sys) {
+      if (typeof sys.content === "string") return sys.content;
+      if (Array.isArray(sys.content)) {
+        return sys.content.map((b: any) => (typeof b === "string" ? b : b?.text ?? "")).join("\n");
+      }
+    }
+  }
+  return undefined;
+}
+
 export function startDumpCapture(pi: ExtensionAPI): void {
   pi.on("before_agent_start", (event: BeforeAgentStartEvent) => {
     snapshot.prompt = event.prompt;
     snapshot.images = event.images;
+    snapshot.baseSystemPrompt = event.systemPrompt;
     snapshot.systemPrompt = event.systemPrompt;
     snapshot.systemPromptOptions = event.systemPromptOptions;
     snapshot.capturedAt = Date.now();
@@ -40,6 +69,11 @@ export function startDumpCapture(pi: ExtensionAPI): void {
 
   pi.on("before_provider_request", (event: BeforeProviderRequestEvent) => {
     snapshot.providerPayload = event.payload;
+    const finalSystem = extractSystemPromptFromPayload(event.payload);
+    if (finalSystem !== undefined) {
+      snapshot.finalSystemPrompt = finalSystem;
+      snapshot.systemPrompt = finalSystem;
+    }
   });
 }
 
@@ -266,12 +300,12 @@ function formatToolsBrief(pi: ExtensionAPI): string {
   return lines.join("\n");
 }
 
-function formatPromptsBrief(ctx: ExtensionCommandContext): string {
+function formatPromptsBrief(ctx: ExtensionCommandContext, systemPromptOverride?: string): string {
   const lines: string[] = [];
   lines.push("# Prompts — brief");
   lines.push("");
 
-  const systemPrompt = ctx.getSystemPrompt();
+  const systemPrompt = systemPromptOverride ?? ctx.getSystemPrompt();
   const opts = ctx.getSystemPromptOptions();
   const messages = snapshot.messages ?? [];
 
@@ -279,7 +313,7 @@ function formatPromptsBrief(ctx: ExtensionCommandContext): string {
   if (opts.customPrompt) lines.push(`- **Custom system prompt:** yes (${opts.customPrompt.length.toLocaleString()} chars)`);
   if (opts.appendSystemPrompt) lines.push(`- **Append system prompt:** yes (${opts.appendSystemPrompt.length.toLocaleString()} chars)`);
   lines.push(`- **Prompt guidelines:** ${opts.promptGuidelines?.length ?? 0}`);
-  lines.push(`- **Skills loaded:** ${opts.skills?.length ?? 0}`);
+  lines.push(`- **Skills discovered:** ${opts.skills?.length ?? 0} (only injected when auto-skills is ON)`);
   lines.push(`- **Context files:** ${opts.contextFiles?.length ?? 0}`);
   lines.push(`- **Selected tools:** ${opts.selectedTools?.length ?? 0}`);
   lines.push(`- **Conversation messages:** ${messages.length} (user ${countMessagesByRole(messages, "user")}, assistant ${countMessagesByRole(messages, "assistant")}, toolResult ${countMessagesByRole(messages, "toolResult")})`);
@@ -289,7 +323,7 @@ function formatPromptsBrief(ctx: ExtensionCommandContext): string {
   return lines.join("\n");
 }
 
-function formatPromptsFull(ctx: ExtensionCommandContext): string {
+function formatPromptsFull(ctx: ExtensionCommandContext, systemPromptOverride?: string): string {
   const lines: string[] = [];
   lines.push("# Prompts — full");
   lines.push("");
@@ -327,7 +361,7 @@ function formatPromptsFull(ctx: ExtensionCommandContext): string {
 
   lines.push("## System prompt");
   lines.push("```");
-  lines.push(ctx.getSystemPrompt());
+  lines.push(systemPromptOverride ?? ctx.getSystemPrompt());
   lines.push("```");
   lines.push("");
 
@@ -395,23 +429,23 @@ function formatOther(ctx: ExtensionCommandContext, pi: ExtensionAPI): string {
   return lines.join("\n");
 }
 
-function formatFull(ctx: ExtensionCommandContext, pi: ExtensionAPI): string {
+function formatFull(ctx: ExtensionCommandContext, pi: ExtensionAPI, systemPromptOverride?: string): string {
   return [
     formatToolsFull(pi),
     "---",
     "",
-    formatPromptsFull(ctx),
+    formatPromptsFull(ctx, systemPromptOverride),
     "---",
     "",
     formatOther(ctx, pi),
   ].join("\n");
 }
 
-function formatHeadlessFallback(ctx: ExtensionCommandContext, pi: ExtensionAPI): string {
+function formatHeadlessFallback(ctx: ExtensionCommandContext, pi: ExtensionAPI, systemPromptOverride?: string): string {
   return [
     formatToolsBrief(pi),
     "",
-    formatPromptsBrief(ctx),
+    formatPromptsBrief(ctx, systemPromptOverride),
     "",
     formatOther(ctx, pi),
   ].join("\n");
@@ -448,27 +482,108 @@ function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 50);
 }
 
-function writeDumpToFile(content: string, cwd: string): string {
+function writeDumpToFile(content: string, cwd: string, prefix = "pi-context-dump"): string {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const fileName = `pi-context-dump-${sanitizeFilename(path.basename(cwd))}-${ts}.md`;
+  const fileName = `${prefix}-${sanitizeFilename(path.basename(cwd))}-${ts}.md`;
   const filePath = path.join(cwd, fileName);
   fs.writeFileSync(filePath, content, "utf-8");
   return filePath;
 }
 
-export async function runContextDump(ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
-  // Always refresh live system prompt data when the dump runs.
-  snapshot.systemPrompt = ctx.getSystemPrompt();
+function getEffectiveSystemPrompt(ctx: ExtensionCommandContext): { prompt: string; isPreTurn: boolean } {
+  const isPreTurn = !snapshot.finalSystemPrompt;
+  const prompt =
+    snapshot.finalSystemPrompt ??
+    snapshot.baseSystemPrompt ??
+    ctx.getSystemPrompt();
+  return { prompt, isPreTurn };
+}
+
+function formatProviderPromptOnly(ctx: ExtensionCommandContext, pi: ExtensionAPI): string {
+  const { prompt } = getEffectiveSystemPrompt(ctx);
+  const messages = snapshot.messages ?? [];
+  const lines: string[] = [];
+
+  lines.push("# Provider prompt");
+  lines.push("");
+  lines.push("## System prompt");
+  lines.push("```");
+  lines.push(prompt);
+  lines.push("```");
+  lines.push("");
+
+  if (messages.length > 0) {
+    lines.push(`## Conversation messages (${messages.length})`);
+    lines.push("");
+    for (let i = 0; i < messages.length; i++) {
+      lines.push(...formatMessageFull(messages[i], i + 1));
+      lines.push("");
+    }
+  } else {
+    lines.push("## Conversation messages");
+    lines.push("No messages captured yet.");
+    lines.push("");
+  }
+
+  const active = pi.getActiveTools();
+  lines.push(`## Active tools (${active.length})`);
+  for (const name of active) {
+    lines.push(`- ${name}`);
+  }
+
+  return lines.join("\n");
+}
+
+export async function runProviderPromptDump(ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   snapshot.systemPromptOptions = ctx.getSystemPromptOptions();
+
+  const { prompt, isPreTurn } = getEffectiveSystemPrompt(ctx);
+  const { choice } = await pickDumpAction(ctx);
+  if (!choice) return;
+
+  let md = formatProviderPromptOnly(ctx, pi);
+
+  if (isPreTurn) {
+    md +=
+      "\n\n> **Note:** This dump was generated before the first LLM turn, so the system prompt shown is the base prompt **before** extensions such as `role-sw` and `context-guard` have mutated it. Run the dump again after at least one agent response to see the final prompt sent to the provider.\n";
+  }
+
+  if (choice === "file") {
+    const filePath = writeDumpToFile(md, ctx.cwd, "pi-provider-prompt");
+    const msg = `Provider prompt dump saved: ${filePath}`;
+    if (ctx.hasUI) ctx.ui.notify(msg, "info");
+    else console.log(msg);
+    return;
+  }
+
+  if (choice === "editor") {
+    await ctx.ui.editor("provider-prompt", md);
+    return;
+  }
+
+  console.log(md);
+}
+
+export async function runContextDump(ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+  // Refresh options, but prefer the final system prompt captured from the
+  // actual provider request (after all before_agent_start extensions).
+  snapshot.systemPromptOptions = ctx.getSystemPromptOptions();
+
+  const { prompt: effectiveSystemPrompt, isPreTurn } = getEffectiveSystemPrompt(ctx);
 
   const { choice, scope } = await pickDumpAction(ctx);
   if (!choice) return;
 
   const isFull = scope === "full";
-  const md = isFull ? formatFull(ctx, pi) : formatHeadlessFallback(ctx, pi);
+  let md = isFull ? formatFull(ctx, pi, effectiveSystemPrompt) : formatHeadlessFallback(ctx, pi, effectiveSystemPrompt);
+
+  if (isPreTurn) {
+    md +=
+      "\n\n> **Note:** This dump was generated before the first LLM turn, so the system prompt shown is the base prompt **before** extensions such as `role-sw` and `context-guard` have mutated it. Run the dump again after at least one agent response to see the final prompt sent to the provider.\n";
+  }
 
   if (choice === "file") {
-    const filePath = writeDumpToFile(md, ctx.cwd);
+    const filePath = writeDumpToFile(md, ctx.cwd, "pi-context-dump");
     const msg = `Context dump saved: ${filePath}`;
     if (ctx.hasUI) {
       ctx.ui.notify(msg, "info");

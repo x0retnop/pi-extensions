@@ -25,13 +25,12 @@ Because handlers run in load order, later handlers can override earlier ones if 
 
 ```text
 Pi builds base system prompt
-  ├── context-guard strips unwanted parts (date, cwd, skills, pi docs, ancestor agents, tool snippets, role override)
+  ├── context-guard strips unwanted parts (date, cwd, skills, pi docs, ancestor agents, tool snippets)
   ├── context-guard injects queued skills
   └── role-sw appends active role markdown ("## Role Override (...)")
-      (can be stripped if context-guard's roleOverride rule is disabled)
 ```
 
-**Conflict**: if `context-guard.roleOverride` is disabled, the role injected by `role-sw` is removed. This is by design but can be surprising.
+**Caveat**: `context-guard` is loaded before `role-sw`, so the `roleOverride` prompt rule runs *before* `role-sw` appends the role. Disabling `roleOverride` therefore does **not** currently strip the role from the final prompt. Use `/role` to switch away from an unwanted role instead.
 
 ## Tool override map
 
@@ -157,7 +156,7 @@ If Pi is launched from inside an extension folder (to load its local `AGENTS.md`
 
 1. Check `/context-guard status` — which prompt rules are off?
 2. Check active role with `/role`.
-3. Use the dump view in `/context-guard` to inspect the final prompt.
+3. Use the dump view in `/context-guard` to inspect the final prompt. Note: the dump captures the final provider payload only **after** at least one LLM turn; before the first turn it shows the base prompt before extensions such as `role-sw` have mutated it.
 
 ### Gate blocks unexpectedly
 

@@ -45,10 +45,10 @@ export function buildStatusText(settings: GuardSettings): string {
   lines.push(`  ${settings.autoSkills !== false ? "✓" : "✗"} Automatic skill injection`);
 
   lines.push("\nCommands:");
-  lines.push("  /context-guard      interactive TUI (inspect, overview, dump, rules, gates, skills)");
-  lines.push("  /context-guard <id>  toggle a feature");
-  lines.push("  /context-guard reset  disable all guards");
-  lines.push("  /use-skill <name>   inject a skill manually");
+  lines.push("  /context-guard         interactive TUI (inspect, overview, dumps, rules, gates, skills)");
+  lines.push("  /context-guard <id>    toggle a feature");
+  lines.push("  /context-guard reset   disable all guards");
+  lines.push("  /use-skill <name>      inject a skill manually");
 
   return lines.join("\n");
 }
@@ -60,6 +60,7 @@ export async function runGuardTUI(ctx: ExtensionCommandContext, pi: ExtensionAPI
     "📦 Skills",
     "🔍 Inspect prompt breakdown",
     "📊 Context overview",
+    "💾 Dump provider prompt",
     "💾 Dump full context",
     "↺ Reset all guards",
     "✓ Done",
@@ -81,6 +82,12 @@ export async function runGuardTUI(ctx: ExtensionCommandContext, pi: ExtensionAPI
     if (choice === "📊 Context overview") {
       const { runContextOverview } = await import("./overview.js");
       await runContextOverview(ctx, pi);
+      continue;
+    }
+
+    if (choice === "💾 Dump provider prompt") {
+      const { runProviderPromptDump } = await import("./dump.js");
+      await runProviderPromptDump(ctx, pi);
       continue;
     }
 

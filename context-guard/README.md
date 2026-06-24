@@ -49,7 +49,7 @@ In the TUI: `/context-guard` → "Dump full context". Choose:
 - **File (full/brief)** — writes `pi-context-dump-<cwd-basename>-<timestamp>.md` into the current working directory (`ctx.cwd`)
 - **Editor (full/brief)** — opens the report in Pi's built-in editor
 
-The dump reflects the current state **after** all extensions and guard settings have been applied, not a static catalog.
+The dump reflects the current state **after** all extensions and guard settings have been applied, **but only after at least one LLM turn has been executed**. If you run the dump before the first provider request, the system prompt section shows the base prompt **before** extensions such as `role-sw` and `context-guard` mutate it.
 
 ## Settings
 
