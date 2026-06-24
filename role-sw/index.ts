@@ -1,9 +1,17 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { homedir } from "node:os";
 import { readFile, stat, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { setStatusBlock } from "../common/status.js";
 
-const ROLES_DIR = join(homedir(), ".pi", "agent", "roles");
+// Resolve roles/ directory relative to this extension's index.ts.
+// Works for both direct file loading and directory-based extension loading.
+function getRolesDir(): string {
+  const modulePath = fileURLToPath(import.meta.url);
+  return join(dirname(modulePath), "roles");
+}
+
+const ROLES_DIR = getRolesDir();
 const DEFAULT_ROLE = "kimi";
 
 interface CacheEntry {
@@ -17,7 +25,7 @@ async function getAvailableRoles(): Promise<string[]> {
   try {
     const files = await readdir(ROLES_DIR);
     return files
-      .filter((f) => f.endsWith(".md"))
+      .filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md")
       .map((f) => f.slice(0, -3))
       .sort();
   } catch {
@@ -29,7 +37,11 @@ function resolveRolePath(name: string): string {
   return join(ROLES_DIR, `${name}.md`);
 }
 
-async function readRole(path: string): Promise<string | null> {
+function resolveIncludePath(name: string): string {
+  return join(ROLES_DIR, name);
+}
+
+async function readFileCached(path: string): Promise<string | null> {
   try {
     const s = await stat(path);
     const cached = cache.get(path);
@@ -42,6 +54,41 @@ async function readRole(path: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+const INCLUDE_RE = /^\{\{include:\s*(.+?)\s*\}\}\s*$/gm;
+
+async function resolveIncludes(text: string, visited = new Set<string>()): Promise<string> {
+  const matches = [...text.matchAll(INCLUDE_RE)];
+  if (matches.length === 0) return text;
+
+  let result = text;
+  for (const m of matches) {
+    const includeName = m[1];
+    const includePath = resolveIncludePath(includeName);
+
+    if (visited.has(includePath)) {
+      result = result.replace(m[0], `<!-- circular include skipped: ${includeName} -->\n`);
+      continue;
+    }
+
+    const inc = await readFileCached(includePath);
+    if (inc === null) {
+      result = result.replace(m[0], `<!-- missing include: ${includeName} -->\n`);
+      continue;
+    }
+
+    const nested = await resolveIncludes(inc, new Set([...visited, includePath]));
+    result = result.replace(m[0], nested.trimEnd() + "\n");
+  }
+
+  return result;
+}
+
+async function readRole(path: string): Promise<string | null> {
+  const raw = await readFileCached(path);
+  if (raw === null) return null;
+  return resolveIncludes(raw);
 }
 
 export default function (pi: ExtensionAPI) {
@@ -67,7 +114,7 @@ export default function (pi: ExtensionAPI) {
       activeRole = available.includes(DEFAULT_ROLE) ? DEFAULT_ROLE : (available[0] ?? DEFAULT_ROLE);
     }
 
-    ctx.ui.setStatus("role", `role: ${activeRole}`);
+    setStatusBlock(ctx, "role", `role:${activeRole}`);
   });
 
   // ── Inject role prompt into system prompt before each turn ──
@@ -85,7 +132,7 @@ export default function (pi: ExtensionAPI) {
     const baseSystem = event.systemPrompt ?? "";
     const newSystem = `${baseSystem}\n\n## Role Override (${activeRole})\n\n${trimmed}`;
 
-    ctx.ui.setStatus("role", `role: ${activeRole}`);
+    setStatusBlock(ctx, "role", `role:${activeRole}`);
     return { systemPrompt: newSystem };
   });
 
@@ -112,7 +159,7 @@ export default function (pi: ExtensionAPI) {
         }
         activeRole = requested;
         pi.appendEntry("role-switcher", { role: activeRole, switchedAt: Date.now() });
-        ctx.ui.setStatus("role", `role: ${activeRole}`);
+        setStatusBlock(ctx, "role", `role:${activeRole}`);
         ctx.ui.notify(`Switched to role: ${activeRole}`, "info");
         return;
       }
@@ -132,7 +179,7 @@ export default function (pi: ExtensionAPI) {
 
       activeRole = choice;
       pi.appendEntry("role-switcher", { role: activeRole, switchedAt: Date.now() });
-      ctx.ui.setStatus("role", `role: ${activeRole}`);
+      setStatusBlock(ctx, "role", `role:${activeRole}`);
       ctx.ui.notify(`Switched to role: ${activeRole}`, "info");
     },
   });
