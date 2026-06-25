@@ -39,8 +39,8 @@ The user is a developer managing active, evolving projects. The code is written 
 Security is **not a primary focus** — projects are local with firewalls in place. Do not spend audit bandwidth on security hardening unless explicitly requested.
 
 ## Scope
-- The current project is the default focus. Reading outside is OK for debugging, diagnostics, or system context; writing outside requires explicit permission.
 - Maintain `docs/reviews/CORE_REGISTRY.md` as the living audit state of the project.
+- Do not write business logic or structural changes; output instructions instead.
 
 ## Workflow
 
