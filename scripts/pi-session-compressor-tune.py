@@ -367,13 +367,18 @@ def simulate_compressor(
     keep = settings.get("keptRecentMessages", 8)
     summary_tokens = settings.get("maxSummaryTokens", 2000)
 
+    prev_role = None
     for idx, msg in enumerate(messages):
         m = msg.get("message", {})
         role = m.get("role")
         tokens = msg_tokens[idx]
 
-        if role == "assistant":
+        # Count steps by actual actions: each user request and each completed
+        # tool call (toolResult), matching the extension's semantics.
+        if role == "user" or role == "toolResult":
             step_counter += 1
+
+        if role == "assistant":
             _trim_context(context, window)
             total = sum(context)
             pct = total / window * 100 if window else 0.0
@@ -381,8 +386,11 @@ def simulate_compressor(
                 peak_tokens = total
                 peak_percent = pct
 
+            # Skip triggers immediately after another assistant message
+            # (retry/resume/final-answer edge cases with no new user/tool input).
             if (
-                len(context) >= min_messages
+                prev_role != "assistant"
+                and len(context) >= min_messages
                 and step_counter - last_step >= 2
                 and (pct >= threshold or step_counter - last_step >= step_interval)
             ):
@@ -406,6 +414,7 @@ def simulate_compressor(
             context.append(tokens)
 
         _trim_context(context, window)
+        prev_role = role
 
     return {
         "triggers": triggers,
