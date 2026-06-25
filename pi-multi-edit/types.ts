@@ -26,7 +26,7 @@ export interface Workspace {
   checkWriteAccess: (absolutePath: string) => Promise<void>;
 }
 
-export type EditMode = "single" | "batch" | "multi";
+export type EditMode = "single" | "batch";
 
 export interface ExecuteResult {
   content: { type: "text"; text: string }[];

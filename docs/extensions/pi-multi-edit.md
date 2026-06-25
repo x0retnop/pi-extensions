@@ -1,20 +1,19 @@
 # pi-multi-edit
 
-Exact-text replacement edit tool with single-file batch and multi-file batch modes.
+Exact-text replacement edit tool with single and batch modes.
 
 ## What it does
 
 - Replaces the built-in `edit` tool.
 - Runs a virtual preflight pass before writing, so mismatches are caught early.
-- Supports `edits[]` for one file and `multi[]` for several files.
+- Supports `edits[]` for multiple changes in the same file.
 - Supports `partialApply: true` to apply matching edits and report failures separately.
 
 ## Tool
 
 - `edit` — atomic exact text replacement.
   - Single edit: `{ path, oldText, newText }`
-  - Same-file batch: `{ path, edits: [{ oldText, newText }, ...] }`
-  - Multi-file batch: `{ multi: [{ path, oldText, newText }, ...] }`
+  - Batch edit: `{ path, edits: [{ oldText, newText }, ...] }`
   - `partialApply: true` for independent edits.
   - `newText: ""` deletes the matched block.
 

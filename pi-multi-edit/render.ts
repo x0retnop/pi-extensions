@@ -66,6 +66,7 @@ function shortenPath(p: string): string {
 function collectEditEntries(args: Record<string, unknown>): unknown[] {
   const edits = Array.isArray(args.edits) ? args.edits : [];
   if (edits.length > 0) return edits;
+  // Deprecated fallback; keep only to avoid breaking legacy callers.
   if (Array.isArray(args.multi) && args.multi.length > 0) return args.multi;
   if (typeof args.oldText === "string" && typeof args.newText === "string") {
     return [{ oldText: args.oldText, newText: args.newText }];
@@ -75,6 +76,11 @@ function collectEditEntries(args: Record<string, unknown>): unknown[] {
 
 function resolveMode(args: Record<string, unknown>): EditMode {
   const entries = collectEditEntries(args);
+  return entries.length > 1 ? "batch" : "single";
+}
+
+function collectPaths(args: Record<string, unknown>): Set<string> {
+  const entries = collectEditEntries(args);
   const topPath = resolvePathFromRecord(args);
   const paths = new Set<string>();
   for (const e of entries) {
@@ -83,33 +89,25 @@ function resolveMode(args: Record<string, unknown>): EditMode {
       if (p) paths.add(p);
     }
   }
-  if (paths.size > 1) return "multi";
-  if (entries.length > 1) return "batch";
-  return "single";
+  return paths;
 }
 
 function resolveTarget(args: Record<string, unknown>, mode: EditMode): string {
+  const paths = collectPaths(args);
+  if (paths.size === 0) return "...";
+  if (paths.size === 1) return shortenPath([...paths][0]);
+  return `${paths.size} files`;
+}
+
+function hasReplaceAll(args: Record<string, unknown>): boolean {
+  if (args.replaceAll === true) return true;
   const entries = collectEditEntries(args);
-  const topPath = resolvePathFromRecord(args);
-
-  if (mode === "multi") {
-    const paths = new Set<string>();
-    for (const e of entries) {
-      if (e && typeof e === "object") {
-        const p = resolvePathFromRecord(e as Record<string, unknown>) ?? topPath;
-        if (p) paths.add(p);
-      }
+  for (const e of entries) {
+    if (e && typeof e === "object" && (e as Record<string, unknown>).replaceAll === true) {
+      return true;
     }
-    return paths.size === 1 ? shortenPath([...paths][0]) : `${paths.size} files`;
   }
-
-  if (topPath) return shortenPath(topPath);
-  const first = entries[0];
-  if (first && typeof first === "object") {
-    const p = resolvePathFromRecord(first as Record<string, unknown>);
-    if (p) return shortenPath(p);
-  }
-  return "...";
+  return false;
 }
 
 export function formatCallHeader(args: Record<string, unknown>, theme: any): string {
@@ -117,11 +115,12 @@ export function formatCallHeader(args: Record<string, unknown>, theme: any): str
   const label = `edit:${mode}`;
   const target = resolveTarget(args, mode);
   const count = Math.max(collectEditEntries(args).length, 1);
+  const suffix = hasReplaceAll(args) ? ", replaceAll" : "";
 
   return (
     `${theme.fg("toolTitle", theme.bold(label))} ` +
     `${theme.fg("accent", target)} ` +
-    `${theme.fg("dim", `(${count})`)}`
+    `${theme.fg("dim", `(${count}${suffix})`)}`
   );
 }
 

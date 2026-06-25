@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { resolve } from "node:path";
 import { applyEdits } from "../../pi-multi-edit/engine.js";
+import { parseEdits, prepareArguments } from "../../pi-multi-edit/params.js";
 import type { EditItem, Workspace } from "../../pi-multi-edit/types.js";
 
 const cwd = "C:/10x001/project";
@@ -99,4 +100,48 @@ test("multi-file batch edits different files", async () => {
   assert.strictEqual(results.every((r) => r.success), true);
   assert.strictEqual(await ws.readText(abs("a.txt")), "AAA");
   assert.strictEqual(await ws.readText(abs("b.txt")), "BBB");
+});
+
+test("prepareArguments normalizes file_path alias to path", () => {
+  const prep = prepareArguments({
+    file_path: "C:/test/file.txt",
+    oldText: "foo",
+    newText: "bar",
+  });
+  assert.strictEqual(prep.path, "C:/test/file.txt");
+  assert.strictEqual("file_path" in prep, false);
+});
+
+test("prepareArguments normalizes path alias inside edits", () => {
+  const prep = prepareArguments({
+    edits: [{ filepath: "C:/test/file.txt", oldText: "foo", newText: "bar" }],
+  });
+  assert.ok(Array.isArray(prep.edits));
+  assert.strictEqual(prep.edits?.[0].path, "C:/test/file.txt");
+  assert.strictEqual("filepath" in (prep.edits?.[0] ?? {}), false);
+});
+
+test("parseEdits accepts file_path alias on top level", () => {
+  const parsed = parseEdits({
+    file_path: "C:/test/file.txt",
+    oldText: "foo",
+    newText: "bar",
+  });
+  assert.strictEqual(parsed.edits.length, 1);
+  assert.strictEqual(parsed.edits[0].path, "C:/test/file.txt");
+});
+
+test("parseEdits accepts filepath alias inside edits", () => {
+  const parsed = parseEdits({
+    edits: [{ filepath: "C:/test/file.txt", oldText: "foo", newText: "bar" }],
+  });
+  assert.strictEqual(parsed.edits.length, 1);
+  assert.strictEqual(parsed.edits[0].path, "C:/test/file.txt");
+});
+
+test("parseEdits throws clear error for empty top-level path", () => {
+  assert.throws(
+    () => parseEdits({ path: "", oldText: "foo", newText: "bar" }),
+    /Missing path/,
+  );
 });

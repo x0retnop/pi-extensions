@@ -1,7 +1,7 @@
 {
   "name": "pi-extension-multi-edit",
   "version": "0.2.8",
-  "description": "Agent-first edit tool: single, batch, and multi-file exact replacement",
+  "description": "Agent-first edit tool: single and batch exact replacement.",
   "type": "module",
   "keywords": [
     "pi-package",

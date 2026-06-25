@@ -333,7 +333,9 @@ export function buildMismatchHint(
     if (/[\u2018\u2019\u201C\u201D]/.test(oldText)) parts.push("curly quotes in oldText");
     if (oldText !== oldText.trimEnd()) parts.push("trailing whitespace in oldText");
   } else if (survivingIds.length > 0) {
-    parts.push("block may have moved — re-read the file if a prior edit restructured this section");
+    parts.push(
+      "block may have moved after a prior edit; re-read the file (read:section or read:grep), copy the exact current block, then retry with rebuilt oldText",
+    );
   }
 
   return parts.length > 0 ? parts.join("; ") + "." : "oldText not found — re-read the file for exact text.";

@@ -23,6 +23,20 @@ export function resolvePathFromRecord(
   return undefined;
 }
 
+/** Remove every path alias except the canonical `path` key. */
+function stripPathAliases(
+  obj: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (k !== "path" && PATH_KEYS.includes(k as typeof PATH_KEYS[number])) {
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
 const itemPathProp = {
   path: Type.Optional(Type.String({ description: "File path for this edit" })),
 };
@@ -49,20 +63,10 @@ const editItemSchema = Type.Object(
 
 const multiItemSchema = Type.Object(
   {
-    path: Type.String({ description: "File path for this edit" }),
-    oldText: Type.String({
-      description:
-        "Exact text to find. MUST match whitespace, tabs, quotes, and trailing spaces exactly.",
-    }),
-    newText: Type.String({
-      description:
-        'Replacement text. Use "" (empty string) to delete the matched oldText block.',
-    }),
-    replaceAll: Type.Optional(
-      Type.Boolean({
-        description: "Replace every occurrence instead of requiring uniqueness",
-      }),
-    ),
+    path: Type.String(),
+    oldText: Type.String(),
+    newText: Type.String(),
+    replaceAll: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -77,7 +81,7 @@ export const editParameters = Type.Object(
     path: Type.Optional(
       Type.String({
         description:
-          "Target file for single-file edits (relative or absolute). Copy from your last read. Omit only for multi-file calls.",
+          "Target file for single-file or batch edits (relative or absolute). Copy from your last read.",
       }),
     ),
     file_path: Type.Optional(
@@ -101,13 +105,13 @@ export const editParameters = Type.Object(
     edits: Type.Optional(
       Type.Array(editItemSchema, {
         description:
-          "Batch edits in ONE file. Requires top-level path. Each item is {oldText, newText}. Mutually exclusive with multi.",
+          "Batch edits in ONE file. Requires top-level path. Each item is {oldText, newText}.",
       }),
     ),
     multi: Type.Optional(
       Type.Array(multiItemSchema, {
         description:
-          "Multi-file batch edits. Each item MUST have its own path: {path, oldText, newText}. Mutually exclusive with edits.",
+          "Deprecated multi-file batch format. Prefer separate `edit` calls or per-item paths in `edits`.",
       }),
     ),
   },
@@ -159,8 +163,9 @@ function normalizeEditPaths(edits: RawEdit[]): RawEdit[] {
     if (!e || typeof e !== "object") return e;
     const rec = e as Record<string, unknown>;
     const p = resolvePathFromRecord(rec);
-    if (!p) return e;
-    return { ...e, path: p };
+    const cleaned = stripPathAliases(rec);
+    if (!p) return cleaned as RawEdit;
+    return { ...cleaned, path: p };
   });
 }
 
@@ -187,7 +192,7 @@ function pathMissingMessage(index: number, editCount: number): string {
       'Example: {"path":"src/foo.py","edits":[{"oldText":"a","newText":"b"},{"oldText":"c","newText":"d"}]}'
     );
   }
-  return `edits[${index}] needs path — set top-level path for one file, or use multi[] for several files.`;
+  return `edits[${index}] needs path — set top-level path for the file.`;
 }
 
 function parseEditsJsonString(value: unknown): RawEdit[] | undefined {
@@ -230,10 +235,11 @@ export function prepareArguments(input: unknown): EditToolInput {
   }
 
   const raw = input as Record<string, unknown>;
-  const args: Record<string, unknown> = { ...raw };
+  let args: Record<string, unknown> = { ...raw };
 
   const topPath = resolvePathFromRecord(args);
   if (topPath) args.path = topPath;
+  args = stripPathAliases(args);
 
   const parsedEdits = parseEditsJsonString(args.edits);
   if (parsedEdits) args.edits = parsedEdits;
@@ -247,7 +253,7 @@ export function prepareArguments(input: unknown): EditToolInput {
   if (edits.length > 0 && fromMulti.length > 0) {
     throw new Error(
       "Cannot use both `edits` and `multi` in the same call. " +
-      "Use `edits` for one file and `multi` for several files.",
+      "Use `edits` for batch edits.",
     );
   }
 
@@ -289,7 +295,7 @@ export function parseEdits(params: Record<string, unknown>): { edits: EditItem[]
 
   if (!editsArr || editsArr.length === 0) {
     throw new Error(
-      "No edits to apply. Send edits:[{oldText,newText}], or top-level oldText+newText+path, or multi:[{path,oldText,newText}].",
+      "No edits to apply. Send edits:[{oldText,newText}], or top-level oldText+newText+path.",
     );
   }
 
