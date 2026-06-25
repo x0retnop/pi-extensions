@@ -3,6 +3,7 @@
 import { homedir } from "node:os";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { setStatusBlock } from "../common/status.js";
 import {
   classifyPathAccess,
   extractFilePath,
@@ -68,10 +69,8 @@ function normalizeCommand(command: string): string {
 }
 
 function showStatus(ctx: any) {
-  if (ctx?.ui?.setStatus) {
-    const label = CONFIG.mode === "off" ? "OFF" : CONFIG.mode.toUpperCase();
-    ctx.ui.setStatus("gate", `        gate-mode: ${label}`);
-  }
+  const label = CONFIG.mode === "off" ? undefined : CONFIG.mode.toUpperCase();
+  setStatusBlock(ctx, "gate", label ? `gate:${label}` : undefined);
 }
 
 // ─── Helpers: path extraction (shell-only) ───

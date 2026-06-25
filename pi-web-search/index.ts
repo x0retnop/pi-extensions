@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { setStatusBlock } from "../common/status.js";
 
 // ---------------------------------------------------------------------------
 // TUI helpers for compact, width-safe tool rendering
@@ -177,9 +178,7 @@ function syncWebAccessTools(pi: ExtensionAPI, enabled: boolean): void {
 }
 
 function setWebAccessStatus(ctx: ExtensionContext, enabled: boolean): void {
-  if (ctx.hasUI) {
-    ctx.ui.setStatus("web-access", enabled ? "web: on" : undefined);
-  }
+  setStatusBlock(ctx, "web-access", enabled ? "web:on" : undefined);
 }
 
 function normalizeQueryList(queryList: unknown[]): string[] {

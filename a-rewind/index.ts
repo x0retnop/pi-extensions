@@ -1,13 +1,15 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { formatDurationHMS, formatTimerStatus, setStatusBlock } from "../common/status.js";
 
 const EXT = "a-rewind";
-const TIMER_STATUS_ID = "a-rewind-timer";
+const TIMER_STATUS_KEY = "_";
 
 type NotifyLevel = "info" | "warning" | "error";
 
 let timerEnabled = true;
 let activeTaskStartedAtMs: number | undefined;
 let lastTaskDurationMs: number | undefined;
+let completedTasksTotalMs = 0;
 
 function formatError(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
@@ -24,12 +26,6 @@ function notify(ctx: any, message: string, level: NotifyLevel = "info"): void {
 		}
 	} catch {
 		// Never write extension diagnostics to stdout/stderr.
-	}
-}
-
-function safeSetStatus(ctx: any, id: string, value: string | undefined): void {
-	if (ctx?.hasUI && typeof ctx.ui?.setStatus === "function") {
-		ctx.ui.setStatus(id, value);
 	}
 }
 
@@ -54,35 +50,32 @@ function finishTaskTimer(): number | undefined {
 	const durationMs = Math.max(0, Date.now() - activeTaskStartedAtMs);
 	activeTaskStartedAtMs = undefined;
 	lastTaskDurationMs = durationMs;
+	completedTasksTotalMs += durationMs;
 	return durationMs;
 }
 
-function formatTaskTimingForStatus(): string {
-	if (activeTaskStartedAtMs !== undefined) {
-		return ` · ${formatDuration(Date.now() - activeTaskStartedAtMs)}`;
+function getCurrentTotalMs(): number {
+	if (activeTaskStartedAtMs === undefined) {
+		return completedTasksTotalMs;
 	}
-	if (lastTaskDurationMs !== undefined) {
-		return ` · last ${formatDuration(lastTaskDurationMs)}`;
-	}
-	return "";
+	return completedTasksTotalMs + Math.max(0, Date.now() - activeTaskStartedAtMs);
 }
 
 function updateTimerStatus(ctx: any): void {
 	if (!timerEnabled) {
-		safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+		setStatusBlock(ctx, TIMER_STATUS_KEY, undefined);
 		return;
 	}
-	const timing = formatTaskTimingForStatus();
-	if (timing) {
-		safeSetStatus(ctx, TIMER_STATUS_ID, `task${timing}`);
-	} else {
-		safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
-	}
+
+	const totalMs = getCurrentTotalMs();
+	const text = formatTimerStatus({ totalMs, lastMs: lastTaskDurationMs });
+	setStatusBlock(ctx, TIMER_STATUS_KEY, text);
 }
 
 function resetTimerState(): void {
 	activeTaskStartedAtMs = undefined;
 	lastTaskDurationMs = undefined;
+	completedTasksTotalMs = 0;
 }
 
 export default function aRewind(pi: ExtensionAPI) {
@@ -269,7 +262,7 @@ export default function aRewind(pi: ExtensionAPI) {
 
 				if (arg === "off" || arg === "disable" || arg === "0") {
 					timerEnabled = false;
-					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+					setStatusBlock(ctx, TIMER_STATUS_KEY, undefined);
 					notify(ctx, "task timer display disabled", "info");
 					return;
 				}
@@ -291,7 +284,7 @@ export default function aRewind(pi: ExtensionAPI) {
 					updateTimerStatus(ctx);
 					notify(ctx, "task timer display enabled", "info");
 				} else {
-					safeSetStatus(ctx, TIMER_STATUS_ID, undefined);
+					setStatusBlock(ctx, TIMER_STATUS_KEY, undefined);
 					notify(ctx, "task timer display disabled", "info");
 				}
 			} catch (err) {

@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import path from "node:path";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
+import { setStatusBlock } from "../common/status.js";
 
 const SETTINGS_PATH = path.join(getAgentDir(), "settings.json");
 
@@ -339,27 +340,26 @@ export default function (pi: ExtensionAPI) {
     pi.setActiveTools([...active]);
   }
 
-  function setCurateStatus(ctx: ExtensionContext | ExtensionCommandContext, state: CurateState | null): void {
-    if (ctx.hasUI) {
-      const text = state?.enabled ? `pm-curate: ${state.mode}` : undefined;
-      ctx.ui.setStatus("project-memory-curate", text);
-    }
+  async function getProjectStatusId(ctx: ExtensionContext | ExtensionCommandContext): Promise<string | undefined> {
+    if (!hasProjectId(ctx.cwd)) return undefined;
+    return resolveProjectId(ctx.cwd);
   }
 
-  pi.on("session_start", (_event, ctx) => {
+  function setCurateStatus(ctx: ExtensionContext | ExtensionCommandContext, state: CurateState | null): void {
+    const mode = state?.enabled ? state.mode : undefined;
+    setStatusBlock(ctx, "project-memory-curate", mode ? `curate:${mode}` : undefined);
+  }
+
+  pi.on("session_start", async (_event, ctx) => {
     syncProjectMemoryTools(ctx);
-    if (ctx.hasUI) {
-      const status = hasProjectId(ctx.cwd) ? "on" : "off";
-      ctx.ui.setStatus("project-memory", `pm: ${status}`);
-      setCurateStatus(ctx, getLatestCurateState(ctx));
-    }
+    const projectId = await getProjectStatusId(ctx);
+    setStatusBlock(ctx, "project-memory", projectId ? `pm:${projectId}` : undefined);
+    setCurateStatus(ctx, getLatestCurateState(ctx));
   });
 
-  pi.on("session_tree", (_event, ctx) => {
+  pi.on("session_tree", async (_event, ctx) => {
     syncProjectMemoryTools(ctx);
-    if (ctx.hasUI) {
-      setCurateStatus(ctx, getLatestCurateState(ctx));
-    }
+    setCurateStatus(ctx, getLatestCurateState(ctx));
   });
 
   // -------------------------------------------------------------------------

@@ -13,6 +13,7 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": [
+    "common/**/*.ts",
     "a-rewind/**/*.ts",
     "auto-trust/**/*.ts",
     "context-compressor/**/*.ts",
