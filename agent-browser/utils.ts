@@ -182,3 +182,74 @@ export function extraArgsToStrings(extraArgs: unknown): string[] {
   if (!Array.isArray(extraArgs)) return [];
   return extraArgs.filter((x): x is string => typeof x === "string");
 }
+
+export const DEFAULT_MAX_OUTPUT_CHARS = 50_000;
+
+export function truncateOutput(
+  text: string,
+  maxChars: number = DEFAULT_MAX_OUTPUT_CHARS,
+  hint?: string,
+): string {
+  if (!text || text.length <= maxChars) return text;
+  const hidden = text.length - maxChars;
+  const suffix = hint
+    ? `\n[TRUNCATED: ${hidden.toLocaleString()} characters hidden; ${hint}]`
+    : `\n[TRUNCATED: ${hidden.toLocaleString()} characters hidden]`;
+  const keep = Math.max(0, maxChars - suffix.length);
+  return text.slice(0, keep) + suffix;
+}
+
+export function truncateLines(text: string, maxLines: number): string {
+  if (!text) return text;
+  const lines = text.split("\n");
+  if (lines.length <= maxLines) return text;
+  return (
+    lines.slice(0, maxLines).join("\n") +
+    `\n[TRUNCATED: ${lines.length - maxLines} more lines hidden]`
+  );
+}
+
+interface NetworkRequestEntry {
+  method?: unknown;
+  url?: unknown;
+  status?: unknown;
+  resourceType?: unknown;
+  mimeType?: unknown;
+  timestamp?: unknown;
+}
+
+export function summarizeNetworkRequests(
+  output: string,
+  maxItems = 50,
+  full = false,
+): string {
+  if (full) return truncateOutput(output, DEFAULT_MAX_OUTPUT_CHARS, "use full:false for summary");
+
+  let parsed: { requests?: NetworkRequestEntry[] } | undefined;
+  try {
+    parsed = JSON.parse(output) as { requests?: NetworkRequestEntry[] };
+  } catch {
+    return truncateOutput(output, DEFAULT_MAX_OUTPUT_CHARS);
+  }
+
+  const requests = Array.isArray(parsed?.requests) ? parsed.requests : [];
+  const total = requests.length;
+  const slice = requests.slice(0, maxItems).map((r) => ({
+    method: r.method,
+    url: r.url,
+    status: r.status,
+    resourceType: r.resourceType,
+    mimeType: r.mimeType,
+    timestamp: r.timestamp,
+  }));
+
+  const summary = {
+    total,
+    shown: slice.length,
+    truncated: total > maxItems ? total - maxItems : 0,
+    hint: "Use full:true or pattern:<glob> to see more details or headers.",
+    requests: slice,
+  };
+
+  return JSON.stringify(summary, null, 2);
+}

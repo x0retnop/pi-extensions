@@ -75,6 +75,18 @@ browser action:text
 
 `wait_after` accepts: `networkidle`, `domcontentloaded`, `load`, `@eN`/selector, `"some text"`, `"**/dashboard"`, `2000`, or `false` to skip the default wait.
 
+## Output limits
+
+Browser tools can return large data. To protect context, outputs are truncated by default:
+
+- `browser action:snapshot` — max 300 lines / 30 000 chars.
+- `browser action:text` — max 16 000 chars (use `max_output_chars` for more).
+- `browser action:eval` — max 30 000 chars.
+- `browser_network action:requests` — summary only (method, URL, status, resourceType). Max 50 entries without `pattern`, 200 with `pattern`. Use `full:true` for headers.
+- `browser_state` and `browser_debug` — max 30 000 chars.
+
+If output is truncated, the response includes a hint like `[TRUNCATED: ...]`. Use `max_output_chars:<n>` or `full:true` to see more.
+
 ## Reading page text
 
 Use `browser action:text` to read the visible text of the active page. No selector guessing needed:

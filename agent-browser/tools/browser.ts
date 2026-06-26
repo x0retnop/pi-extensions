@@ -6,6 +6,8 @@ import {
   parseWaitOption,
   sanitizeSelector,
   extraArgsToStrings,
+  truncateOutput,
+  truncateLines,
   AGENT_BROWSER_PATH,
 } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
@@ -109,6 +111,8 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
       ),
       text: Type.Optional(Type.String({ description: "Text for fill/type/eval/submit" })),
       tab: Type.Optional(Type.String({ description: "Tab id or label to switch to (action:tab)" })),
+      max_output_chars: Type.Optional(Type.Number({ description: "Max characters to return from text/eval/snapshot. Default depends on action." })),
+      max_snapshot_lines: Type.Optional(Type.Number({ description: "Max lines to return from snapshot. Default 300." })),
       interactive: Type.Optional(Type.Boolean({ description: "snapshot: show only interactive elements (default true)" })),
       headed: Type.Optional(Type.Boolean({ description: "Show browser window (default false/headless)" })),
       session: Type.Optional(Type.String({ description: "Isolated session name" })),
@@ -160,12 +164,17 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
           result = await runAgentBrowser(["open", String(params.url), ...extra], session, cdpUrl);
           break;
         }
-        case "snapshot": {
+          case "snapshot": {
           const args = ["snapshot"];
           if (params.interactive !== false) args.push("-i");
           args.push(...extra);
           result = await runAgentBrowser(args, session, cdpUrl);
-          snapshotOutput = result.ok ? result.output : "";
+          if (result.ok && result.output) {
+            const maxLines = typeof params.max_snapshot_lines === "number" ? params.max_snapshot_lines : 300;
+            const maxChars = typeof params.max_output_chars === "number" ? params.max_output_chars : 30_000;
+            snapshotOutput = truncateOutput(truncateLines(result.output, maxLines), maxChars);
+            result = { ok: true, output: snapshotOutput };
+          }
           break;
         }
         case "tabs": {
@@ -214,11 +223,16 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
           if (params.text === undefined) return errorResult("eval requires text");
           const code = String(params.text);
           result = await runAgentBrowserEval(code, session, extra, cdpUrl);
+          if (result.ok && result.output) {
+            const maxChars = typeof params.max_output_chars === "number" ? params.max_output_chars : 30_000;
+            result = { ok: true, output: truncateOutput(result.output, maxChars, "use max_output_chars:<n> for more") };
+          }
           break;
         }
         case "text": {
+          const maxChars = typeof params.max_output_chars === "number" ? params.max_output_chars : 16_000;
           result = await runAgentBrowserEval(
-            "(() => { const main = document.querySelector('main') || document.body; return main.innerText.slice(0, 16000); })()",
+            `(() => { const main = document.querySelector('main') || document.body; return main.innerText.slice(0, ${maxChars}); })()`,
             session,
             extra,
             cdpUrl,
@@ -258,9 +272,10 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
         };
       }
 
-      // Cache snapshot for @eN fallback.
+      // Cache snapshot for @eN fallback. Keep it small so session state stays lean.
       if (action === "snapshot" && snapshotOutput) {
-        pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...getLatestState(ctx), lastSnapshot: snapshotOutput }));
+        const trimmed = snapshotOutput.length > 8_000 ? snapshotOutput.slice(0, 8_000) + "\n[TRUNCATED for state cache]" : snapshotOutput;
+        pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...getLatestState(ctx), lastSnapshot: trimmed }));
       }
 
       // Auto-wait after navigation actions by default.
@@ -280,8 +295,9 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
         }
       }
 
+      const finalMaxChars = typeof params.max_output_chars === "number" ? params.max_output_chars : 50_000;
       return {
-        content: [{ type: "text" as const, text: result.output || "Done" }],
+        content: [{ type: "text" as const, text: truncateOutput(result.output || "Done", finalMaxChars) }],
         details: {},
       };
     },

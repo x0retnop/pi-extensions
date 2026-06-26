@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { runAgentBrowser, extraArgsToStrings } from "../utils.js";
+import { runAgentBrowser, extraArgsToStrings, summarizeNetworkRequests, truncateOutput } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
 import { CUSTOM_STATE_TYPE } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -50,7 +50,7 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
       "Set routes before opening/navigating a page to catch initial requests.",
     promptGuidelines: [
       "Set browser_network action:route before opening/navigating to catch initial requests.",
-      "Use browser_network action:requests pattern:<glob> to inspect traffic.",
+      "Use browser_network action:requests pattern:<glob> to inspect traffic. Default output is a summary; use full:true only when you need headers.",
       "Start har_start before actions and har_stop output_path:<path> to save a HAR.",
       "Pass cdp_url on the first call; it is reused from the session afterwards.",
     ],
@@ -69,6 +69,8 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
       output_path: Type.Optional(Type.String({ description: "HAR file path for har_stop" })),
       session: Type.Optional(Type.String({ description: "Isolated session name" })),
       cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" })),
+      full: Type.Optional(Type.Boolean({ description: "Return full request details including headers (requests only). Default false/summary." })),
+      max_output_chars: Type.Optional(Type.Number({ description: "Max characters to return. Default 50000." })),
       extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags passed after the action" })),
     }),
 
@@ -117,7 +119,22 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
           if (params.pattern) args.push("--filter", String(params.pattern));
           if (params.clear === true) args.push("--clear");
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          const raw = await runAgentBrowser(args, session, cdpUrl);
+          if (!raw.ok) {
+            result = raw;
+            break;
+          }
+          const full = params.full === true;
+          const maxItems = params.pattern ? 200 : 50;
+          const maxChars = typeof params.max_output_chars === "number" ? params.max_output_chars : 50_000;
+          result = {
+            ok: true,
+            output: truncateOutput(
+              summarizeNetworkRequests(raw.output, maxItems, full),
+              maxChars,
+              "use full:true or max_output_chars:<n> for more",
+            ),
+          };
           break;
         }
         case "har_start": {
@@ -142,7 +159,7 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
         };
       }
       return {
-        content: [{ type: "text" as const, text: result.output || "Done" }],
+        content: [{ type: "text" as const, text: truncateOutput(result.output || "Done", typeof params.max_output_chars === "number" ? params.max_output_chars : 50_000) }],
         details: {},
       };
     },

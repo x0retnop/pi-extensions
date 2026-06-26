@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { runAgentBrowser, extraArgsToStrings } from "../utils.js";
+import { runAgentBrowser, extraArgsToStrings, truncateOutput } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
 import { CUSTOM_STATE_TYPE } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -73,6 +73,7 @@ export function createStateToolDefinition(pi: ExtensionAPI) {
       key: Type.Optional(Type.String({ description: "Storage key" })),
       session: Type.Optional(Type.String({ description: "Isolated session name" })),
       cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" })),
+      max_output_chars: Type.Optional(Type.Number({ description: "Max characters to return. Default 30000." })),
       extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags passed after the action" })),
     }),
 
@@ -149,8 +150,9 @@ export function createStateToolDefinition(pi: ExtensionAPI) {
           details: { error: result.error },
         };
       }
+      const maxChars = typeof params.max_output_chars === "number" ? params.max_output_chars : 30_000;
       return {
-        content: [{ type: "text" as const, text: result.output || "Done" }],
+        content: [{ type: "text" as const, text: truncateOutput(result.output || "Done", maxChars) }],
         details: {},
       };
     },
