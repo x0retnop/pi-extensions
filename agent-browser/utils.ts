@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { platform } from "node:os";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -7,6 +7,27 @@ import type { AgentBrowserResult } from "./types.js";
 
 const AGENT_BROWSER_BIN = "agent-browser";
 const DEFAULT_TIMEOUT_MS = 60_000;
+const KILL_DELAY_MS = 5_000;
+
+function forceKill(child: ChildProcess): void {
+  if (!child || child.killed) return;
+  try {
+    if (platform() === "win32" && child.pid) {
+      // On Windows SIGTERM is unreliable for .exe processes; use taskkill.
+      spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], {
+        windowsHide: true,
+        detached: true,
+      });
+    } else {
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!child.killed) child.kill("SIGKILL");
+      }, KILL_DELAY_MS);
+    }
+  } catch {
+    // Ignore cleanup errors.
+  }
+}
 
 function findWindowsExe(): string {
   // 1. Look alongside this module under node_modules/agent-browser/bin
@@ -66,11 +87,23 @@ export async function runAgentBrowser(
 
     let stdout = "";
     let stderr = "";
+    let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
-      try {
-        child.kill("SIGTERM");
-      } catch {}
+      stdout += "\n[TIMEOUT: agent-browser did not finish within timeout; forcing termination]";
+      forceKill(child);
+      forceKillTimer = setTimeout(() => {
+        if (!child.killed) {
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+        }
+      }, KILL_DELAY_MS + 1_000);
     }, timeoutMs);
+
+    // Close stdin immediately; we never stream input to this variant.
+    try {
+      child.stdin?.end();
+    } catch {}
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf-8");
@@ -81,6 +114,7 @@ export async function runAgentBrowser(
 
     child.on("error", (err) => {
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       resolve({
         ok: false,
         output: "",
@@ -90,6 +124,7 @@ export async function runAgentBrowser(
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
       const combined = stdout || stderr;
       if (!combined.trim()) {
         resolve({

@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { runAgentBrowser, extraArgsToStrings, summarizeNetworkRequests, truncateOutput } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
-import { CUSTOM_STATE_TYPE } from "../types.js";
+import { CUSTOM_STATE_TYPE, DEFAULT_CDP_URL } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 
 interface RenderComponent {
@@ -52,7 +52,7 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
       "Set browser_network action:route before opening/navigating to catch initial requests.",
       "Use browser_network action:requests pattern:<glob> to inspect traffic. Default output is a summary; use full:true only when you need headers.",
       "Start har_start before actions and har_stop output_path:<path> to save a HAR.",
-      "Pass cdp_url on the first call; it is reused from the session afterwards.",
+      "The default CDP endpoint is http://127.0.0.1:9222/. Pass cdp_url only if you need a different Chrome instance. It is auto-reused afterwards.",
     ],
 
     renderCall(args: Record<string, unknown>, theme: Theme) {
@@ -68,7 +68,7 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
       resource_type: Type.Optional(Type.String({ description: "Comma-separated resource types for route" })),
       output_path: Type.Optional(Type.String({ description: "HAR file path for har_stop" })),
       session: Type.Optional(Type.String({ description: "Isolated session name" })),
-      cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" })),
+      cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome. Default: http://127.0.0.1:9222/" })),
       full: Type.Optional(Type.Boolean({ description: "Return full request details including headers (requests only). Default false/summary." })),
       max_output_chars: Type.Optional(Type.Number({ description: "Max characters to return. Default 50000." })),
       extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags passed after the action" })),
@@ -85,7 +85,7 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
       const session = params.session ? String(params.session) : undefined;
       const explicitCdp = params.cdp_url ? String(params.cdp_url) : undefined;
       const state = getLatestState(ctx);
-      const cdpUrl = explicitCdp || state.cdpUrl;
+      const cdpUrl = explicitCdp || state.cdpUrl || DEFAULT_CDP_URL;
       if (explicitCdp && explicitCdp !== state.cdpUrl) {
         pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...state, cdpUrl: explicitCdp }));
       }

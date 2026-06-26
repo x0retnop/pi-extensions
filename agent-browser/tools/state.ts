@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { runAgentBrowser, extraArgsToStrings, truncateOutput } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
-import { CUSTOM_STATE_TYPE } from "../types.js";
+import { CUSTOM_STATE_TYPE, DEFAULT_CDP_URL } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 
 interface RenderComponent {
@@ -57,7 +57,7 @@ export function createStateToolDefinition(pi: ExtensionAPI) {
       "Save auth with browser_state action:state_save path:<path> after login.",
       "Restore auth with browser_state action:state_load path:<path> on the next run.",
       "Set cookies with cookies_set before opening a page when you already have a session token.",
-      "Pass cdp_url on the first call; it is reused from the session afterwards.",
+      "The default CDP endpoint is http://127.0.0.1:9222/. Pass cdp_url only if you need a different Chrome instance. It is auto-reused afterwards.",
     ],
 
     renderCall(args: Record<string, unknown>, theme: Theme) {
@@ -72,7 +72,7 @@ export function createStateToolDefinition(pi: ExtensionAPI) {
       path: Type.Optional(Type.String({ description: "Cookie path or state file path" })),
       key: Type.Optional(Type.String({ description: "Storage key" })),
       session: Type.Optional(Type.String({ description: "Isolated session name" })),
-      cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" })),
+      cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome. Default: http://127.0.0.1:9222/" })),
       max_output_chars: Type.Optional(Type.Number({ description: "Max characters to return. Default 30000." })),
       extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags passed after the action" })),
     }),
@@ -88,7 +88,7 @@ export function createStateToolDefinition(pi: ExtensionAPI) {
       const session = params.session ? String(params.session) : undefined;
       const explicitCdp = params.cdp_url ? String(params.cdp_url) : undefined;
       const state = getLatestState(ctx);
-      const cdpUrl = explicitCdp || state.cdpUrl;
+      const cdpUrl = explicitCdp || state.cdpUrl || DEFAULT_CDP_URL;
       if (explicitCdp && explicitCdp !== state.cdpUrl) {
         pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...state, cdpUrl: explicitCdp }));
       }

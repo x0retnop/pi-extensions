@@ -36,3 +36,6 @@ export const TOOL_HINTS: Record<BrowserToolToggleKey, string> = {
 };
 
 export const CUSTOM_STATE_TYPE = "agent-browser-state";
+
+/** Default Chrome DevTools Protocol endpoint. Used when the user does not pass cdp_url. */
+export const DEFAULT_CDP_URL = "http://127.0.0.1:9222/";

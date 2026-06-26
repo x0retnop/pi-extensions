@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { runAgentBrowser, extraArgsToStrings, truncateOutput } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
-import { CUSTOM_STATE_TYPE } from "../types.js";
+import { CUSTOM_STATE_TYPE, DEFAULT_CDP_URL } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 
 interface RenderComponent {
@@ -50,7 +50,7 @@ export function createDebugToolDefinition(pi: ExtensionAPI) {
     "Run browser_debug action:console and action:errors after page interactions to catch frontend issues.",
     "Start trace_start before reproducing a bug, then trace_stop output_path:<path> to save it.",
     "React commands need the page opened with extra_args:[\"--enable\",\"react-devtools\"].",
-    "Pass cdp_url on the first call; it is reused from the session afterwards.",
+        "The default CDP endpoint is http://127.0.0.1:9222/. Pass cdp_url only if you need a different Chrome instance. It is auto-reused afterwards.",
   ],
 
   renderCall(args, theme) {
@@ -64,7 +64,7 @@ export function createDebugToolDefinition(pi: ExtensionAPI) {
     output_path: Type.Optional(Type.String({ description: "Trace file path for trace_stop" })),
     clear: Type.Optional(Type.Boolean({ description: "Clear console or error log" })),
     session: Type.Optional(Type.String({ description: "Isolated session name" })),
-    cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" })),
+    cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome. Default: http://127.0.0.1:9222/" })),
     max_output_chars: Type.Optional(Type.Number({ description: "Max characters to return. Default 30000." })),
     extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags passed after the action" })),
   }),
@@ -80,7 +80,7 @@ export function createDebugToolDefinition(pi: ExtensionAPI) {
     const session = params.session ? String(params.session) : undefined;
     const explicitCdp = params.cdp_url ? String(params.cdp_url) : undefined;
     const state = getLatestState(ctx);
-    const cdpUrl = explicitCdp || state.cdpUrl;
+    const cdpUrl = explicitCdp || state.cdpUrl || DEFAULT_CDP_URL;
     if (explicitCdp && explicitCdp !== state.cdpUrl) {
       pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...state, cdpUrl: explicitCdp }));
     }

@@ -11,7 +11,7 @@ import {
   AGENT_BROWSER_PATH,
 } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
-import { CUSTOM_STATE_TYPE } from "../types.js";
+import { CUSTOM_STATE_TYPE, DEFAULT_CDP_URL } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 
 interface RenderComponent {
@@ -83,7 +83,7 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
     promptGuidelines: [
       "Read the local skill file at agent-browser/skills/core.md before using browser tools.",
       "Use ONLY the Pi browser tools. Never run the agent-browser CLI directly from bash.",
-      "Connect to the user's already-running Chrome with cdp_url:\"http://127.0.0.1:9222/\" on the first call. It is auto-reused afterwards.",
+      "The default CDP endpoint is http://127.0.0.1:9222/. Pass cdp_url only if you need a different Chrome instance. It is auto-reused afterwards.",
       "Work with the user's existing tabs (browser action:tabs / tab:<id>). Do not launch a new browser and do not close the user's browser.",
       "Use @eN refs from the snapshot for click/fill/type/submit (e.g. @e3, not [ref=e3]); they fall back to the element's text/aria-label if stale.",
       "Navigation actions (open, tab, back, forward, reload) automatically wait for networkidle unless you set wait_after:false.",
@@ -118,7 +118,7 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
       session: Type.Optional(Type.String({ description: "Isolated session name" })),
       screenshot_path: Type.Optional(Type.String({ description: "Path to save screenshot" })),
       cdp_url: Type.Optional(
-        Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" }),
+        Type.String({ description: "CDP URL/port of an already-running Chrome. Default: http://127.0.0.1:9222/" }),
       ),
       wait: Type.Optional(
         Type.String({
@@ -148,7 +148,7 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
       const session = params.session ? String(params.session) : undefined;
       const explicitCdp = params.cdp_url ? String(params.cdp_url) : undefined;
       const state = getLatestState(ctx);
-      const cdpUrl = explicitCdp || state.cdpUrl;
+      const cdpUrl = explicitCdp || state.cdpUrl || DEFAULT_CDP_URL;
       if (explicitCdp && explicitCdp !== state.cdpUrl) {
         pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...state, cdpUrl: explicitCdp }));
       }

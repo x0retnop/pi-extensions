@@ -31,16 +31,16 @@ Do not use browser tools when a simpler tool can do the job. They are heavier an
 
 ## CDP URL
 
-Pass `cdp_url` on the first browser call. It is remembered for the whole session and reused automatically.
+The tools connect to the user's already-running Chrome at `http://127.0.0.1:9222/` by default. You can pass `cdp_url` only if you need a different Chrome instance.
 
 ```text
-browser action:tabs cdp_url:"http://127.0.0.1:9222/"
-browser action:tab tab:t2                           # cdp_url reused
-browser action:snapshot                             # cdp_url reused
+browser action:tabs                                 # default CDP used
+browser action:tab tab:t2                           # default CDP reused
+browser action:snapshot                             # default CDP reused
 ```
 
 - Use `http://127.0.0.1:9222/`, not `ws://...`.
-- Without `cdp_url` the tool launches its own bundled Chromium with a clean profile.
+- Without CDP the tool would launch its own bundled Chromium with a clean profile — avoid that unless you explicitly need an isolated session.
 - Do not mix `cdp_url` with `headed:true`.
 
 ## Core loop
