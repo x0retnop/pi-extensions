@@ -88,6 +88,7 @@ export async function runAgentBrowser(
     let stdout = "";
     let stderr = "";
     let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+    let hardResolveTimer: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       stdout += "\n[TIMEOUT: agent-browser did not finish within timeout; forcing termination]";
       forceKill(child);
@@ -98,7 +99,31 @@ export async function runAgentBrowser(
           } catch {}
         }
       }, KILL_DELAY_MS + 1_000);
+      hardResolveTimer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          resolve({
+            ok: false,
+            output: stdout,
+            error:
+              `agent-browser timed out and could not be killed. ` +
+              `cmd=${AGENT_BROWSER_PATH} ${fullArgs.join(" ")} ` +
+              `stdout_len=${stdout.length} stderr_len=${stderr.length} ` +
+              `stderr=${stderr.slice(0, 500)}`,
+          });
+        }
+      }, KILL_DELAY_MS + 5_000);
     }, timeoutMs);
+
+    let resolved = false;
+    function safeResolve(result: AgentBrowserResult) {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      if (hardResolveTimer) clearTimeout(hardResolveTimer);
+      resolve(result);
+    }
 
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf-8");
@@ -108,9 +133,7 @@ export async function runAgentBrowser(
     });
 
     child.on("error", (err) => {
-      clearTimeout(timer);
-      if (forceKillTimer) clearTimeout(forceKillTimer);
-      resolve({
+      safeResolve({
         ok: false,
         output: "",
         error: `Failed to start agent-browser: ${err.message}`,
@@ -118,11 +141,9 @@ export async function runAgentBrowser(
     });
 
     child.on("close", (code) => {
-      clearTimeout(timer);
-      if (forceKillTimer) clearTimeout(forceKillTimer);
       const combined = stdout || stderr;
       if (!combined.trim()) {
-        resolve({
+        safeResolve({
           ok: code === 0,
           output: "",
           error: code === 0 ? undefined : `agent-browser exited with code ${code}`,
@@ -134,23 +155,22 @@ export async function runAgentBrowser(
       try {
         parsed = JSON.parse(combined) as typeof parsed;
       } catch {
-        // Not JSON — return raw text.
-        resolve({ ok: code === 0, output: combined.trim(), error: stderr || undefined });
+        safeResolve({ ok: code === 0, output: combined.trim(), error: stderr || undefined });
         return;
       }
 
       if (parsed && typeof parsed === "object") {
         if (parsed.success === true) {
-          resolve({ ok: true, output: formatJsonData(parsed.data) });
+          safeResolve({ ok: true, output: formatJsonData(parsed.data) });
         } else {
-          resolve({
+          safeResolve({
             ok: false,
             output: "",
             error: typeof parsed.error === "string" ? parsed.error : "agent-browser error",
           });
         }
       } else {
-        resolve({ ok: code === 0, output: combined.trim(), error: stderr || undefined });
+        safeResolve({ ok: code === 0, output: combined.trim(), error: stderr || undefined });
       }
     });
   });
