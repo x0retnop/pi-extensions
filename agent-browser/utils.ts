@@ -100,11 +100,6 @@ export async function runAgentBrowser(
       }, KILL_DELAY_MS + 1_000);
     }, timeoutMs);
 
-    // Close stdin immediately; we never stream input to this variant.
-    try {
-      child.stdin?.end();
-    } catch {}
-
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf-8");
     });
