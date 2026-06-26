@@ -37,15 +37,15 @@ browser action:snapshot                             # cdp_url reused
 
 Navigation actions (`open`, `tab`, `back`, `forward`, `reload`) automatically wait for `networkidle` unless you set `wait_after:false`.
 
-After `click`, `fill`, `type`, or `submit` you can add `wait_after:<target>` to avoid a separate wait call:
+`click`, `fill`, `type`, and `submit` also auto-wait for `networkidle` after the action. You do not need a separate `browser action:wait` call after clicking or submitting a form. Override or disable it with `wait_after`:
 
 ```text
 browser action:click selector:@e3 wait_after:@e5
-browser action:fill selector:@e4 text:hello wait_after:500
+browser action:fill selector:@e4 text:hello wait_after:false
 browser action:submit selector:@e4 text:hello wait_after:networkidle
 ```
 
-`wait_after` accepts: `networkidle`, `domcontentloaded`, `load`, `@eN`/selector, `"some text"`, `"**/dashboard"`, `2000`.
+`wait_after` accepts: `networkidle`, `domcontentloaded`, `load`, `@eN`/selector, `"some text"`, `"**/dashboard"`, `2000`, or `false` to skip the default wait.
 
 ## Reading page text
 

@@ -83,6 +83,7 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
       "Pass cdp_url:\"http://127.0.0.1:9222/\" on the first call or whenever you attach to a different Chrome. It is auto-reused afterwards.",
       "Use @eN refs from the snapshot for click/fill/type/submit; they fall back to the element's text/aria-label if stale.",
       "Navigation actions (open, tab, back, forward, reload) automatically wait for networkidle unless you set wait_after:false.",
+      "click, fill, type, and submit also auto-wait for networkidle after the action; do not add a separate wait tool call unless you need a specific condition.",
       "After click/fill/type/submit on a dynamic page, re-snapshot before the next ref-based action.",
       "Use browser action:text to read visible page text instead of guessing selectors with eval.",
       "Use browser action:submit selector:<input> text:<message> for forms/chat inputs.",
@@ -290,6 +291,11 @@ function inferWaitAfter(params: Record<string, unknown>, action: string): string
     return w === "false" ? undefined : w;
   }
   if (NAVIGATION_ACTIONS.has(action)) {
+    return "networkidle";
+  }
+  // Interaction actions often trigger dynamic updates; give the page a chance
+  // to settle before the agent reads or acts again.
+  if (["click", "fill", "type", "submit"].includes(action)) {
     return "networkidle";
   }
   return undefined;
