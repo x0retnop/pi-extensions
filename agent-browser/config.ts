@@ -27,9 +27,12 @@ export function normalizeState(data: Partial<AgentBrowserState> | undefined): Ag
   const def = getDefaultState();
   if (!data || typeof data !== "object") return def;
   const enabled = data.enabled;
-  if (!enabled || typeof enabled !== "object") return def;
-  for (const key of BROWSER_TOOLS) {
-    def.enabled[key] = Boolean(enabled[key]);
+  if (enabled && typeof enabled === "object") {
+    for (const key of BROWSER_TOOLS) {
+      def.enabled[key] = Boolean(enabled[key]);
+    }
   }
+  if (typeof data.cdpUrl === "string") def.cdpUrl = data.cdpUrl;
+  if (typeof data.lastSnapshot === "string") def.lastSnapshot = data.lastSnapshot;
   return def;
 }

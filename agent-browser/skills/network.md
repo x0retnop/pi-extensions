@@ -1,23 +1,36 @@
-# Network
+# Browser network guide
 
-`browser_network` tool actions.
+Use `browser_network` to intercept, mock, block, or record traffic.
 
-## Actions
+## Route and mock
 
-- `route pattern:<glob> body:<json>` — mock a response.
-- `route pattern:<glob> abort:true` — block requests.
-- `route pattern:<glob> resource_type:<csv>` — limit to resource types.
-- `unroute pattern:<glob>` — remove route.
-- `requests` — list captured requests.
-- `requests pattern:<glob>` — filter requests.
-- `har_start` — start HAR recording.
-- `har_stop output_path:<path>` — stop and save HAR.
+```text
+browser_network action:route pattern:"**/api/users" body:'{"users":[]}'
+browser_network action:route pattern:"**/analytics" abort:true
+browser_network action:route pattern:"*.png" abort:true resource_type:image
+```
 
-## Workflow
+Set routes **before** opening/navigating the page to affect initial requests.
 
-1. `browser_network action:route pattern:"**/api/users" body:'{"users":[]}'`
-2. Load or interact with the page.
-3. `browser_network action:requests` to inspect traffic.
-4. `browser_network action:har_stop output_path:./trace.har`
+## Inspect traffic
 
-Set routes before opening/navigating so they apply to initial requests.
+```text
+browser_network action:requests
+browser_network action:requests pattern:"**/api/**"
+browser_network action:requests clear:true
+```
+
+## HAR recording
+
+```text
+browser_network action:har_start
+# ... interact ...
+browser_network action:har_stop output_path:./trace.har
+```
+
+## Tips
+
+- `pattern` uses glob syntax (`**`, `*`).
+- `resource_type` is a comma-separated list (xhr, fetch, document, script, image, etc.).
+- Use `cdp_url` to attach to your own Chrome.
+- Without a `pattern`, `route` matches all requests; be careful not to break the page.

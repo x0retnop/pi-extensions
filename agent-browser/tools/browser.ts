@@ -1,8 +1,48 @@
 import { spawn } from "node:child_process";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { runAgentBrowser, parseWaitOption, sanitizeSelector, extraArgsToStrings } from "../utils.js";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+  runAgentBrowser,
+  parseWaitOption,
+  sanitizeSelector,
+  extraArgsToStrings,
+  AGENT_BROWSER_PATH,
+} from "../utils.js";
+import { getLatestState, normalizeState } from "../config.js";
+import { CUSTOM_STATE_TYPE } from "../types.js";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+
+interface RenderComponent {
+  render(width: number): string[];
+  invalidate(): void;
+}
+
+function makePlainText(text: string): RenderComponent {
+  return {
+    render(width: number) {
+      return text ? [text.length > width ? text.slice(0, width - 1) + "…" : text] : [];
+    },
+    invalidate() {},
+  };
+}
+
+function formatBrowserCall(args: Record<string, unknown>, theme: Theme): RenderComponent {
+  const action = String(args.action ?? "?");
+  const parts: string[] = [];
+  if (args.url) parts.push(`url=${String(args.url).slice(0, 40)}`);
+  if (args.selector) parts.push(`selector=${String(args.selector).slice(0, 30)}`);
+  if (args.text) parts.push(`text="${String(args.text).slice(0, 30)}"`);
+  if (args.tab) parts.push(`tab=${String(args.tab)}`);
+  if (args.wait_after) parts.push(`wait_after=${String(args.wait_after).slice(0, 25)}`);
+  if (args.wait) parts.push(`wait=${String(args.wait).slice(0, 25)}`);
+  if (args.screenshot_path) parts.push(`screenshot=${String(args.screenshot_path).slice(0, 25)}`);
+  if (args.cdp_url) parts.push(`cdp_url=${String(args.cdp_url)}`);
+  if (args.session) parts.push(`session=${String(args.session)}`);
+
+  const title = theme.fg("toolTitle", theme.bold(`browser ${action}`));
+  const detail = parts.length > 0 ? theme.fg("dim", ` • ${parts.join(" · ")}`) : "";
+  return makePlainText(`${title}${detail}`);
+}
 
 const Actions = StringEnum(
   [
@@ -12,144 +52,293 @@ const Actions = StringEnum(
     "fill",
     "type",
     "eval",
+    "text",
+    "submit",
     "screenshot",
     "close",
     "back",
     "forward",
     "reload",
     "wait",
+    "tabs",
+    "tab",
   ],
   { description: "Browser action to perform" },
 );
 
-export const browserToolDefinition = {
-  name: "browser",
-  label: "Browser",
-  description:
-    "Core browser automation via agent-browser. Open pages, take accessibility snapshots, " +
-    "click/fill/type elements, evaluate JS, take screenshots, and manage the session. " +
-    "Always start with open or snapshot; snapshot -i after every page change because refs go stale.",
-  promptGuidelines: [
-    "Start with open(url) or snapshot.",
-    "Use snapshot with interactive:true to discover @eN refs.",
-    "After navigation or click, snapshot again — refs become stale.",
-    "Prefer @eN refs over CSS selectors.",
-    "Always close when done to free the session.",
-  ],
-  parameters: Type.Object({
-    action: Actions,
-    url: Type.Optional(Type.String({ description: "URL for open" })),
-    selector: Type.Optional(Type.String({ description: "CSS selector or @eN ref for click/fill/type" })),
-    text: Type.Optional(Type.String({ description: "Text for fill/type/eval" })),
-    interactive: Type.Optional(Type.Boolean({ description: "snapshot: show only interactive elements (default true)" })),
-    headed: Type.Optional(Type.Boolean({ description: "Show browser window (default false/headless)" })),
-    session: Type.Optional(Type.String({ description: "Isolated session name" })),
-    screenshot_path: Type.Optional(Type.String({ description: "Path to save screenshot" })),
-    wait: Type.Optional(
-      Type.String({
-        description:
-          "Wait target: ms number, selector/ref, text, url glob, networkidle/domcontentloaded/load, or JS expression",
-      }),
-    ),
-    extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags" })),
-  }),
+const NAVIGATION_ACTIONS = new Set(["open", "tab", "back", "forward", "reload"]);
 
-  async execute(
-    _toolCallId: string,
-    params: Record<string, unknown>,
-    _signal: AbortSignal | undefined,
-    _onUpdate: unknown,
-    _ctx: ExtensionContext,
-  ) {
-    const action = String(params.action ?? "");
-    const session = params.session ? String(params.session) : undefined;
-    const extra = extraArgsToStrings(params.extra_args);
-    if (params.headed === true) extra.push("--headed");
+export function createBrowserToolDefinition(pi: ExtensionAPI) {
+  return {
+    name: "browser",
+    label: "Browser",
+    promptSnippet:
+      "browser action:open|snapshot|tabs|tab|click|fill|type|submit|eval|text|screenshot|close|wait ...",
+    description:
+      "Core browser automation via agent-browser. Open pages, take accessibility snapshots, " +
+      "click/fill/type/submit elements, evaluate JS, read visible text, take screenshots, manage tabs, " +
+      "and control sessions. Pass cdp_url once; it is remembered for the session.",
+    promptGuidelines: [
+      "Read the local skill file at agent-browser/skills/core.md before using browser tools.",
+      "Pass cdp_url:\"http://127.0.0.1:9222/\" on the first call or whenever you attach to a different Chrome. It is auto-reused afterwards.",
+      "Use @eN refs from the snapshot for click/fill/type/submit; they fall back to the element's text/aria-label if stale.",
+      "Navigation actions (open, tab, back, forward, reload) automatically wait for networkidle unless you set wait_after:false.",
+      "After click/fill/type/submit on a dynamic page, re-snapshot before the next ref-based action.",
+      "Use browser action:text to read visible page text instead of guessing selectors with eval.",
+      "Use browser action:submit selector:<input> text:<message> for forms/chat inputs.",
+      "Always close the session when done.",
+    ],
 
-    let result: { ok: boolean; output: string; error?: string };
+    renderCall(args: Record<string, unknown>, theme: Theme) {
+      return formatBrowserCall(args, theme);
+    },
 
-    switch (action) {
-      case "open": {
-        if (!params.url) return errorResult("open requires url");
-        result = await runAgentBrowser(["open", String(params.url), ...extra], session);
-        break;
+    parameters: Type.Object({
+      action: Actions,
+      url: Type.Optional(Type.String({ description: "URL for open" })),
+      selector: Type.Optional(
+        Type.String({
+          description:
+            "CSS selector, @eN ref, or text/label for click/fill/type/submit. " +
+            "Examples: @e3, #submit, [aria-label=Send], \"Submit\", \"text=Click me\"",
+        }),
+      ),
+      text: Type.Optional(Type.String({ description: "Text for fill/type/eval/submit" })),
+      tab: Type.Optional(Type.String({ description: "Tab id or label to switch to (action:tab)" })),
+      interactive: Type.Optional(Type.Boolean({ description: "snapshot: show only interactive elements (default true)" })),
+      headed: Type.Optional(Type.Boolean({ description: "Show browser window (default false/headless)" })),
+      session: Type.Optional(Type.String({ description: "Isolated session name" })),
+      screenshot_path: Type.Optional(Type.String({ description: "Path to save screenshot" })),
+      cdp_url: Type.Optional(
+        Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" }),
+      ),
+      wait: Type.Optional(
+        Type.String({
+          description:
+            "Wait target: ms number, selector/ref, text, url glob, networkidle/domcontentloaded/load, or JS expression",
+        }),
+      ),
+      wait_after: Type.Optional(
+        Type.String({
+          description:
+            "After the action completes, wait for this target (networkidle, selector/ref, text, url glob, or ms). " +
+            "Set to 'false' to disable the default navigation wait. " +
+            "Use after click/fill/type/submit to avoid an extra wait tool call.",
+        }),
+      ),
+      extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags passed after the action" })),
+    }),
+
+    async execute(
+      _toolCallId: string,
+      params: Record<string, unknown>,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
+      const action = String(params.action ?? "");
+      const session = params.session ? String(params.session) : undefined;
+      const explicitCdp = params.cdp_url ? String(params.cdp_url) : undefined;
+      const state = getLatestState(ctx);
+      const cdpUrl = explicitCdp || state.cdpUrl;
+      if (explicitCdp && explicitCdp !== state.cdpUrl) {
+        pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...state, cdpUrl: explicitCdp }));
       }
-      case "snapshot": {
-        const args = ["snapshot"];
-        if (params.interactive !== false) args.push("-i");
-        args.push(...extra);
-        result = await runAgentBrowser(args, session);
-        break;
-      }
-      case "click":
-      case "fill":
-      case "type": {
-        if (!params.selector) return errorResult(`${action} requires selector`);
-        const sel = sanitizeSelector(String(params.selector));
-        if (action === "click") {
-          result = await runAgentBrowser(["click", sel, ...extra], session);
-        } else {
-          if (params.text === undefined) return errorResult(`${action} requires text`);
-          result = await runAgentBrowser([action, sel, String(params.text), ...extra], session);
+      const extra = extraArgsToStrings(params.extra_args);
+      if (params.headed === true) extra.push("--headed");
+
+      let result: { ok: boolean; output: string; error?: string };
+      let snapshotOutput = "";
+
+      switch (action) {
+        case "open": {
+          if (!params.url) return errorResult("open requires url");
+          result = await runAgentBrowser(["open", String(params.url), ...extra], session, cdpUrl);
+          break;
         }
-        break;
+        case "snapshot": {
+          const args = ["snapshot"];
+          if (params.interactive !== false) args.push("-i");
+          args.push(...extra);
+          result = await runAgentBrowser(args, session, cdpUrl);
+          snapshotOutput = result.ok ? result.output : "";
+          break;
+        }
+        case "tabs": {
+          result = await runAgentBrowser(["tab", ...extra], session, cdpUrl);
+          break;
+        }
+        case "tab": {
+          if (!params.tab) return errorResult("tab requires tab parameter");
+          result = await runAgentBrowser(["tab", String(params.tab), ...extra], session, cdpUrl);
+          break;
+        }
+        case "click":
+        case "fill":
+        case "type": {
+          if (!params.selector) return errorResult(`${action} requires selector`);
+          const sel = resolveSelector(String(params.selector), state.lastSnapshot);
+          if (action === "click") {
+            result = await runAgentBrowser(["click", sel, ...extra], session, cdpUrl);
+          } else {
+            if (params.text === undefined) return errorResult(`${action} requires text`);
+            result = await runAgentBrowser([action, sel, String(params.text), ...extra], session, cdpUrl);
+          }
+          break;
+        }
+        case "submit": {
+          if (!params.selector) return errorResult("submit requires selector (input field)");
+          if (params.text === undefined) return errorResult("submit requires text");
+          const inputSel = resolveSelector(String(params.selector), state.lastSnapshot);
+          const fillResult = await runAgentBrowser(["fill", inputSel, String(params.text), ...extra], session, cdpUrl);
+          if (!fillResult.ok) {
+            result = fillResult;
+            break;
+          }
+          const sendSel = findSendButtonSelector(state.lastSnapshot) || 'button[aria-label="Send"], button[aria-label="Отправить"]';
+          result = await runAgentBrowser(["click", sendSel, ...extra], session, cdpUrl);
+          if (!result.ok) {
+            result = await runAgentBrowser(
+              ["click", 'button[type="submit"], button:has-text("Send"), button:has-text("Отправить")', ...extra],
+              session,
+              cdpUrl,
+            );
+          }
+          break;
+        }
+        case "eval": {
+          if (params.text === undefined) return errorResult("eval requires text");
+          const code = String(params.text);
+          result = await runAgentBrowserEval(code, session, extra, cdpUrl);
+          break;
+        }
+        case "text": {
+          result = await runAgentBrowserEval(
+            "(() => { const main = document.querySelector('main') || document.body; return main.innerText.slice(0, 16000); })()",
+            session,
+            extra,
+            cdpUrl,
+          );
+          break;
+        }
+        case "screenshot": {
+          const args = ["screenshot"];
+          if (params.screenshot_path) args.push(String(params.screenshot_path));
+          args.push(...extra);
+          result = await runAgentBrowser(args, session, cdpUrl);
+          break;
+        }
+        case "close": {
+          result = await runAgentBrowser(["close", ...extra], session, cdpUrl);
+          break;
+        }
+        case "back":
+        case "forward":
+        case "reload": {
+          result = await runAgentBrowser([action, ...extra], session, cdpUrl);
+          break;
+        }
+        case "wait": {
+          if (!params.wait) return errorResult("wait requires wait parameter");
+          result = await runAgentBrowser(parseWaitOption(String(params.wait)).concat(extra), session, cdpUrl);
+          break;
+        }
+        default:
+          return errorResult(`Unknown action: ${action}`);
       }
-      case "eval": {
-        if (params.text === undefined) return errorResult("eval requires text");
-        const code = String(params.text);
-        result = await runAgentBrowserEval(code, session, extra);
-        break;
-      }
-      case "screenshot": {
-        const args = ["screenshot"];
-        if (params.screenshot_path) args.push(String(params.screenshot_path));
-        args.push(...extra);
-        result = await runAgentBrowser(args, session);
-        break;
-      }
-      case "close": {
-        result = await runAgentBrowser(["close", ...extra], session);
-        break;
-      }
-      case "back":
-      case "forward":
-      case "reload": {
-        result = await runAgentBrowser([action, ...extra], session);
-        break;
-      }
-      case "wait": {
-        if (!params.wait) return errorResult("wait requires wait parameter");
-        result = await runAgentBrowser(parseWaitOption(String(params.wait)).concat(extra), session);
-        break;
-      }
-      default:
-        return errorResult(`Unknown action: ${action}`);
-    }
 
-    if (!result.ok) {
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: result.error || "Browser command failed" }],
+          details: { error: result.error },
+        };
+      }
+
+      // Cache snapshot for @eN fallback.
+      if (action === "snapshot" && snapshotOutput) {
+        pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...getLatestState(ctx), lastSnapshot: snapshotOutput }));
+      }
+
+      // Auto-wait after navigation actions by default.
+      const waitAfter = inferWaitAfter(params, action);
+      if (waitAfter && waitAfter !== "false") {
+        const waitResult = await runAgentBrowser(parseWaitOption(waitAfter).concat(extra), session, cdpUrl);
+        if (!waitResult.ok) {
+          result = {
+            ok: true,
+            output: result.output + `\n(auto-wait '${waitAfter}' did not resolve: ${waitResult.error})`,
+          };
+        } else {
+          result = {
+            ok: true,
+            output: result.output + `\n(auto-waited: ${waitAfter})`,
+          };
+        }
+      }
+
       return {
-        content: [{ type: "text" as const, text: result.error || "Browser command failed" }],
-        details: { error: result.error },
+        content: [{ type: "text" as const, text: result.output || "Done" }],
+        details: {},
       };
+    },
+  };
+}
+
+function inferWaitAfter(params: Record<string, unknown>, action: string): string | undefined {
+  if (params.wait_after !== undefined) {
+    const w = String(params.wait_after);
+    return w === "false" ? undefined : w;
+  }
+  if (NAVIGATION_ACTIONS.has(action)) {
+    return "networkidle";
+  }
+  return undefined;
+}
+
+function resolveSelector(selector: string, lastSnapshot?: string): string {
+  const trimmed = selector.trim();
+  if (!trimmed.startsWith("@") || !lastSnapshot) return sanitizeSelector(trimmed);
+
+  const ref = trimmed;
+  const line = lastSnapshot.split("\n").find((l) => l.includes(`[ref=${ref.slice(1)}]`));
+  if (!line) return sanitizeSelector(trimmed);
+
+  const ariaMatch = line.match(/aria-label="([^"]+)"/);
+  if (ariaMatch) return `[aria-label="${ariaMatch[1]}"]`;
+
+  const textMatch = line.match(/"([^"]{3,})"/);
+  if (textMatch) return `text=${textMatch[1]}`;
+
+  return sanitizeSelector(trimmed);
+}
+
+function findSendButtonSelector(lastSnapshot?: string): string | undefined {
+  if (!lastSnapshot) return undefined;
+  const lines = lastSnapshot.split("\n");
+  for (const line of lines) {
+    if (/Отправить|Send/i.test(line)) {
+      const ariaMatch = line.match(/aria-label="([^"]+)"/);
+      if (ariaMatch) return `[aria-label="${ariaMatch[1]}"]`;
+      const textMatch = line.match(/"([^"]{3,})"/);
+      if (textMatch) return `text=${textMatch[1]}`;
     }
-    return {
-      content: [{ type: "text" as const, text: result.output || "Done" }],
-      details: {},
-    };
-  },
-};
+  }
+  return undefined;
+}
 
 async function runAgentBrowserEval(
   code: string,
   session: string | undefined,
   extra: string[],
+  cdpUrl: string | undefined,
 ): Promise<{ ok: boolean; output: string; error?: string }> {
   const fullArgs: string[] = [];
+  if (cdpUrl) fullArgs.push("--cdp", cdpUrl);
   if (session) fullArgs.push("--session", session);
   fullArgs.push("eval", "--stdin", ...extra, "--json");
 
   return new Promise((resolve) => {
-    const child = spawn("agent-browser", fullArgs, {
+    const child = spawn(AGENT_BROWSER_PATH, fullArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
       windowsHide: true,

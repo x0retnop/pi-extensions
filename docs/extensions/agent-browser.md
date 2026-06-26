@@ -4,9 +4,9 @@ Gated wrapper around the `agent-browser` CLI.
 
 ## What it does
 
-- Registers five Pi tools: `browser`, `browser_network`, `browser_state`, `browser_debug`, `browser_help`.
+- Registers four Pi tools: `browser`, `browser_network`, `browser_state`, `browser_debug`.
 - Tools are **inactive by default**. Enable them via `/browser` TUI.
-- `browser_help` is active only when at least one browser tool is enabled.
+- Skills are in `agent-browser/skills/*.md`; read `core.md` first.
 - State is stored per session as `agent-browser-state` custom entries.
 
 ## Commands
@@ -21,14 +21,14 @@ Gated wrapper around the `agent-browser` CLI.
 | `browser_network` | Network interception | route, unroute, requests, har_start, har_stop |
 | `browser_state` | Cookies / storage / auth | cookies, cookies_set, cookies_clear, storage_local, storage_session, state_save, state_load |
 | `browser_debug` | Debugging / introspection | cdp_url, console, errors, trace_start, trace_stop, react_tree, react_inspect, vitals |
-| `browser_help` | Skill help | load `skills/*.md` topics: map, web_automation, network, state, debug |
 
 ## Important behaviors
 
 - All CLI calls use `agent-browser ... --json` and are spawned directly via `child_process.spawn` (no shell) to avoid `simple-gate` interference.
 - Default timeout is 60 seconds.
 - The extension does not write files outside the session; no global `agent-browser.json` config.
-- Tool descriptions and prompt guidelines are trimmed to keep prompt size small.
+- Tool descriptions, prompt snippets, and prompt guidelines are kept compact to avoid bloating the system prompt.
+- Every browser tool accepts `cdp_url` to attach to an already-running Chrome with remote debugging enabled.
 
 ## Sessions
 
@@ -39,12 +39,16 @@ Always call `browser action:close` when done.
 ## Reusing your existing Chrome
 
 `agent-browser` downloads and uses its own Chromium by default. To reuse your
-logged-in Chrome:
+logged-in Chrome, launch it with a separate user-data dir and remote debugging
+port (see `agent-browser/BROWSER-INTEGRATION.md`), then pass `cdp_url` to any
+browser tool:
 
-- Pass `extra_args:["--auto-connect"]` to `browser action:open`. Chrome must
-  already be running with remote debugging enabled.
-- Or save/load auth state with `browser_state action:state_save` /
-  `browser_state action:state_load`.
+```text
+browser action:open url:https://grok.com cdp_url:http://127.0.0.1:9222/
+```
+
+You can also save/load auth state with `browser_state action:state_save` /
+`browser_state action:state_load`.
 
 ## Source
 

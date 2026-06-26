@@ -3,20 +3,16 @@ import type { Component, TUI, KeybindingsManager } from "@earendil-works/pi-tui"
 import { setStatusBlock } from "../common/status.js";
 import { getLatestState, normalizeState } from "./config.js";
 import { MainScreen } from "./ui/main-screen.js";
-import { browserToolDefinition } from "./tools/browser.js";
-import { networkToolDefinition } from "./tools/network.js";
-import { stateToolDefinition } from "./tools/state.js";
-import { debugToolDefinition } from "./tools/debug.js";
-import { helpToolDefinition } from "./tools/help.js";
+import { createBrowserToolDefinition } from "./tools/browser.js";
+import { createNetworkToolDefinition } from "./tools/network.js";
+import { createStateToolDefinition } from "./tools/state.js";
+import { createDebugToolDefinition } from "./tools/debug.js";
 import {
   BROWSER_TOOLS,
-  HELP_TOOL,
   CUSTOM_STATE_TYPE,
   TOOL_LABELS,
   type AgentBrowserState,
 } from "./types.js";
-
-const ALL_BROWSER_TOOLS = [...BROWSER_TOOLS, HELP_TOOL];
 
 export default function agentBrowserExtension(pi: ExtensionAPI) {
   function notify(ctx: ExtensionContext | ExtensionCommandContext, message: string, type: "info" | "warning" | "error" = "info") {
@@ -25,12 +21,10 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
 
   function applyBrowserTools(state: AgentBrowserState): string[] {
     const active = new Set(pi.getActiveTools());
-    for (const t of ALL_BROWSER_TOOLS) active.delete(t);
+    for (const key of BROWSER_TOOLS) active.delete(key);
     for (const key of BROWSER_TOOLS) {
       if (state.enabled[key]) active.add(key);
     }
-    const anyEnabled = BROWSER_TOOLS.some((k) => state.enabled[k]);
-    if (anyEnabled) active.add(HELP_TOOL);
     return [...active];
   }
 
@@ -46,12 +40,26 @@ export default function agentBrowserExtension(pi: ExtensionAPI) {
     setStatusBlock(ctx, "browser", BROWSER_TOOLS.some((k) => state.enabled[k]) ? "browser:on" : undefined);
   }
 
+  function getCdpUrl(ctx: ExtensionContext): string | undefined {
+    return getLatestState(ctx).cdpUrl;
+  }
+
+  function setCdpUrl(ctx: ExtensionContext, cdpUrl: string | undefined): void {
+    if (!cdpUrl) return;
+    const state = getLatestState(ctx);
+    if (state.cdpUrl === cdpUrl) return;
+    persistAndSync(ctx, { ...state, cdpUrl });
+  }
+
   // Register all tool definitions so they exist in pi.getAllTools().
-  pi.registerTool(browserToolDefinition);
-  pi.registerTool(networkToolDefinition);
-  pi.registerTool(stateToolDefinition);
-  pi.registerTool(debugToolDefinition);
-  pi.registerTool(helpToolDefinition);
+  pi.registerTool(createBrowserToolDefinition(pi));
+  pi.registerTool(createNetworkToolDefinition(pi));
+  pi.registerTool(createStateToolDefinition(pi));
+  pi.registerTool(createDebugToolDefinition(pi));
+
+  pi.events.on("agent-browser:set-cdp-url", ({ ctx, cdpUrl }: { ctx: ExtensionContext; cdpUrl: string }) => {
+    setCdpUrl(ctx, cdpUrl);
+  });
 
   pi.on("session_start", (_event, ctx) => {
     syncActiveTools(ctx);

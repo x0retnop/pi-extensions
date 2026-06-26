@@ -1,104 +1,153 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { runAgentBrowser, extraArgsToStrings } from "../utils.js";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLatestState, normalizeState } from "../config.js";
+import { CUSTOM_STATE_TYPE } from "../types.js";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+
+interface RenderComponent {
+  render(width: number): string[];
+  invalidate(): void;
+}
+
+function makePlainText(text: string): RenderComponent {
+  return {
+    render(width: number) {
+      return text ? [text.length > width ? text.slice(0, width - 1) + "…" : text] : [];
+    },
+    invalidate() {},
+  };
+}
+
+function formatNetworkCall(args: Record<string, unknown>, theme: Theme): RenderComponent {
+  const action = String(args.action ?? "?");
+  const parts: string[] = [];
+  if (args.pattern) parts.push(`pattern=${String(args.pattern).slice(0, 35)}`);
+  if (args.abort === true) parts.push("abort");
+  if (args.clear === true) parts.push("clear");
+  if (args.body) parts.push("body=...");
+  if (args.output_path) parts.push(`out=${String(args.output_path).slice(0, 25)}`);
+  if (args.cdp_url) parts.push(`cdp_url=${String(args.cdp_url)}`);
+
+  const title = theme.fg("toolTitle", theme.bold(`browser_network ${action}`));
+  const detail = parts.length > 0 ? theme.fg("dim", ` • ${parts.join(" · ")}`) : "";
+  return makePlainText(`${title}${detail}`);
+}
 
 const Actions = StringEnum(
   ["route", "unroute", "requests", "har_start", "har_stop"],
   { description: "Network action to perform" },
 );
 
-export const networkToolDefinition = {
-  name: "browser_network",
-  label: "Browser Network",
-  description:
-    "Intercept and inspect network traffic in the active browser session. " +
-    "Route/unroute URLs, list captured requests, and record HAR files.",
-  promptGuidelines: [
-    "Use route to mock APIs or block trackers before opening/navigating a page.",
-    "Use requests to see what the page loaded.",
-    "Start har_start before actions and har_stop to save the recording.",
-  ],
-  parameters: Type.Object({
-    action: Actions,
-    pattern: Type.Optional(Type.String({ description: "URL glob pattern for route/unroute/requests filter" })),
-    abort: Type.Optional(Type.Boolean({ description: "Abort matching requests instead of mocking" })),
-    body: Type.Optional(Type.String({ description: "JSON response body for route mock" })),
-    resource_type: Type.Optional(Type.String({ description: "Comma-separated resource types for route" })),
-    output_path: Type.Optional(Type.String({ description: "HAR file path for har_stop" })),
-    session: Type.Optional(Type.String({ description: "Isolated session name" })),
-    extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags" })),
-  }),
+export function createNetworkToolDefinition(pi: ExtensionAPI) {
+  return {
+    name: "browser_network",
+    label: "Browser Network",
+    promptSnippet: "browser_network action:route|unroute|requests|har_start|har_stop ...",
+    description:
+      "Intercept and inspect network traffic in the active browser session. " +
+      "Route/unroute URLs, list captured requests, and record HAR files. " +
+      "Set routes before opening/navigating a page to catch initial requests.",
+    promptGuidelines: [
+      "Set browser_network action:route before opening/navigating to catch initial requests.",
+      "Use browser_network action:requests pattern:<glob> to inspect traffic.",
+      "Start har_start before actions and har_stop output_path:<path> to save a HAR.",
+      "Pass cdp_url on the first call; it is reused from the session afterwards.",
+    ],
 
-  async execute(
-    _toolCallId: string,
-    params: Record<string, unknown>,
-    _signal: AbortSignal | undefined,
-    _onUpdate: unknown,
-    _ctx: ExtensionContext,
-  ) {
-    const action = String(params.action ?? "");
-    const session = params.session ? String(params.session) : undefined;
-    const extra = extraArgsToStrings(params.extra_args);
+    renderCall(args: Record<string, unknown>, theme: Theme) {
+      return formatNetworkCall(args, theme);
+    },
 
-    let result: { ok: boolean; output: string; error?: string };
+    parameters: Type.Object({
+      action: Actions,
+      pattern: Type.Optional(Type.String({ description: "URL glob pattern for route/unroute/requests filter" })),
+      abort: Type.Optional(Type.Boolean({ description: "Abort matching requests instead of mocking" })),
+      clear: Type.Optional(Type.Boolean({ description: "Clear captured requests log (requests only)" })),
+      body: Type.Optional(Type.String({ description: "JSON response body for route mock" })),
+      resource_type: Type.Optional(Type.String({ description: "Comma-separated resource types for route" })),
+      output_path: Type.Optional(Type.String({ description: "HAR file path for har_stop" })),
+      session: Type.Optional(Type.String({ description: "Isolated session name" })),
+      cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" })),
+      extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags passed after the action" })),
+    }),
 
-    switch (action) {
-      case "route": {
-        if (!params.pattern) return errorResult("route requires pattern");
-        const args = ["network", "route", String(params.pattern)];
-        if (params.abort === true) {
-          args.push("--abort");
-        } else if (typeof params.body === "string") {
-          args.push("--body", params.body);
+    async execute(
+      _toolCallId: string,
+      params: Record<string, unknown>,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ) {
+      const action = String(params.action ?? "");
+      const session = params.session ? String(params.session) : undefined;
+      const explicitCdp = params.cdp_url ? String(params.cdp_url) : undefined;
+      const state = getLatestState(ctx);
+      const cdpUrl = explicitCdp || state.cdpUrl;
+      if (explicitCdp && explicitCdp !== state.cdpUrl) {
+        pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...state, cdpUrl: explicitCdp }));
+      }
+      const extra = extraArgsToStrings(params.extra_args);
+
+      let result: { ok: boolean; output: string; error?: string };
+
+      switch (action) {
+        case "route": {
+          if (!params.pattern) return errorResult("route requires pattern");
+          const args = ["network", "route", String(params.pattern)];
+          if (params.abort === true) {
+            args.push("--abort");
+          } else if (typeof params.body === "string") {
+            args.push("--body", params.body);
+          }
+          if (params.resource_type) args.push("--resource-type", String(params.resource_type));
+          args.push(...extra);
+          result = await runAgentBrowser(args, session, cdpUrl);
+          break;
         }
-        if (params.resource_type) args.push("--resource-type", String(params.resource_type));
-        args.push(...extra);
-        result = await runAgentBrowser(args, session);
-        break;
+        case "unroute": {
+          const args = ["network", "unroute"];
+          if (params.pattern) args.push(String(params.pattern));
+          args.push(...extra);
+          result = await runAgentBrowser(args, session, cdpUrl);
+          break;
+        }
+        case "requests": {
+          const args = ["network", "requests"];
+          if (params.pattern) args.push("--filter", String(params.pattern));
+          if (params.clear === true) args.push("--clear");
+          args.push(...extra);
+          result = await runAgentBrowser(args, session, cdpUrl);
+          break;
+        }
+        case "har_start": {
+          result = await runAgentBrowser(["network", "har", "start", ...extra], session, cdpUrl);
+          break;
+        }
+        case "har_stop": {
+          const args = ["network", "har", "stop"];
+          if (params.output_path) args.push(String(params.output_path));
+          args.push(...extra);
+          result = await runAgentBrowser(args, session, cdpUrl);
+          break;
+        }
+        default:
+          return errorResult(`Unknown action: ${action}`);
       }
-      case "unroute": {
-        const args = ["network", "unroute"];
-        if (params.pattern) args.push(String(params.pattern));
-        args.push(...extra);
-        result = await runAgentBrowser(args, session);
-        break;
-      }
-      case "requests": {
-        const args = ["network", "requests"];
-        if (params.pattern) args.push("--filter", String(params.pattern));
-        if (params.abort === true) args.push("--clear");
-        args.push(...extra);
-        result = await runAgentBrowser(args, session);
-        break;
-      }
-      case "har_start": {
-        result = await runAgentBrowser(["network", "har", "start", ...extra], session);
-        break;
-      }
-      case "har_stop": {
-        const args = ["network", "har", "stop"];
-        if (params.output_path) args.push(String(params.output_path));
-        args.push(...extra);
-        result = await runAgentBrowser(args, session);
-        break;
-      }
-      default:
-        return errorResult(`Unknown action: ${action}`);
-    }
 
-    if (!result.ok) {
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: result.error || "Network command failed" }],
+          details: { error: result.error },
+        };
+      }
       return {
-        content: [{ type: "text" as const, text: result.error || "Network command failed" }],
-        details: { error: result.error },
+        content: [{ type: "text" as const, text: result.output || "Done" }],
+        details: {},
       };
-    }
-    return {
-      content: [{ type: "text" as const, text: result.output || "Done" }],
-      details: {},
-    };
-  },
-};
+    },
+  };
+}
 
 function errorResult(message: string) {
   return {

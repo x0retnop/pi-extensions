@@ -1,21 +1,40 @@
-# State
+# Browser state guide
 
-`browser_state` tool actions.
+Use `browser_state` for cookies, web storage, and saved auth state.
 
-## Actions
+## Cookies
 
-- `cookies` — get cookies.
-- `cookies_set name:<name> value:<value> domain:<domain> path:<path>` — set cookie.
-- `cookies_clear` — clear cookies.
-- `storage_local key:<key>` — read localStorage key.
-- `storage_session key:<key>` — read sessionStorage key.
-- `state_save path:<path>` — save cookies + storage to JSON.
-- `state_load path:<path>` — load saved state.
+```text
+browser_state action:cookies
+browser_state action:cookies_set name:session value:abc123 domain:example.com path:/
+browser_state action:cookies_clear
+```
 
-## Auth workflow
+## Web storage
 
-1. Log in manually or via `browser` tool.
-2. `browser_state action:state_save path:./auth.json`
-3. Next session: `browser_state action:state_load path:./auth.json`
+```text
+browser_state action:storage_local key:authToken
+browser_state action:storage_session key:userId
+```
 
-Or pass `extra_args:["--session-name", "my-app"]` to auto-save/restore state.
+To set or clear storage, use `browser action:eval`:
+
+```text
+browser action:eval text:"localStorage.setItem('authToken','abc123')"
+browser action:eval text:"localStorage.removeItem('authToken')"
+```
+
+## Persist auth
+
+```text
+# after logging in
+browser_state action:state_save path:./auth.json
+# next run
+browser_state action:state_load path:./auth.json
+```
+
+## Tips
+
+- Save state before closing the browser.
+- `cdp_url` works with state tools if you are attached to your own Chrome.
+- State files contain plaintext session tokens — keep them out of git and delete when no longer needed.

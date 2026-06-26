@@ -1,31 +1,71 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { runAgentBrowser, extraArgsToStrings } from "../utils.js";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getLatestState, normalizeState } from "../config.js";
+import { CUSTOM_STATE_TYPE } from "../types.js";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+
+interface RenderComponent {
+  render(width: number): string[];
+  invalidate(): void;
+}
+
+function makePlainText(text: string): RenderComponent {
+  return {
+    render(width: number) {
+      return text ? [text.length > width ? text.slice(0, width - 1) + "…" : text] : [];
+    },
+    invalidate() {},
+  };
+}
+
+function formatDebugCall(args: Record<string, unknown>, theme: Theme): RenderComponent {
+  const action = String(args.action ?? "?");
+  const parts: string[] = [];
+  if (args.fiber_id) parts.push(`fiber=${String(args.fiber_id)}`);
+  if (args.url) parts.push(`url=${String(args.url).slice(0, 35)}`);
+  if (args.output_path) parts.push(`out=${String(args.output_path).slice(0, 25)}`);
+  if (args.clear === true) parts.push("clear");
+  if (args.cdp_url) parts.push(`cdp_url=${String(args.cdp_url)}`);
+
+  const title = theme.fg("toolTitle", theme.bold(`browser_debug ${action}`));
+  const detail = parts.length > 0 ? theme.fg("dim", ` • ${parts.join(" · ")}`) : "";
+  return makePlainText(`${title}${detail}`);
+}
 
 const Actions = StringEnum(
   ["cdp_url", "console", "errors", "trace_start", "trace_stop", "react_tree", "react_inspect", "vitals"],
   { description: "Debug action to perform" },
 );
 
-export const debugToolDefinition = {
+export function createDebugToolDefinition(pi: ExtensionAPI) {
+  return {
   name: "browser_debug",
   label: "Browser Debug",
+  promptSnippet: "browser_debug action:console|errors|trace_start|trace_stop|react_tree|vitals ...",
   description:
     "Debug the active browser session: read console/errors, capture Chrome DevTools traces, " +
     "inspect React trees, and measure Core Web Vitals. React commands require --enable react-devtools.",
   promptGuidelines: [
-    "Use console and errors after page interactions to catch frontend issues.",
-    "Start trace_start before reproducing a bug, then trace_stop to save it.",
-    "React commands need the page opened with --enable react-devtools (pass via extra_args).",
+    "Run browser_debug action:console and action:errors after page interactions to catch frontend issues.",
+    "Start trace_start before reproducing a bug, then trace_stop output_path:<path> to save it.",
+    "React commands need the page opened with extra_args:[\"--enable\",\"react-devtools\"].",
+    "Pass cdp_url on the first call; it is reused from the session afterwards.",
   ],
+
+  renderCall(args, theme) {
+    return formatDebugCall(args as Record<string, unknown>, theme);
+  },
+
   parameters: Type.Object({
     action: Actions,
     fiber_id: Type.Optional(Type.String({ description: "React fiber id for react_inspect" })),
     url: Type.Optional(Type.String({ description: "URL for vitals (uses active tab if omitted)" })),
     output_path: Type.Optional(Type.String({ description: "Trace file path for trace_stop" })),
+    clear: Type.Optional(Type.Boolean({ description: "Clear console or error log" })),
     session: Type.Optional(Type.String({ description: "Isolated session name" })),
-    extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags" })),
+    cdp_url: Type.Optional(Type.String({ description: "CDP URL/port of an already-running Chrome, e.g. http://127.0.0.1:9222/" })),
+    extra_args: Type.Optional(Type.Array(Type.String(), { description: "Extra agent-browser CLI flags passed after the action" })),
   }),
 
   async execute(
@@ -33,52 +73,71 @@ export const debugToolDefinition = {
     params: Record<string, unknown>,
     _signal: AbortSignal | undefined,
     _onUpdate: unknown,
-    _ctx: ExtensionContext,
+    ctx: ExtensionContext,
   ) {
     const action = String(params.action ?? "");
     const session = params.session ? String(params.session) : undefined;
+    const explicitCdp = params.cdp_url ? String(params.cdp_url) : undefined;
+    const state = getLatestState(ctx);
+    const cdpUrl = explicitCdp || state.cdpUrl;
+    if (explicitCdp && explicitCdp !== state.cdpUrl) {
+      pi.appendEntry(CUSTOM_STATE_TYPE, normalizeState({ ...state, cdpUrl: explicitCdp }));
+    }
     const extra = extraArgsToStrings(params.extra_args);
 
     let result: { ok: boolean; output: string; error?: string };
 
     switch (action) {
       case "cdp_url": {
-        result = await runAgentBrowser(["get", "cdp-url", ...extra], session);
+        result = await runAgentBrowser(["get", "cdp-url", ...extra], session, cdpUrl);
+        if (result.ok && result.output) {
+          const httpUrl = "http://127.0.0.1:9222/";
+          result = {
+            ok: true,
+            output: `CDP endpoint: ${result.output.trim()}\nPass cdp_url:"${httpUrl}" to reuse the user's running Chrome.`,
+          };
+        }
         break;
       }
       case "console": {
-        result = await runAgentBrowser(["console", ...extra], session);
+        const cargs = ["console"];
+        if (params.clear === true) cargs.push("--clear");
+        cargs.push(...extra);
+        result = await runAgentBrowser(cargs, session, cdpUrl);
         break;
       }
       case "errors": {
-        result = await runAgentBrowser(["errors", ...extra], session);
+        const eargs = ["errors"];
+        if (params.clear === true) eargs.push("--clear");
+        eargs.push(...extra);
+        result = await runAgentBrowser(eargs, session, cdpUrl);
         break;
       }
       case "trace_start": {
-        result = await runAgentBrowser(["trace", "start", ...extra], session);
+        result = await runAgentBrowser(["trace", "start", ...extra], session, cdpUrl);
         break;
       }
       case "trace_stop": {
         const args = ["trace", "stop"];
         if (params.output_path) args.push(String(params.output_path));
         args.push(...extra);
-        result = await runAgentBrowser(args, session);
+        result = await runAgentBrowser(args, session, cdpUrl);
         break;
       }
       case "react_tree": {
-        result = await runAgentBrowser(["react", "tree", ...extra], session);
+        result = await runAgentBrowser(["react", "tree", ...extra], session, cdpUrl);
         break;
       }
       case "react_inspect": {
         if (!params.fiber_id) return errorResult("react_inspect requires fiber_id");
-        result = await runAgentBrowser(["react", "inspect", String(params.fiber_id), ...extra], session);
+        result = await runAgentBrowser(["react", "inspect", String(params.fiber_id), ...extra], session, cdpUrl);
         break;
       }
       case "vitals": {
         const args = ["vitals"];
         if (params.url) args.push(String(params.url));
         args.push(...extra);
-        result = await runAgentBrowser(args, session);
+        result = await runAgentBrowser(args, session, cdpUrl);
         break;
       }
       default:
@@ -97,6 +156,7 @@ export const debugToolDefinition = {
     };
   },
 };
+}
 
 function errorResult(message: string) {
   return {

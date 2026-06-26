@@ -1,20 +1,64 @@
 import { spawn } from "node:child_process";
+import { platform } from "node:os";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentBrowserResult } from "./types.js";
 
 const AGENT_BROWSER_BIN = "agent-browser";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+function findWindowsExe(): string {
+  // 1. Look alongside this module under node_modules/agent-browser/bin
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const candidate = resolve(here, "..", "..", "..", "node_modules", "agent-browser", "bin", "agent-browser-win32-x64.exe");
+    if (existsSync(candidate)) return candidate;
+  } catch {}
+
+  // 2. Look under the npm global root.
+  try {
+    const globalRoot = process.env.npm_config_prefix || process.env.ProgramFiles;
+    if (globalRoot) {
+      const candidate = join(globalRoot, "node_modules", "agent-browser", "bin", "agent-browser-win32-x64.exe");
+      if (existsSync(candidate)) return candidate;
+    }
+  } catch {}
+
+  // 3. Common global locations.
+  const commonPaths = [
+    join(process.env.LOCALAPPDATA || "", "npm", "node_modules", "agent-browser", "bin", "agent-browser-win32-x64.exe"),
+    join(process.env.APPDATA || "", "npm", "node_modules", "agent-browser", "bin", "agent-browser-win32-x64.exe"),
+    "C:\\Program Files\\nodejs\\node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe",
+    "C:\\Program Files (x86)\\nodejs\\node_modules\\agent-browser\\bin\\agent-browser-win32-x64.exe",
+  ];
+  for (const p of commonPaths) {
+    if (p && existsSync(p)) return p;
+  }
+
+  return AGENT_BROWSER_BIN;
+}
+
+function getAgentBrowserBin(): string {
+  if (platform() !== "win32") return AGENT_BROWSER_BIN;
+  return findWindowsExe();
+}
+
+export const AGENT_BROWSER_PATH = getAgentBrowserBin();
+
 export async function runAgentBrowser(
   args: string[],
   session?: string,
+  cdpUrl?: string,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<AgentBrowserResult> {
   const fullArgs: string[] = [];
+  if (cdpUrl) fullArgs.push("--cdp", cdpUrl);
   if (session) fullArgs.push("--session", session);
   fullArgs.push(...args, "--json");
 
   return new Promise((resolve) => {
-    const child = spawn(AGENT_BROWSER_BIN, fullArgs, {
+    const child = spawn(AGENT_BROWSER_PATH, fullArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
       windowsHide: true,
@@ -86,6 +130,9 @@ function formatJsonData(data: unknown): string {
   if (data === undefined || data === null) return "";
   if (typeof data === "string") return data;
   if (typeof data === "number" || typeof data === "boolean") return String(data);
+  if (typeof data === "object" && "snapshot" in (data as Record<string, unknown>)) {
+    return String((data as Record<string, unknown>).snapshot ?? "");
+  }
   try {
     return JSON.stringify(data, null, 2);
   } catch {
