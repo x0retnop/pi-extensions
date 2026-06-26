@@ -37,12 +37,20 @@ browser action:snapshot                             # cdp_url reused
 
 Navigation actions (`open`, `tab`, `back`, `forward`, `reload`) automatically wait for `networkidle` unless you set `wait_after:false`.
 
-`click`, `fill`, `type`, and `submit` also auto-wait for `networkidle` after the action. You do not need a separate `browser action:wait` call after clicking or submitting a form. Override or disable it with `wait_after`:
+`click`, `fill`, `type`, and `submit` also auto-wait for `networkidle` after the action. This waits for the action itself to settle (e.g. the request to finish sending), not for a brand-new chat/LLM response to fully appear.
+
+For chat and LLM interfaces, use `wait_after` with a response marker so the tool waits until the model starts answering:
 
 ```text
-browser action:click selector:@e3 wait_after:@e5
-browser action:fill selector:@e4 text:hello wait_after:false
-browser action:submit selector:@e4 text:hello wait_after:networkidle
+browser action:submit selector:"[aria-label=\"Ask Grok anything\"]" text:"hello" wait_after:"Размышление"
+```
+
+If you do not know a reliable marker, poll with `browser action:text`:
+
+```text
+browser action:submit selector:@e4 text:hello wait_after:false
+browser action:wait wait:3000
+browser action:text
 ```
 
 `wait_after` accepts: `networkidle`, `domcontentloaded`, `load`, `@eN`/selector, `"some text"`, `"**/dashboard"`, `2000`, or `false` to skip the default wait.
@@ -63,13 +71,15 @@ browser action:eval text:"document.querySelector('main').innerText.slice(0, 4000
 
 ## Interacting
 
-By refs:
+By `@eN` refs:
 
 ```text
 browser action:click selector:@e1
 browser action:fill selector:@e2 text:hello
 browser action:type selector:@e2 text:" world"
 ```
+
+The literal `[ref=eN]` text shown in snapshots is also accepted, but prefer `@eN`.
 
 By CSS selector or label:
 

@@ -81,9 +81,10 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
     promptGuidelines: [
       "Read the local skill file at agent-browser/skills/core.md before using browser tools.",
       "Pass cdp_url:\"http://127.0.0.1:9222/\" on the first call or whenever you attach to a different Chrome. It is auto-reused afterwards.",
-      "Use @eN refs from the snapshot for click/fill/type/submit; they fall back to the element's text/aria-label if stale.",
+      "Use @eN refs from the snapshot for click/fill/type/submit (e.g. @e3, not [ref=e3]); they fall back to the element's text/aria-label if stale.",
       "Navigation actions (open, tab, back, forward, reload) automatically wait for networkidle unless you set wait_after:false.",
-      "click, fill, type, and submit also auto-wait for networkidle after the action; do not add a separate wait tool call unless you need a specific condition.",
+      "click, fill, type, and submit also auto-wait for networkidle after the action. This waits for the action to settle, not for a new chat/LLM response to appear.",
+      "In chat/LLM interfaces, pass wait_after:\"<response-marker>\" on submit/click to wait for the model to start answering (e.g. wait_after:\"Размышление\" for Grok).",
       "After click/fill/type/submit on a dynamic page, re-snapshot before the next ref-based action.",
       "Use browser action:text to read visible page text instead of guessing selectors with eval.",
       "Use browser action:submit selector:<input> text:<message> for forms/chat inputs.",
@@ -303,10 +304,19 @@ function inferWaitAfter(params: Record<string, unknown>, action: string): string
 
 function resolveSelector(selector: string, lastSnapshot?: string): string {
   const trimmed = selector.trim();
-  if (!trimmed.startsWith("@") || !lastSnapshot) return sanitizeSelector(trimmed);
 
-  const ref = trimmed;
-  const line = lastSnapshot.split("\n").find((l) => l.includes(`[ref=${ref.slice(1)}]`));
+  // Accept both @eN and [ref=eN] forms; agent often copies the literal [ref=eN] label.
+  let ref: string | undefined;
+  if (trimmed.startsWith("@")) {
+    ref = trimmed.slice(1);
+  } else {
+    const bracketMatch = trimmed.match(/^\[ref=(e?\d+)\]$/i);
+    if (bracketMatch) ref = bracketMatch[1];
+  }
+
+  if (!ref || !lastSnapshot) return sanitizeSelector(trimmed);
+
+  const line = lastSnapshot.split("\n").find((l) => l.includes(`[ref=${ref}]`));
   if (!line) return sanitizeSelector(trimmed);
 
   const ariaMatch = line.match(/aria-label="([^"]+)"/);
