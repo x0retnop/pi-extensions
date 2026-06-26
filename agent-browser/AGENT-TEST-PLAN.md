@@ -1,225 +1,103 @@
-# Agent Browser — Universal Agent Test Plan
+# Agent Browser — Universal Test Tasks
 
-Use this plan to exercise `agent-browser` tools across a variety of real sites and interaction patterns. The goal is to verify that the tools are **agent-friendly and generic**, not tuned for one site.
+Do these tasks in order. For each task, read the page, decide what to do, and report the result. If a step fails, note why and move on.
 
-## Preparation
+Use the browser automation skill at `C:\tools\agent-browser\skills\core.md` when you need guidance.
 
-1. Read `agent-browser/skills/core.md`.
-2. Start with `cdp_url:"http://127.0.0.1:9222/"` on the first browser call.
-3. Use a fresh `session:<name>` for each independent scenario so failures do not leak.
-4. After every navigation/click/submit, re-snapshot before using `@eN` refs again.
-5. Prefer `@eN` refs, fall back to CSS selectors or aria-labels if refs go stale.
-
-## Report format
-
-For each task report:
-- ✅/❌ success
-- Number of tool calls used
-- Any manual workarounds needed
-- Concrete UX friction
+Rules:
+- Work only in the user's already-running Chrome.
+- Prefer existing tabs. Open a new tab only if the task asks for it.
+- Do not close the browser.
+- Keep the user's normal browsing session intact.
 
 ---
 
-## Level 1 — Static page basics
+## Task 1 — Read a simple page
 
-**Site:** `https://example.com` or `https://httpbin.org/html`
+Open `https://example.com`. Tell me the page title and the first heading.
 
-**Tasks:**
-1. `browser action:open url:...`
-2. `browser action:snapshot`
-3. `browser action:text`
-4. `browser action:screenshot screenshot_path:./example.png`
-5. `browser action:close`
-
-**Success criteria:**
-- Snapshot shows the page structure.
-- `text` returns readable page content.
-- Screenshot file is created.
+Expected result: a short summary of what the page says.
 
 ---
 
-## Level 2 — Simple HTML form
+## Task 2 — Fill a basic form
 
-**Site:** `https://httpbin.org/forms/post`
+Go to `https://httpbin.org/forms/post`. Fill in all the fields you see, submit the form, and tell me what the server returned.
 
-**Tasks:**
-1. Open the form.
-2. Snapshot it.
-3. Fill all visible fields using refs or labels.
-4. Submit the form (`action:submit` or manual fill → click).
-5. Read the submitted data from the result page.
-
-**Success criteria:**
-- All fields filled without hard-coded selectors.
-- Submit succeeds.
-- Result page contains the submitted values.
+Expected result: confirmation that the form submitted and the values echoed back.
 
 ---
 
-## Level 3 — Search engine
+## Task 3 — Search the web
 
-**Site:** `https://duckduckgo.com` or `https://www.google.com`
+Go to `https://duckduckgo.com` and search for "agent browser automation". Read the first three result titles and their URLs.
 
-**Tasks:**
-1. Open the search engine.
-2. Find the search input using only the snapshot.
-3. Type a query and submit.
-4. Wait for results (use `wait_after:"results"` or poll `text`).
-5. Extract the titles + URLs of the first 3 results.
-
-**Success criteria:**
-- Query submitted without knowing the input selector in advance.
-- Results page loaded.
-- At least 3 result titles extracted.
+Expected result: three search result titles + URLs.
 
 ---
 
-## Level 4 — SPA navigation
+## Task 4 — Navigate a single-page app
 
-**Site:** `https://github.com/earendil-works` (or any SPA with tabs)
+Go to `https://github.com/earendil-works`. Switch to the Issues tab (or Pull requests if Issues is empty). Tell me how many open items there are.
 
-**Tasks:**
-1. Open a repository page.
-2. Click a tab (Issues, Pull requests, Actions).
-3. Wait for the SPA route to load.
-4. Snapshot the new content.
-5. Read the count of open items from the tab label or page text.
-
-**Success criteria:**
-- Tab switch works.
-- New content appears without a full page reload.
-- Numeric count extracted correctly.
+Expected result: the number of open issues or pull requests.
 
 ---
 
-## Level 5 — Tab management
+## Task 5 — Work with tabs
 
-**Sites:** any two from above
+Open `https://news.ycombinator.com` in a new tab. Then switch back to the previous tab and read its title. Finally, switch to the new tab and read the top story title.
 
-**Tasks:**
-1. Open site A in the default tab.
-2. Open site B in a new tab (`action:open url:...` with `--new-tab` via `extra_args` if supported, or open in current then use `action:tabs`).
-3. List tabs.
-4. Switch back to site A.
-5. Read its title.
-6. Close the session.
-
-**Success criteria:**
-- Multiple tabs coexist.
-- Switching returns to the correct page.
-- Title matches.
+Expected result: titles of both tabs + the top HN story.
 
 ---
 
-## Level 6 — Dynamic content / polling
+## Task 6 — Follow a link and read the article
 
-**Site:** `https://news.ycombinator.com` or any news site
+On `https://news.ycombinator.com`, click the top story, wait for the article to load, and tell me the article headline.
 
-**Tasks:**
-1. Open the front page.
-2. Read the top story title and URL.
-3. Click the top story.
-4. Wait for the article to load.
-5. Extract the article headline.
-
-**Success criteria:**
-- Top story identified from the list.
-- Click navigates to the article.
-- Headline readable after the page settles.
+Expected result: the headline of the article linked from the top HN story.
 
 ---
 
-## Level 7 — Network interception
+## Task 7 — Block images and verify
 
-**Site:** `https://example.com`
+Block all PNG image requests on `https://example.com`, reload the page, and take a screenshot. Then list the blocked requests.
 
-**Tasks:**
-1. `browser_network action:route pattern:"**/*.png" abort:true`
-2. Open `https://example.com`.
-3. Take a screenshot.
-4. `browser_network action:requests`
-5. Verify that image requests were blocked.
-6. `browser_network action:unroute pattern:"**/*.png"`
-
-**Success criteria:**
-- Route set before navigation.
-- Image requests appear as blocked/cancelled.
-- Screenshot renders without images (or with broken image placeholders).
+Expected result: screenshot shows the page without images, and you can list the blocked image requests.
 
 ---
 
-## Level 8 — Cookies / state
+## Task 8 — Save and restore session state
 
-**Site:** `https://httpbin.org/cookies/set?test=value123`
+Go to `https://httpbin.org/cookies/set?test=value123`. Confirm the cookie is set. Save the browser state to a file. Then open a fresh isolated browser session, load the saved state, and visit `https://httpbin.org/cookies`. Confirm the cookie is still there.
 
-**Tasks:**
-1. Open the cookie-setting URL.
-2. `browser_state action:cookies`
-3. Verify `test=value123` is present.
-4. `browser_state action:state_save path:./httpbin-state.json`
-5. Open a new session.
-6. `browser_state action:state_load path:./httpbin-state.json`
-7. Open `https://httpbin.org/cookies` and confirm the cookie persists.
-
-**Success criteria:**
-- Cookie saved and loaded across sessions.
+Expected result: the `test=value123` cookie persists across sessions.
 
 ---
 
-## Level 9 — Complex interaction (choose one)
+## Task 9 — Scroll a feed
 
-**Option A — Hover menu:**
-- Site with a hover dropdown (e.g. a documentation navbar).
-- Hover over the menu item via `eval` or `extra_args`.
-- Click a link from the dropdown.
+Go to a site with an infinitely scrolling feed (for example, a social media or image site). Scroll down once and confirm that new content loaded.
 
-**Option B — Infinite scroll:**
-- A site with infinite scroll (e.g. a social feed).
-- Scroll down via `eval` (`window.scrollBy(0, 1000)`).
-- Verify new items loaded.
-
-**Option C — File download:**
-- A site with a direct download link.
-- Click the link.
-- Verify the file appears in the downloads directory (via `bash ls`).
-
-**Success criteria:**
-- Interaction completed without site-specific hard-coding.
-- Result observable either in the browser or on disk.
+Expected result: new items appear after scrolling.
 
 ---
 
-## Level 10 — Multi-step real-world flow
+## Task 10 — Check the weather
 
-**Scenario:** Check the weather for a city.
+Go to any weather site and look up the current weather for "London". Report the temperature and the general condition (sunny, cloudy, rain, etc.).
 
-**Site:** any weather site (e.g. `https://openweathermap.org` or `https://weather.com`)
-
-**Tasks:**
-1. Open the weather site.
-2. Find the city search input from the snapshot.
-3. Type a city name and submit.
-4. Wait for the forecast page.
-5. Extract current temperature and condition (e.g. "Sunny", "Rain").
-
-**Success criteria:**
-- City found.
-- Forecast data extracted.
-- No hard-coded selectors used.
+Expected result: current temperature + condition for London.
 
 ---
 
-## Expected global outcomes
+## Final report
 
-After running the plan, the agent should be able to say:
-- Which actions worked out of the box.
-- Where refs were reliable vs. where CSS/aria-label fallback was needed.
-- Whether auto-waits were sufficient or manual waits/polling were required.
-- Which sites needed `extra_args` or `eval` workarounds.
-- Any missing actions (scroll, hover, file upload, etc.).
+For each task, include:
+- ✅ or ❌
+- What you observed
+- Any friction or unexpected behavior
+- Roughly how many browser interactions it took
 
----
-
-## Notes for the maintainer
-
-This plan is intentionally site-agnostic. Do not hard-code selectors here. If an agent repeatedly fails a task because of a missing tool feature, that feature should be added to `browser.ts` or documented as a known limitation.
+Be honest about failures — they tell us what to improve.
