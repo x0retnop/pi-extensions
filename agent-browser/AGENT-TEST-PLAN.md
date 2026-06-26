@@ -1,6 +1,6 @@
-# Agent Browser — Universal Test Tasks
+# Agent Browser — Universal Stress Test Tasks
 
-Do these tasks in order. For each task, read the page, decide what to do, and report the result. If a step fails, note why and move on.
+Do these tasks in order. The goal is to exercise the browser automation tools across different site types and catch failures, overflows, or agent mistakes.
 
 Use the browser automation skill at `C:\tools\agent-browser\skills\core.md` when you need guidance.
 
@@ -9,6 +9,13 @@ Rules:
 - Prefer existing tabs. Open a new tab only if the task asks for it.
 - Do not close the browser.
 - Keep the user's normal browsing session intact.
+- If a site does not load or a step fails, note it and move on — do not get stuck retrying.
+
+For each task, report:
+- ✅ or ❌
+- What you observed
+- Any friction, errors, or overflow-sized outputs
+- Roughly how many browser interactions it took
 
 ---
 
@@ -22,7 +29,7 @@ Expected result: a short summary of what the page says.
 
 ## Task 2 — Fill a basic form
 
-Go to `https://httpbin.org/forms/post`. Fill in all the fields you see, submit the form, and tell me what the server returned.
+Go to `https://httpbingo.org/forms/post`. Fill in all the fields you see, submit the form, and tell me what the server returned.
 
 Expected result: confirmation that the form submitted and the values echoed back.
 
@@ -60,17 +67,17 @@ Expected result: the headline of the article linked from the top HN story.
 
 ---
 
-## Task 7 — Block images and verify
+## Task 7 — Block images and verify a specific request
 
-Block all PNG image requests on `https://example.com`, reload the page, and take a screenshot. Then list the blocked requests.
+Block all PNG image requests on `https://example.com`, reload the page, and take a screenshot. Then list only the blocked PNG requests using a pattern filter.
 
-Expected result: screenshot shows the page without images, and you can list the blocked image requests.
+Expected result: screenshot shows the page without images, and you can list the blocked PNG requests without returning a huge unfiltered log.
 
 ---
 
 ## Task 8 — Save and restore session state
 
-Go to `https://httpbin.org/cookies/set?test=value123`. Confirm the cookie is set. Save the browser state to a file. Then open a fresh isolated browser session, load the saved state, and visit `https://httpbin.org/cookies`. Confirm the cookie is still there.
+Go to `https://httpbingo.org/cookies/set?test=value123`. Confirm the cookie is set. Save the browser state to a file. Then open a fresh isolated browser session, load the saved state, and visit `https://httpbingo.org/cookies`. Confirm the cookie is still there.
 
 Expected result: the `test=value123` cookie persists across sessions.
 
@@ -78,7 +85,7 @@ Expected result: the `test=value123` cookie persists across sessions.
 
 ## Task 9 — Scroll a feed
 
-Go to a site with an infinitely scrolling feed (for example, a social media or image site). Scroll down once and confirm that new content loaded.
+Go to `https://infinitescroll-six.vercel.app/` and scroll down once. Confirm that new content loaded.
 
 Expected result: new items appear after scrolling.
 
@@ -86,9 +93,17 @@ Expected result: new items appear after scrolling.
 
 ## Task 10 — Check the weather
 
-Go to any weather site and look up the current weather for "London". Report the temperature and the general condition (sunny, cloudy, rain, etc.).
+Go to `https://www.bbc.com/weather/2643743` and read the current temperature and condition for London.
 
 Expected result: current temperature + condition for London.
+
+---
+
+## Task 11 — Use web search to pick a current article
+
+Use the web search tool to find a recent news article about "AI browser automation" from 2025 or 2026. Open the article in a new tab and summarize the first three paragraphs.
+
+Expected result: article title, source, and a short summary.
 
 ---
 
@@ -98,6 +113,6 @@ For each task, include:
 - ✅ or ❌
 - What you observed
 - Any friction or unexpected behavior
-- Roughly how many browser interactions it took
+- Whether any tool returned an unexpectedly large output
 
 Be honest about failures — they tell us what to improve.

@@ -4,16 +4,30 @@ Use **only** the Pi browser tools listed below. Do not run `agent-browser` direc
 
 Connect to the user's already-running Chrome with `cdp_url:"http://127.0.0.1:9222/"` and work with the existing tabs. Do not close the user's browser.
 
-## Tool map
+## What these tools are for
 
-| Tool | Use for |
+Use browser tools when the task requires a real browser: rendering, JavaScript, user interaction, session state, screenshots, or network inspection.
+
+Examples:
+- Filling forms, clicking buttons, chatting in a web UI.
+- Taking screenshots to check layout or visual state.
+- Inspecting network requests for debugging ads, trackers, or scripts.
+- Reading React/component trees or console errors.
+- Working with sites that need cookies, localStorage, or logged-in state.
+
+## What these tools are NOT for
+
+Do not use browser tools when a simpler tool can do the job. They are heavier and can return large outputs.
+
+| Instead of browser tools | Use |
 |---|---|
-| `browser` | Open pages, snapshot, click/fill/type/submit, eval JS, read text, screenshot, wait. |
-| `browser_network` | Mock/block requests, inspect traffic, record HAR. |
-| `browser_state` | Cookies, storage, save/load auth state. |
-| `browser_debug` | Console/errors, traces, React, vitals. |
+| Searching the web or finding current information | `web_search` / `pi-web-search` |
+| Fetching a static article or API response | `fetch_content`, `curl`, `xh`, or direct HTTP requests |
+| Downloading a file from a direct URL | `curl`, `xh`, or `bash` |
+| Quick HTTP/API testing | `curl`, `xh`, `httpbun.com`, `httpbingo.org` |
+| Reading local files | `read` |
 
-**Never** call the `agent-browser` CLI from bash. Always use these tools.
+**Never** call the `agent-browser` CLI directly from bash. Always use the Pi browser tools above.
 
 ## CDP URL
 
