@@ -1,15 +1,19 @@
 # Browser automation guide
 
-Pi browser tools wrap the `agent-browser` CLI.
+Use **only** the Pi browser tools listed below. Do not run `agent-browser` directly from bash and do not open a new browser process.
+
+Connect to the user's already-running Chrome with `cdp_url:"http://127.0.0.1:9222/"` and work with the existing tabs. Do not close the user's browser.
 
 ## Tool map
 
 | Tool | Use for |
 |---|---|
-| `browser` | Open pages, snapshot, click/fill/type/submit, eval JS, read text, screenshot, close, wait. |
+| `browser` | Open pages, snapshot, click/fill/type/submit, eval JS, read text, screenshot, wait. |
 | `browser_network` | Mock/block requests, inspect traffic, record HAR. |
 | `browser_state` | Cookies, storage, save/load auth state. |
 | `browser_debug` | Console/errors, traces, React, vitals. |
+
+**Never** call the `agent-browser` CLI from bash. Always use these tools.
 
 ## CDP URL
 
@@ -27,11 +31,13 @@ browser action:snapshot                             # cdp_url reused
 
 ## Core loop
 
-1. `browser action:open url:<url>` — load page or attach to running Chrome.
-2. `browser action:snapshot` — compact accessibility tree with `@eN` refs.
-3. Act using refs: `browser action:click selector:@e3`.
-4. Re-snapshot after every navigation, click, or dynamic update.
-5. `browser action:close` when done.
+1. Pass `cdp_url:"http://127.0.0.1:9222/"` on the very first browser call to attach to the user's Chrome.
+2. `browser action:tabs` — find the tab you need, or use `browser action:tab tab:<id>` to switch to it.
+3. `browser action:snapshot` — compact accessibility tree with `@eN` refs.
+4. Act using refs: `browser action:click selector:@e3`.
+5. Re-snapshot after every navigation, click, or dynamic update.
+
+Do not call `browser action:close` unless you created an isolated `session:<name>` and want to clean it up. In CDP mode `close` can kill the user's browser tab or process.
 
 ## Automatic waits
 
@@ -122,12 +128,26 @@ browser action:snapshot extra_args:["--json"]                 # machine-readable
 
 ## Tabs
 
+Always inspect the user's existing tabs first. Do not open a new browser.
+
 ```text
 browser action:tabs
 browser action:tab tab:t2
 ```
 
 Tab ids look like `t1`, `t2`. Switch to the tab before taking a snapshot.
+
+To open a URL in a new tab in the user's Chrome:
+
+```text
+browser action:open url:"https://example.com" extra_args:["--new-tab"]
+```
+
+To open a URL in the current tab:
+
+```text
+browser action:open url:"https://example.com"
+```
 
 ## Waits
 
@@ -167,7 +187,9 @@ browser action:eval text:"document.querySelector('iframe#payment').contentDocume
 
 ## Sessions
 
-Use `session:<name>` to isolate parallel workflows. Each session is an independent browser. Always close sessions to free resources.
+Use `session:<name>` to isolate parallel workflows. Each session is an independent browser. Always close sessions you created to free resources.
+
+When no `session` is given, the tool uses the user's live Chrome via CDP. In that case do **not** call `close`.
 
 ## Common problems
 

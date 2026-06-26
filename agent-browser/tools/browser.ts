@@ -80,7 +80,9 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
       "and control sessions. Pass cdp_url once; it is remembered for the session.",
     promptGuidelines: [
       "Read the local skill file at agent-browser/skills/core.md before using browser tools.",
-      "Pass cdp_url:\"http://127.0.0.1:9222/\" on the first call or whenever you attach to a different Chrome. It is auto-reused afterwards.",
+      "Use ONLY the Pi browser tools. Never run the agent-browser CLI directly from bash.",
+      "Connect to the user's already-running Chrome with cdp_url:\"http://127.0.0.1:9222/\" on the first call. It is auto-reused afterwards.",
+      "Work with the user's existing tabs (browser action:tabs / tab:<id>). Do not launch a new browser and do not close the user's browser.",
       "Use @eN refs from the snapshot for click/fill/type/submit (e.g. @e3, not [ref=e3]); they fall back to the element's text/aria-label if stale.",
       "Navigation actions (open, tab, back, forward, reload) automatically wait for networkidle unless you set wait_after:false.",
       "click, fill, type, and submit also auto-wait for networkidle after the action. This waits for the action to settle, not for a new chat/LLM response to appear.",
@@ -88,7 +90,7 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
       "After click/fill/type/submit on a dynamic page, re-snapshot before the next ref-based action.",
       "Use browser action:text to read visible page text instead of guessing selectors with eval.",
       "Use browser action:submit selector:<input> text:<message> for forms/chat inputs.",
-      "Always close the session when done.",
+      "Only call browser action:close for isolated session:<name> browsers you created. Never close the user's live CDP browser.",
     ],
 
     renderCall(args: Record<string, unknown>, theme: Theme) {
