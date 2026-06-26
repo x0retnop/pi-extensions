@@ -6,8 +6,25 @@ import { fileURLToPath } from "node:url";
 import type { AgentBrowserResult } from "./types.js";
 
 const AGENT_BROWSER_BIN = "agent-browser";
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const KILL_DELAY_MS = 5_000;
+const CDP_CHECK_TIMEOUT_MS = 3_000;
+
+const checkedCdpUrls = new Set<string>();
+
+async function isCdpReachable(cdpUrl: string): Promise<boolean> {
+  if (!/^https?:\/\//i.test(cdpUrl)) return true;
+  try {
+    const url = cdpUrl.endsWith("/") ? `${cdpUrl}json/version` : `${cdpUrl}/json/version`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CDP_CHECK_TIMEOUT_MS);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 function forceKill(child: ChildProcess): void {
   if (!child || child.killed) return;
@@ -82,6 +99,18 @@ export async function runAgentBrowser(
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
   signal?: AbortSignal,
 ): Promise<AgentBrowserResult> {
+  if (cdpUrl && !checkedCdpUrls.has(cdpUrl)) {
+    const reachable = await isCdpReachable(cdpUrl);
+    if (!reachable) {
+      return {
+        ok: false,
+        output: "",
+        error: `CDP endpoint unreachable: ${cdpUrl}. Make sure Chrome is running with --remote-debugging-port=9222.`,
+      };
+    }
+    checkedCdpUrls.add(cdpUrl);
+  }
+
   const fullArgs: string[] = [];
   if (cdpUrl) fullArgs.push("--cdp", cdpUrl);
   if (session) fullArgs.push("--session", session);
