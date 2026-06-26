@@ -9,6 +9,8 @@ import {
   truncateOutput,
   truncateLines,
   AGENT_BROWSER_PATH,
+  checkAborted,
+  forceKill,
 } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
 import { CUSTOM_STATE_TYPE, DEFAULT_CDP_URL } from "../types.js";
@@ -140,7 +142,7 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
     async execute(
       _toolCallId: string,
       params: Record<string, unknown>,
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: unknown,
       ctx: ExtensionContext,
     ) {
@@ -161,14 +163,14 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
       switch (action) {
         case "open": {
           if (!params.url) return errorResult("open requires url");
-          result = await runAgentBrowser(["open", String(params.url), ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["open", String(params.url), ...extra], session, cdpUrl, undefined, signal);
           break;
         }
           case "snapshot": {
           const args = ["snapshot"];
           if (params.interactive !== false) args.push("-i");
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
           if (result.ok && result.output) {
             const maxLines = typeof params.max_snapshot_lines === "number" ? params.max_snapshot_lines : 300;
             const maxChars = typeof params.max_output_chars === "number" ? params.max_output_chars : 30_000;
@@ -178,12 +180,12 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
           break;
         }
         case "tabs": {
-          result = await runAgentBrowser(["tab", ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["tab", ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         case "tab": {
           if (!params.tab) return errorResult("tab requires tab parameter");
-          result = await runAgentBrowser(["tab", String(params.tab), ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["tab", String(params.tab), ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         case "click":
@@ -192,10 +194,10 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
           if (!params.selector) return errorResult(`${action} requires selector`);
           const sel = resolveSelector(String(params.selector), state.lastSnapshot);
           if (action === "click") {
-            result = await runAgentBrowser(["click", sel, ...extra], session, cdpUrl);
+            result = await runAgentBrowser(["click", sel, ...extra], session, cdpUrl, undefined, signal);
           } else {
             if (params.text === undefined) return errorResult(`${action} requires text`);
-            result = await runAgentBrowser([action, sel, String(params.text), ...extra], session, cdpUrl);
+            result = await runAgentBrowser([action, sel, String(params.text), ...extra], session, cdpUrl, undefined, signal);
           }
           break;
         }
@@ -203,18 +205,21 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
           if (!params.selector) return errorResult("submit requires selector (input field)");
           if (params.text === undefined) return errorResult("submit requires text");
           const inputSel = resolveSelector(String(params.selector), state.lastSnapshot);
-          const fillResult = await runAgentBrowser(["fill", inputSel, String(params.text), ...extra], session, cdpUrl);
+          const fillResult = await runAgentBrowser(["fill", inputSel, String(params.text), ...extra], session, cdpUrl, undefined, signal);
+          checkAborted(fillResult);
           if (!fillResult.ok) {
             result = fillResult;
             break;
           }
           const sendSel = findSendButtonSelector(state.lastSnapshot) || 'button[aria-label="Send"], button[aria-label="Отправить"]';
-          result = await runAgentBrowser(["click", sendSel, ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["click", sendSel, ...extra], session, cdpUrl, undefined, signal);
           if (!result.ok) {
             result = await runAgentBrowser(
               ["click", 'button[type="submit"], button:has-text("Send"), button:has-text("Отправить")', ...extra],
               session,
               cdpUrl,
+              undefined,
+              signal,
             );
           }
           break;
@@ -222,7 +227,7 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
         case "eval": {
           if (params.text === undefined) return errorResult("eval requires text");
           const code = String(params.text);
-          result = await runAgentBrowserEval(code, session, extra, cdpUrl);
+          result = await runAgentBrowserEval(code, session, extra, cdpUrl, signal);
           if (result.ok && result.output) {
             const maxChars = typeof params.max_output_chars === "number" ? params.max_output_chars : 30_000;
             result = { ok: true, output: truncateOutput(result.output, maxChars, "use max_output_chars:<n> for more") };
@@ -236,6 +241,7 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
             session,
             extra,
             cdpUrl,
+            signal,
           );
           break;
         }
@@ -243,27 +249,29 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
           const args = ["screenshot"];
           if (params.screenshot_path) args.push(String(params.screenshot_path));
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
           break;
         }
         case "close": {
-          result = await runAgentBrowser(["close", ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["close", ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         case "back":
         case "forward":
         case "reload": {
-          result = await runAgentBrowser([action, ...extra], session, cdpUrl);
+          result = await runAgentBrowser([action, ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         case "wait": {
           if (!params.wait) return errorResult("wait requires wait parameter");
-          result = await runAgentBrowser(parseWaitOption(String(params.wait)).concat(extra), session, cdpUrl);
+          result = await runAgentBrowser(parseWaitOption(String(params.wait)).concat(extra), session, cdpUrl, undefined, signal);
           break;
         }
         default:
           return errorResult(`Unknown action: ${action}`);
       }
+
+      checkAborted(result);
 
       if (!result.ok) {
         return {
@@ -281,7 +289,8 @@ export function createBrowserToolDefinition(pi: ExtensionAPI) {
       // Auto-wait after navigation actions by default.
       const waitAfter = inferWaitAfter(params, action);
       if (waitAfter && waitAfter !== "false") {
-        const waitResult = await runAgentBrowser(parseWaitOption(waitAfter).concat(extra), session, cdpUrl);
+        const waitResult = await runAgentBrowser(parseWaitOption(waitAfter).concat(extra), session, cdpUrl, undefined, signal);
+        checkAborted(waitResult);
         if (!waitResult.ok) {
           result = {
             ok: true,
@@ -365,6 +374,7 @@ async function runAgentBrowserEval(
   session: string | undefined,
   extra: string[],
   cdpUrl: string | undefined,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; output: string; error?: string }> {
   const fullArgs: string[] = [];
   if (cdpUrl) fullArgs.push("--cdp", cdpUrl);
@@ -372,6 +382,11 @@ async function runAgentBrowserEval(
   fullArgs.push("eval", "--stdin", ...extra, "--json");
 
   return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve({ ok: false, output: "", error: "aborted" });
+      return;
+    }
+
     const child = spawn(AGENT_BROWSER_PATH, fullArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
@@ -381,19 +396,35 @@ async function runAgentBrowserEval(
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => {
-      try {
-        child.kill("SIGTERM");
-      } catch {}
+      stdout += "\n[TIMEOUT: agent-browser eval did not finish within timeout; forcing termination]";
+      forceKill(child);
     }, 60_000);
+
+    function cleanup() {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", abortHandler);
+    }
+
+    const abortHandler = () => {
+      stdout += "\n[ABORT: agent-browser eval aborted by user]";
+      forceKill(child);
+    };
+    if (signal) {
+      signal.addEventListener("abort", abortHandler, { once: true });
+    }
 
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf-8")));
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf-8")));
     child.on("error", (err) => {
-      clearTimeout(timer);
+      cleanup();
       resolve({ ok: false, output: "", error: err.message });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      cleanup();
+      if (signal?.aborted) {
+        resolve({ ok: false, output: stdout, error: "aborted" });
+        return;
+      }
       const combined = stdout || stderr;
       if (!combined.trim()) {
         resolve({ ok: code === 0, output: "", error: code === 0 ? undefined : `exit ${code}` });

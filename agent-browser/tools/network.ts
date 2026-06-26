@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { runAgentBrowser, extraArgsToStrings, summarizeNetworkRequests, truncateOutput } from "../utils.js";
+import { runAgentBrowser, extraArgsToStrings, summarizeNetworkRequests, truncateOutput, checkAborted } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
 import { CUSTOM_STATE_TYPE, DEFAULT_CDP_URL } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -77,7 +77,7 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
     async execute(
       _toolCallId: string,
       params: Record<string, unknown>,
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: unknown,
       ctx: ExtensionContext,
     ) {
@@ -104,14 +104,14 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
           }
           if (params.resource_type) args.push("--resource-type", String(params.resource_type));
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
           break;
         }
         case "unroute": {
           const args = ["network", "unroute"];
           if (params.pattern) args.push(String(params.pattern));
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
           break;
         }
         case "requests": {
@@ -119,7 +119,8 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
           if (params.pattern) args.push("--filter", String(params.pattern));
           if (params.clear === true) args.push("--clear");
           args.push(...extra);
-          const raw = await runAgentBrowser(args, session, cdpUrl);
+          const raw = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
+          checkAborted(raw);
           if (!raw.ok) {
             result = raw;
             break;
@@ -138,19 +139,21 @@ export function createNetworkToolDefinition(pi: ExtensionAPI) {
           break;
         }
         case "har_start": {
-          result = await runAgentBrowser(["network", "har", "start", ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["network", "har", "start", ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         case "har_stop": {
           const args = ["network", "har", "stop"];
           if (params.output_path) args.push(String(params.output_path));
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
           break;
         }
         default:
           return errorResult(`Unknown action: ${action}`);
       }
+
+      checkAborted(result);
 
       if (!result.ok) {
         return {

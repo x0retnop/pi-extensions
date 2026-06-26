@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { runAgentBrowser, extraArgsToStrings, truncateOutput } from "../utils.js";
+import { runAgentBrowser, extraArgsToStrings, truncateOutput, checkAborted } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
 import { CUSTOM_STATE_TYPE, DEFAULT_CDP_URL } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -80,7 +80,7 @@ export function createStateToolDefinition(pi: ExtensionAPI) {
     async execute(
       _toolCallId: string,
       params: Record<string, unknown>,
-      _signal: AbortSignal | undefined,
+      signal: AbortSignal | undefined,
       _onUpdate: unknown,
       ctx: ExtensionContext,
     ) {
@@ -98,7 +98,7 @@ export function createStateToolDefinition(pi: ExtensionAPI) {
 
       switch (action) {
         case "cookies": {
-          result = await runAgentBrowser(["cookies", "get", ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["cookies", "get", ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         case "cookies_set": {
@@ -109,40 +109,42 @@ export function createStateToolDefinition(pi: ExtensionAPI) {
           if (params.domain) args.push("--domain", String(params.domain));
           if (params.path) args.push("--path", String(params.path));
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
           break;
         }
         case "cookies_clear": {
-          result = await runAgentBrowser(["cookies", "clear", ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["cookies", "clear", ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         case "storage_local": {
           const args = ["storage", "local"];
           if (params.key) args.push("get", String(params.key));
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
           break;
         }
         case "storage_session": {
           const args = ["storage", "session"];
           if (params.key) args.push("get", String(params.key));
           args.push(...extra);
-          result = await runAgentBrowser(args, session, cdpUrl);
+          result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
           break;
         }
         case "state_save": {
           if (!params.path) return errorResult("state_save requires path");
-          result = await runAgentBrowser(["state", "save", String(params.path), ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["state", "save", String(params.path), ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         case "state_load": {
           if (!params.path) return errorResult("state_load requires path");
-          result = await runAgentBrowser(["state", "load", String(params.path), ...extra], session, cdpUrl);
+          result = await runAgentBrowser(["state", "load", String(params.path), ...extra], session, cdpUrl, undefined, signal);
           break;
         }
         default:
           return errorResult(`Unknown action: ${action}`);
       }
+
+      checkAborted(result);
 
       if (!result.ok) {
         return {

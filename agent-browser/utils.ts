@@ -29,6 +29,8 @@ function forceKill(child: ChildProcess): void {
   }
 }
 
+export { forceKill };
+
 function findWindowsExe(): string {
   // 1. Look alongside this module under node_modules/agent-browser/bin
   try {
@@ -67,11 +69,18 @@ function getAgentBrowserBin(): string {
 
 export const AGENT_BROWSER_PATH = getAgentBrowserBin();
 
+export function checkAborted(result: AgentBrowserResult): void {
+  if (!result.ok && result.error === "aborted") {
+    throw new Error("aborted");
+  }
+}
+
 export async function runAgentBrowser(
   args: string[],
   session?: string,
   cdpUrl?: string,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<AgentBrowserResult> {
   const fullArgs: string[] = [];
   if (cdpUrl) fullArgs.push("--cdp", cdpUrl);
@@ -79,6 +88,11 @@ export async function runAgentBrowser(
   fullArgs.push(...args, "--json");
 
   return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve({ ok: false, output: "", error: "aborted" });
+      return;
+    }
+
     const child = spawn(AGENT_BROWSER_PATH, fullArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
@@ -89,6 +103,22 @@ export async function runAgentBrowser(
     let stderr = "";
     let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
     let hardResolveTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function cleanup() {
+      clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      if (hardResolveTimer) clearTimeout(hardResolveTimer);
+      if (signal) signal.removeEventListener("abort", abortHandler);
+    }
+
+    const abortHandler = () => {
+      stdout += "\n[ABORT: agent-browser execution aborted by user]";
+      forceKill(child);
+    };
+    if (signal) {
+      signal.addEventListener("abort", abortHandler, { once: true });
+    }
+
     const timer = setTimeout(() => {
       stdout += "\n[TIMEOUT: agent-browser did not finish within timeout; forcing termination]";
       forceKill(child);
@@ -119,9 +149,11 @@ export async function runAgentBrowser(
     function safeResolve(result: AgentBrowserResult) {
       if (resolved) return;
       resolved = true;
-      clearTimeout(timer);
-      if (forceKillTimer) clearTimeout(forceKillTimer);
-      if (hardResolveTimer) clearTimeout(hardResolveTimer);
+      cleanup();
+      if (signal?.aborted) {
+        resolve({ ok: false, output: stdout, error: "aborted" });
+        return;
+      }
       resolve(result);
     }
 

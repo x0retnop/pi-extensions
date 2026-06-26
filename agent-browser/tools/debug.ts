@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { runAgentBrowser, extraArgsToStrings, truncateOutput } from "../utils.js";
+import { runAgentBrowser, extraArgsToStrings, truncateOutput, checkAborted } from "../utils.js";
 import { getLatestState, normalizeState } from "../config.js";
 import { CUSTOM_STATE_TYPE, DEFAULT_CDP_URL } from "../types.js";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
@@ -72,7 +72,7 @@ export function createDebugToolDefinition(pi: ExtensionAPI) {
   async execute(
     _toolCallId: string,
     params: Record<string, unknown>,
-    _signal: AbortSignal | undefined,
+        signal: AbortSignal | undefined,
     _onUpdate: unknown,
     ctx: ExtensionContext,
   ) {
@@ -90,7 +90,7 @@ export function createDebugToolDefinition(pi: ExtensionAPI) {
 
     switch (action) {
       case "cdp_url": {
-        result = await runAgentBrowser(["get", "cdp-url", ...extra], session, cdpUrl);
+        result = await runAgentBrowser(["get", "cdp-url", ...extra], session, cdpUrl, undefined, signal);
         if (result.ok && result.output) {
           const httpUrl = "http://127.0.0.1:9222/";
           result = {
@@ -104,46 +104,48 @@ export function createDebugToolDefinition(pi: ExtensionAPI) {
         const cargs = ["console"];
         if (params.clear === true) cargs.push("--clear");
         cargs.push(...extra);
-        result = await runAgentBrowser(cargs, session, cdpUrl);
+        result = await runAgentBrowser(cargs, session, cdpUrl, undefined, signal);
         break;
       }
       case "errors": {
         const eargs = ["errors"];
         if (params.clear === true) eargs.push("--clear");
         eargs.push(...extra);
-        result = await runAgentBrowser(eargs, session, cdpUrl);
+        result = await runAgentBrowser(eargs, session, cdpUrl, undefined, signal);
         break;
       }
       case "trace_start": {
-        result = await runAgentBrowser(["trace", "start", ...extra], session, cdpUrl);
+        result = await runAgentBrowser(["trace", "start", ...extra], session, cdpUrl, undefined, signal);
         break;
       }
       case "trace_stop": {
         const args = ["trace", "stop"];
         if (params.output_path) args.push(String(params.output_path));
         args.push(...extra);
-        result = await runAgentBrowser(args, session, cdpUrl);
+        result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
         break;
       }
       case "react_tree": {
-        result = await runAgentBrowser(["react", "tree", ...extra], session, cdpUrl);
+        result = await runAgentBrowser(["react", "tree", ...extra], session, cdpUrl, undefined, signal);
         break;
       }
       case "react_inspect": {
         if (!params.fiber_id) return errorResult("react_inspect requires fiber_id");
-        result = await runAgentBrowser(["react", "inspect", String(params.fiber_id), ...extra], session, cdpUrl);
+        result = await runAgentBrowser(["react", "inspect", String(params.fiber_id), ...extra], session, cdpUrl, undefined, signal);
         break;
       }
       case "vitals": {
         const args = ["vitals"];
         if (params.url) args.push(String(params.url));
         args.push(...extra);
-        result = await runAgentBrowser(args, session, cdpUrl);
+        result = await runAgentBrowser(args, session, cdpUrl, undefined, signal);
         break;
       }
       default:
         return errorResult(`Unknown action: ${action}`);
     }
+
+    checkAborted(result);
 
     if (!result.ok) {
       return {
