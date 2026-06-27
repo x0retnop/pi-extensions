@@ -66,6 +66,8 @@ One exact command or first file to open. Example: "Open `src/engine.ts:112` and 
 - Every open task must be actionable, not vague.
 - Do not invent facts. If the history is unclear, say so in Open Questions.
 - Keep the document concise. Avoid narrative filler.
+- When a specific detail matters but is not preserved in this summary, mention it naturally. For example: "The exact error message is in the previous session" or "Details of the comparison are in the session history." Do not add machine-readable markers or explicit tool calls.
+- Use natural anchor phrases such as "in the previous session", "in the session history", "details are in the previous session", "the exact message is in the session history" so the next agent can retrieve missing specifics with `session_memory(action="find", query="...")`.
 
 **Constraints:**
 - Use ONLY the provided session history.

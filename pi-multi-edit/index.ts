@@ -103,7 +103,7 @@ export default function (pi: ExtensionAPI) {
         { preflight: true },
       );
       if (!preflight.result.success) {
-        buildSingleError(edit.path, preflight.result.message);
+        return buildSingleError(edit.path, preflight.result.message);
       }
 
       const { result } = await executeSingleEdit(
@@ -115,7 +115,7 @@ export default function (pi: ExtensionAPI) {
       );
 
       if (!result.success) {
-        buildSingleError(edit.path, result.message);
+        return buildSingleError(edit.path, result.message);
       }
 
       return buildSingleSuccess(result, result.stats, result.firstChangedLine);
@@ -161,7 +161,7 @@ export default function (pi: ExtensionAPI) {
       );
       const failedPreflights = preflight.results.filter((r: EditResult) => !r.success);
       if (failedPreflights.length > 0) {
-        buildMultiError(multi.path, preflight.results);
+        return buildMultiError(multi.path, preflight.results);
       }
 
       const { results, changed } = await executeMultiEdit(
@@ -174,7 +174,7 @@ export default function (pi: ExtensionAPI) {
 
       const failed = results.filter((r: EditResult) => !r.success);
       if (failed.length > 0) {
-        buildMultiError(multi.path, results);
+        return buildMultiError(multi.path, results);
       }
 
       const stats = changed ? results.find((r: EditResult) => r.stats)?.stats : undefined;
@@ -222,7 +222,7 @@ export default function (pi: ExtensionAPI) {
         { preflight: true },
       );
       if (!preflight.result.success) {
-        buildInsertError(edit.path, preflight.result.message);
+        return buildInsertError(edit.path, preflight.result.message);
       }
 
       const { result } = await executeInsert(
@@ -234,7 +234,7 @@ export default function (pi: ExtensionAPI) {
       );
 
       if (!result.success) {
-        buildInsertError(edit.path, result.message);
+        return buildInsertError(edit.path, result.message);
       }
 
       return buildInsertSuccess(result, result.stats, result.firstChangedLine);

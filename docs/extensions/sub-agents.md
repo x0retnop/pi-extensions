@@ -20,6 +20,7 @@ Spawns isolated child `pi` processes for delegated tasks.
 - Built-in agents: `scout-gemma`, `flash-worker`, `handoff-gemma`, `critic`.
 - Handoff reads the current session branch via `ctx.sessionManager.getBranch()`, formats it, and asks a child agent to produce markdown.
 - Child output is written to `cwd` as a markdown file.
+- Handoff summaries may mention that specific details remain in the session history; the next agent can retrieve them with `session_memory`.
 
 ## State
 

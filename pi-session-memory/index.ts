@@ -2,6 +2,8 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import path from "node:path";
+import { exportSessionToMarkdown, groupSessionsByProject, openSessionExportTUI, type ExportFormat } from "./local-export.js";
+import { extractProject } from "./project.js";
 
 // Allow runtime injection of a different base URL for tests.
 let BASE_URL =
@@ -130,22 +132,6 @@ function getLastSearch(ctx: ExtensionContext): StoredSearch | null {
   return null;
 }
 
-function extractProject(sourcePath: string): string {
-  const parts = sourcePath.split(/[\\/]/);
-  for (const part of parts) {
-    if (part.startsWith("--") && part.endsWith("--")) {
-      const inner = part.slice(2, -2);
-      if (inner.includes("--")) {
-        const segments = inner.split("--");
-        if (segments.length > 0 && /^[A-Za-z]$/.test(segments[0])) {
-          segments[0] = segments[0] + ":";
-        }
-        return segments.join("/");
-      }
-    }
-  }
-  return path.basename(path.dirname(sourcePath));
-}
 
 function formatHitPreview(hit: SearchHit, maxLen: number): string {
   let text = hit.text.trim();
@@ -298,6 +284,39 @@ async function actionContent(params: any, ctx: ExtensionContext): Promise<any> {
   };
 }
 
+async function actionFind(
+  params: any,
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+  onUpdate?: (update: any) => void,
+): Promise<any> {
+  onUpdate?.({
+    content: [{ type: "text", text: `Finding session context for: "${params.query}"...` }],
+    details: { phase: "find" },
+  });
+
+  const searchResult = await actionSearch(
+    { ...params, limit: params.limit ?? 1, minScore: params.minScore ?? 0.3 },
+    ctx,
+    pi,
+    onUpdate,
+  );
+
+  if (searchResult.isError || (searchResult.details as any)?.error) {
+    return searchResult;
+  }
+
+  const last = getLastSearch(ctx);
+  if (!last || last.hits.length === 0) {
+    return {
+      content: [{ type: "text", text: "No relevant session found for the query." }],
+      details: { found: false },
+    };
+  }
+
+  return actionContent({ sourcePath: last.hits[0].source_path, ...params }, ctx);
+}
+
 async function actionList(params: any, _ctx: ExtensionContext): Promise<any> {
   const cwd = params.cwd || _ctx.cwd || _ctx.sessionManager.getCwd();
   const scope = params.scope ?? "current";
@@ -332,6 +351,7 @@ const SessionMemoryActionSchema = Type.Union([
   Type.Literal("search"),
   Type.Literal("content"),
   Type.Literal("list"),
+  Type.Literal("find"),
 ]);
 
 export default function (pi: ExtensionAPI) {
@@ -339,12 +359,13 @@ export default function (pi: ExtensionAPI) {
     name: "session_memory",
     label: "Session Memory",
     description:
-      "Unified access to the user's past conversation history. Search for relevant sessions, list saved sessions, or read a specific session safely.",
+      "Unified access to the user's past conversation history. Search for relevant sessions, list saved sessions, read a specific session safely, or find-and-read the most relevant session in one step.",
     promptSnippet:
-      "Use when the user asks about something from a previous conversation. action=search returns preview hits; action=content reads one session; action=list enumerates recent sessions.",
+      "Use when the user asks about something from a previous conversation, or when a handoff/continuation file refers to details that are only in past sessions. action=search returns preview hits; action=content reads one session; action=list enumerates recent sessions; action=find searches and returns the top matching session content in one call.",
     promptGuidelines: [
-      "TRIGGERS — call this tool when the user uses phrases like: 'recall', 'remember', 'where did we', 'how did I before', 'as we discussed earlier', 'in a previous session', 'как я делал раньше', 'в прошлый раз', 'где мы обсуждали', 'напомни', 'найди в истории'.",
-      "WORKFLOW — start with action=search. Then use action=content with hitIndex from the search result if the user wants details. Never guess from training data.",
+      "TRIGGERS — call this tool when the user uses phrases like: 'recall', 'remember', 'where did we', 'how did I before', 'as we discussed earlier', 'in a previous session', 'как я делал раньше', 'в прошлый раз', 'где мы обсуждали', 'напомни', 'найди в историю'.",
+      "HANDOFF CONTINUATION — when starting from a handoff/continuation file, call this tool if the file mentions uncertain details, exact error messages, prior debugging, or decisions where the specifics are 'in the previous session' or 'in the session history'. Prefer action=find to retrieve the most relevant session content in one step. Do not treat the handoff as the only source of truth.",
+      "WORKFLOW — for quick verification use action=find. Use action=search when you want to compare multiple sessions, then action=content with hitIndex for details. Use action=content directly when you already have sourcePath or hitIndex. Never guess from training data.",
       "QUERY QUALITY — for action=search use specific technical terms, file names, error messages, or framework names. Avoid vague single words.",
       "LISTING — use action=list when the user asks to see recent sessions without a specific query. Scope can be 'current' or 'all'.",
       "SCORE INTERPRETATION — score is cosine similarity [-1, 1]. Higher is better. Values > 0.5 are usually strongly relevant. Compare relative magnitudes within the result set.",
@@ -355,7 +376,7 @@ export default function (pi: ExtensionAPI) {
       action: SessionMemoryActionSchema,
       query: Type.Optional(
         Type.String({
-          description: "Required for action=search. Be specific — use technical terms, file names, or problem descriptions.",
+          description: "Required for action=search and action=find. Be specific — use technical terms, file names, error messages, or problem descriptions.",
         }),
       ),
       sourcePath: Type.Optional(
@@ -437,9 +458,18 @@ export default function (pi: ExtensionAPI) {
           return actionContent(params, ctx);
         case "list":
           return actionList(params, ctx);
+        case "find":
+          if (!params.query?.trim()) {
+            return {
+              content: [{ type: "text", text: "Error: action=find requires a query parameter." }],
+              details: { error: "Missing query" },
+              isError: true,
+            };
+          }
+          return actionFind(params, ctx, pi, onUpdate);
         default:
           return {
-            content: [{ type: "text", text: `Error: unknown action "${params.action}". Use search, content, or list.` }],
+            content: [{ type: "text", text: `Error: unknown action "${params.action}". Use search, content, list, or find.` }],
             details: { error: "Unknown action" },
             isError: true,
           };
@@ -450,7 +480,7 @@ export default function (pi: ExtensionAPI) {
       const a = args as any;
       const action = a.action || "?";
       let detail = "";
-      if (action === "search") detail = a.query || "";
+      if (action === "search" || action === "find") detail = a.query || "";
       else if (action === "content") detail = a.sourcePath ? path.basename(a.sourcePath) : `hitIndex=${a.hitIndex ?? "?"}`;
       else if (action === "list") detail = a.scope || "current";
       if (detail.length > 40) detail = detail.slice(0, 37) + "...";
@@ -498,7 +528,9 @@ export default function (pi: ExtensionAPI) {
       "[1] Status",
       "[2] Rebuild index",
       "[3] Search sessions",
-      "[4] Resume a session",
+      "[4] Find session (search + read top hit)",
+      "[5] Resume a session",
+      "[6] Export session to Markdown",
     ]);
 
     if (!choice) {
@@ -520,7 +552,13 @@ export default function (pi: ExtensionAPI) {
         await runSearch(ctx);
         break;
       case 4:
+        await runFind(ctx);
+        break;
+      case 5:
         await runResume(ctx);
+        break;
+      case 6:
+        await runExport(ctx);
         break;
       default:
         ctx.ui.notify("Unknown choice", "error");
@@ -566,14 +604,105 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify("Cancelled", "info");
       return;
     }
+
+    let result: any;
     try {
-      const result = await actionSearch({ action: "search", query: query.trim(), limit: 5, minScore: 0.3 }, ctx as any, pi);
-      const text = (result.content.find((c: any) => c.type === "text") as any)?.text || "";
-      ctx.ui.notify(text.length > 800 ? text.slice(0, 800) + "\n...[truncated]" : text, "info");
+      result = await actionSearch({ action: "search", query: query.trim(), limit: 8, minScore: 0.3 }, ctx as any, pi);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       ctx.ui.notify(`Error searching: ${msg}`, "error");
+      return;
     }
+
+    if (result.isError || result.details?.error) {
+      const text = (result.content.find((c: any) => c.type === "text") as any)?.text || String(result.details?.error);
+      ctx.ui.notify(text, "error");
+      return;
+    }
+
+    const last = getLastSearch(ctx);
+    if (!last || last.hits.length === 0) {
+      ctx.ui.notify("No relevant sessions found.", "warning");
+      return;
+    }
+
+    const options = last.hits.map((h, i) => {
+      const project = extractProject(h.source_path);
+      const date = h.date ? h.date.replace("T", " ").slice(0, 19) : "unknown";
+      const preview = h.text.trim().replace(/\s+/g, " ").slice(0, 80);
+      return `[${i}] ${project} · ${date} · ${preview}`;
+    });
+    options.push("[cancel]");
+
+    const selected = await ctx.ui.select("Select a result to read", options);
+    if (!selected || selected === "[cancel]") {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+
+    const idxMatch = selected.match(/^\[(\d+)\]/);
+    const idx = idxMatch ? parseInt(idxMatch[1], 10) : -1;
+    const hit = last.hits[idx];
+    if (!hit) {
+      ctx.ui.notify("Could not resolve selected result", "error");
+      return;
+    }
+
+    await readSessionIntoEditor(ctx, hit.source_path);
+  }
+
+  async function runFind(ctx: any) {
+    const query = await ctx.ui.input("Find session context", "e.g., exact error message from typecheck");
+    if (!query?.trim()) {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+
+    let result: any;
+    try {
+      result = await actionFind({ action: "find", query: query.trim(), limit: 1, minScore: 0.3 }, ctx as any, pi);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.ui.notify(`Error finding session: ${msg}`, "error");
+      return;
+    }
+
+    if (result.isError || result.details?.error) {
+      const text = (result.content.find((c: any) => c.type === "text") as any)?.text || String(result.details?.error);
+      ctx.ui.notify(text, "error");
+      return;
+    }
+
+    if (!result.details?.sourcePath) {
+      ctx.ui.notify("No relevant session found.", "warning");
+      return;
+    }
+
+    await readSessionIntoEditor(ctx, result.details.sourcePath as string);
+  }
+
+  async function readSessionIntoEditor(ctx: any, sourcePath: string) {
+    let result: Awaited<ReturnType<typeof apiSessionContent>>;
+    try {
+      result = await apiSessionContent(sourcePath, 30, 4000, 1000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.ui.notify(`Error loading session: ${msg}`, "error");
+      return;
+    }
+
+    const headerParts = [
+      `## Session: ${path.basename(sourcePath)}`,
+      `Project: ${result.project || extractProject(sourcePath)}`,
+      `Date: ${result.date || "unknown"}`,
+      `Messages: ${result.returned_messages}/${result.total_messages}${result.truncated ? " (truncated)" : ""}`,
+      `sourcePath: ${sourcePath}`,
+      "",
+      "---",
+      "",
+    ];
+    ctx.ui.setEditorText(headerParts.join("\n") + result.text);
+    ctx.ui.notify("Session loaded into editor. Review and press Enter to send.", "info");
   }
 
   async function runResume(ctx: any) {
@@ -639,8 +768,53 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify("Session context loaded into editor. Review and press Enter to send.", "info");
   }
 
+  async function runExport(ctx: any) {
+    const cwd = ctx.cwd || ctx.sessionManager.getCwd();
+    const groups = groupSessionsByProject(200);
+    if (groups.length === 0) {
+      ctx.ui.notify("No saved sessions found.", "warning");
+      return;
+    }
+
+    const sourcePath = await openSessionExportTUI(ctx.ui, groups);
+    if (!sourcePath) {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+
+    const formatChoice = await ctx.ui.select("Export format", [
+      "[1] chat — only user/assistant text",
+      "[2] outline — user/assistant + short action summary",
+      "[3] full — everything including tool calls and results",
+    ]);
+    if (!formatChoice) {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+    const formatMap: Record<string, ExportFormat> = {
+      "[1] chat — only user/assistant text": "chat",
+      "[2] outline — user/assistant + short action summary": "outline",
+      "[3] full — everything including tool calls and results": "full",
+    };
+    const format = formatMap[formatChoice];
+    if (!format) {
+      ctx.ui.notify("Unknown format", "error");
+      return;
+    }
+
+    const result = exportSessionToMarkdown(sourcePath, format, cwd);
+    if (result.ok) {
+      ctx.ui.notify(
+        `Exported to ${path.basename(result.path)}\n${result.entries} entries, ${result.chars} chars`,
+        "info"
+      );
+    } else {
+      ctx.ui.notify(`Export failed: ${(result as { error: string }).error}`, "error");
+    }
+  }
+
   pi.registerCommand("session-memory", {
-    description: "Open the session memory menu (status, rebuild, search, resume)",
+    description: "Open the session memory menu (status, rebuild, search, find, resume, export)",
     handler: async (_args, ctx) => {
       await showMainMenu(ctx);
     },
