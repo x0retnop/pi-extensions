@@ -70,7 +70,7 @@ Utility scripts live in `scripts/`:
 - `scripts/run-tests.py` — compile and run unit tests.
 - `scripts/check-pi-sync.py` — Pi CLI upgrade compatibility check.
 - `scripts/pi_session_inspect.py` — session log forensics.
-- `scripts/pi-session-compressor-tune.py` — analyze recent Pi sessions and suggest `context-compressor` settings.
+- `scripts/pi-session-compressor-tune.py` — analyze recent Pi sessions and suggest tuned compression settings (historically used with `context-compressor`).
   Use `--recent N`, `--cwd-contains "..."`, or `--json` to narrow the analysis.
 
 ## Skills

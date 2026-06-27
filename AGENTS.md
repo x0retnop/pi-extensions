@@ -48,7 +48,7 @@ You are working in the **dev workspace** for Pi Coding Agent extensions.
 | `scripts/run-tests.py` | Compile and run the unit-test suite (`tests/unit/`). | After code changes, before commits that touch logic. |
 | `scripts/check-pi-sync.py` | Compare installed Pi CLI version with upstream CHANGELOG and scan local code for obsolete API patterns. | After `pi` CLI updates or before risky refactors. |
 | `scripts/pi_session_inspect.py` | Forensics on `~/.pi/agent/sessions/*.jsonl`: tool-call counts, errors, edit failures. | Debugging why a tool failed or auditing recent sessions. |
-| `scripts/pi-session-compressor-tune.py` | Analyze Pi sessions and suggest tuned `context-compressor` settings. | After installing `context-compressor` or when tuning compression thresholds. |
+| `scripts/pi-session-compressor-tune.py` | Analyze Pi sessions and suggest tuned compression settings. | When tuning context compression thresholds. |
 
 ## Style
 
