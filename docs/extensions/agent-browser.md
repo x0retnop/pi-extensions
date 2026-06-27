@@ -1,5 +1,7 @@
 # agent-browser
 
+> **Status: archived / inactive.** This extension was moved to `Inactive/` by the user. The source folder no longer exists in the dev workspace, so this page is kept only for historical reference. Do not rely on it as a current source of truth.
+
 Gated wrapper around the `agent-browser` CLI.
 
 ## What it does
@@ -50,7 +52,9 @@ browser action:open url:https://grok.com cdp_url:http://127.0.0.1:9222/
 You can also save/load auth state with `browser_state action:state_save` /
 `browser_state action:state_load`.
 
-## Source
+## Source (historical)
+
+When it was active, the source lived under `agent-browser/`:
 
 - `agent-browser/index.ts` — registration, session events, `/browser` command.
 - `agent-browser/config.ts` — per-session state helpers.

@@ -14,7 +14,7 @@ Semantic search over past Pi sessions via the 0x010 Session Vector Index.
   - `action: "search"` — semantic search across indexed sessions. Good for finding exact error messages, prior debugging steps, or decisions mentioned in a handoff file.
   - `action: "content"` — read a specific session with safe limits.
   - `action: "list"` — enumerate recent sessions.
-  - `action: "find"` — search and return the most relevant session content in one step.
+  - `action: "find"` — search and return the most relevant session content in one step. Prefer this when a handoff file points to details kept in session history.
 
 ## Important behaviors
 

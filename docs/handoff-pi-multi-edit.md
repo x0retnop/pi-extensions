@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-06-13
 **Extension:** `pi-multi-edit/`
-**Status:** Functional but fragile. Needs ongoing monitoring.
+**Status:** ⚠️ **OUTDATED — historical reference only.** This document describes the pre-refactor design (old `oldText`/`newText` schema, `multi[]` batches, `partialApply`, and files like `classic.ts` that no longer exist). The extension was refactored into separate `edit`, `multi_edit`, and `insert` tools using `old_string`/`new_string`. For current behavior, see `docs/extensions/pi-multi-edit.md` and the source files under `pi-multi-edit/`.
 
 ---
 

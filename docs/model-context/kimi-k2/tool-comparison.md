@@ -83,7 +83,9 @@ Implementation notes from source:
 
 ## 4. Current Pi `pi-multi-edit`
 
-Schema after `prepareArguments`:
+> **Note:** This section was written before the 2026-06 refactor. The current implementation uses three separate tools: `edit` (single `old_string`/`new_string`), `multi_edit` (batch `edits: [{old_string, new_string}]`), and `insert` (`insert_line`/`new_string`). `partialApply` and the `multi[]` multi-file format were removed.
+
+Schema after `prepareArguments` (historical):
 
 ```json
 {

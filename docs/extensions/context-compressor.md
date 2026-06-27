@@ -1,5 +1,7 @@
 # context-compressor
 
+> **Status: archived / inactive.** This extension was moved to `Inactive/context-compressor.zip` by the user. The source folder no longer exists in the dev workspace, so this page is kept only for historical reference. Do not rely on it as a current source of truth.
+
 Lightweight, transparent context compression for long autonomous sessions.
 
 ## What it does
@@ -12,7 +14,9 @@ Lightweight, transparent context compression for long autonomous sessions.
 - Leaves the original system prompt untouched.
 - Falls back gracefully if summarization fails.
 
-## Files
+## Files (historical)
+
+When it was active, the source lived under `context-compressor/`:
 
 - `index.ts` — main extension wiring.
 - `config.ts` — settings persistence in `~/.pi/agent/settings.json` under `contextCompressor`.

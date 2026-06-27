@@ -17,11 +17,10 @@ See `AGENTS.md` and `docs/pi-workflow.md` for the full workflow.
 ```
 a-rewind          — guard against fake tool-call announcements; manual rewind
 auto-trust        — auto-approve safe commands
-context-compressor — lightweight same-model context compression with KEY FACTS
 context-guard     — prompt cleanup, tool gating, skill control
 grep-tool         — project-wide grep override
 model-manager     — dynamic provider/model registration, /mm TUI
-pi-multi-edit     — exact-replacement edit tool with batch modes
+pi-multi-edit     — exact-replacement edit, batch, and insert tools
 pi-project-memory — vector project facts + todos via 0x010
 pi-session-memory — semantic search over past sessions via 0x010
 pi-web-search     — web search/fetch/code search via 0x010 MCP
@@ -31,7 +30,16 @@ simple-gate       — path/command permission gate
 sub-agents        — child pi agents (/handoff, /sub-agents)
 ```
 
-Each extension is documented in `docs/extensions/<name>.md`.
+Each active extension is documented in `docs/extensions/<name>.md`.
+
+## Archived extensions
+
+The following extensions were moved to `Inactive/` by the user and are no longer active:
+
+- `agent-browser` — gated browser automation wrapper.
+- `context-compressor` — lightweight same-model context compression with KEY FACTS.
+
+Do not treat their `docs/extensions/<name>.md` pages as current source of truth unless they are explicitly re-activated.
 
 ## Type-checking
 

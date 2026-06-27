@@ -39,7 +39,7 @@ Extensions that call `pi.registerTool()` with the same name as a built-in tool r
 | Tool | Extension | Notes |
 |------|-----------|-------|
 | `read` | `read-mode` | Mode-aware: overview/section/grep/headtail/raw |
-| `edit` | `pi-multi-edit` | Exact replacement with batch + partialApply |
+| `edit` | `pi-multi-edit` | Exact single replacement; separate `multi_edit` for batch and `insert` for line insertion |
 | `grep` | `grep-tool` | ripgrep-based, with broad-query guard |
 
 No two active extensions override the same tool, so there is no conflict today.

@@ -87,6 +87,10 @@ Guideline: "Use write only for new files or complete rewrites."
 
 `write` is already the right primitive for full-file writes.  It matches `createfile` from the model's training vocabulary.  No change needed except maybe making the description slightly more explicit about when to use it vs. `edit`.
 
+### Note on current `pi-multi-edit`
+
+Since this document was written, `pi-multi-edit` was refactored to match Option A below more closely: a single `edit` tool with `old_string`/`new_string`/`replace_all`, a separate `multi_edit` tool for same-file batches, and an `insert` tool for line insertion. The built-in `edit` override still uses `renderShell: "self"` to avoid native renderer mismatches.
+
 ---
 
 ## 3. Reusable utilities in Pi runtime

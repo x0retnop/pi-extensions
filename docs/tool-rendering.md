@@ -121,7 +121,7 @@ The native `edit` renderer expects:
 - Tool arguments shaped as `{ path, edits: [{oldText, newText}] }`
 - `details.diff` in **unified diff** format (`@@` headers, `+`/`-` lines)
 
-If your custom `edit` uses a different schema (`multi` or `File:` prefixed diffs), the native renderer will mis-parse the diff and may show duplicated or broken output. Always provide custom renderers when you change the argument schema.
+If your custom `edit` uses a different schema (for example the current `pi-multi-edit` extension uses `old_string`/`new_string` and a separate `multi_edit` tool), the native renderer will mis-parse the diff and may show duplicated or broken output. Always provide custom renderers when you change the argument schema.
 
 ### Diff format for custom `renderResult`
 
