@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { resolve } from "node:path";
-import { applyEdits } from "../../pi-multi-edit/engine.js";
-import { parseEdits, prepareArguments } from "../../pi-multi-edit/params.js";
-import type { EditItem, Workspace } from "../../pi-multi-edit/types.js";
+
+import { executeMultiEdit, executeSingleEdit } from "../../pi-multi-edit/engine.js";
+import { parseMultiEdit, parseSingleEdit } from "../../pi-multi-edit/params.js";
+import type { Workspace } from "../../pi-multi-edit/types.js";
 
 const cwd = "C:/10x001/project";
 
@@ -32,116 +33,122 @@ function makeWorkspace(files: Record<string, string>): Workspace {
 
 test("single edit replaces text", async () => {
   const ws = makeWorkspace({ [abs("a.txt")]: "hello world" });
-  const edits: EditItem[] = [{ path: "a.txt", oldText: "hello", newText: "hi" }];
-  const results = await applyEdits(edits, ws, cwd);
-  assert.strictEqual(results.length, 1);
-  assert.strictEqual(results[0].success, true);
+  const result = await executeSingleEdit(
+    { path: "a.txt", old_string: "hello", new_string: "hi" },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, true);
   assert.strictEqual(await ws.readText(abs("a.txt")), "hi world");
 });
 
-test("batch edit applies multiple changes to one file in order", async () => {
-  const ws = makeWorkspace({ [abs("a.txt")]: "a b c" });
-  const edits: EditItem[] = [
-    { path: "a.txt", oldText: "a", newText: "x" },
-    { path: "a.txt", oldText: "b", newText: "y" },
-    { path: "a.txt", oldText: "c", newText: "z" },
-  ];
-  const results = await applyEdits(edits, ws, cwd);
-  assert.strictEqual(results.every((r) => r.success), true);
-  assert.strictEqual(await ws.readText(abs("a.txt")), "x y z");
+test("single edit delete block", async () => {
+  const ws = makeWorkspace({ [abs("a.txt")]: "hello world" });
+  const result = await executeSingleEdit(
+    { path: "a.txt", old_string: "hello ", new_string: "" },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, true);
+  assert.strictEqual(await ws.readText(abs("a.txt")), "world");
 });
 
-test("replaceAll edits all occurrences", async () => {
+test("replace_all edits all occurrences", async () => {
   const ws = makeWorkspace({ [abs("a.txt")]: "foo foo foo" });
-  const edits: EditItem[] = [{ path: "a.txt", oldText: "foo", newText: "bar", replaceAll: true }];
-  const results = await applyEdits(edits, ws, cwd);
-  assert.strictEqual(results[0].success, true);
+  const result = await executeSingleEdit(
+    { path: "a.txt", old_string: "foo", new_string: "bar", replace_all: true },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, true);
   assert.strictEqual(await ws.readText(abs("a.txt")), "bar bar bar");
 });
 
-test("non-unique oldText fails without replaceAll", async () => {
+test("non-unique old_string fails without replace_all", async () => {
   const ws = makeWorkspace({ [abs("a.txt")]: "foo foo" });
-  const edits: EditItem[] = [{ path: "a.txt", oldText: "foo", newText: "bar" }];
-  await assert.rejects(() => applyEdits(edits, ws, cwd));
+  const result = await executeSingleEdit(
+    { path: "a.txt", old_string: "foo", new_string: "bar" },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, false);
 });
 
-test("mismatch fails atomically without partialApply", async () => {
+test("multi_edit applies sequential changes", async () => {
+  const ws = makeWorkspace({ [abs("a.txt")]: "a b c" });
+  const result = await executeMultiEdit(
+    {
+      path: "a.txt",
+      edits: [
+        { old_string: "a", new_string: "x" },
+        { old_string: "b", new_string: "y" },
+        { old_string: "c", new_string: "z" },
+      ],
+    },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.results.every((r) => r.success), true);
+  assert.strictEqual(await ws.readText(abs("a.txt")), "x y z");
+});
+
+test("multi_edit fails atomically on mismatch", async () => {
   const ws = makeWorkspace({ [abs("a.txt")]: "abc" });
-  const edits: EditItem[] = [
-    { path: "a.txt", oldText: "a", newText: "x" },
-    { path: "a.txt", oldText: "missing", newText: "y" },
-  ];
-  await assert.rejects(() => applyEdits(edits, ws, cwd));
+  await assert.rejects(
+    () =>
+      executeMultiEdit(
+        {
+          path: "a.txt",
+          edits: [
+            { old_string: "a", new_string: "x" },
+            { old_string: "missing", new_string: "y" },
+          ],
+        },
+        ws,
+        cwd,
+        undefined,
+      ),
+    /Batch edit failed/,
+  );
   assert.strictEqual(await ws.readText(abs("a.txt")), "abc");
 });
 
-test("partialApply applies matching edits and reports failures", async () => {
-  const ws = makeWorkspace({ [abs("a.txt")]: "abc" });
-  const edits: EditItem[] = [
-    { path: "a.txt", oldText: "a", newText: "x" },
-    { path: "a.txt", oldText: "missing", newText: "y" },
-  ];
-  const results = await applyEdits(edits, ws, cwd, undefined, { continueOnError: true });
-  assert.strictEqual(results[0].success, true);
-  assert.strictEqual(results[1].success, false);
-  assert.strictEqual(await ws.readText(abs("a.txt")), "xbc");
-});
-
-test("multi-file batch edits different files", async () => {
-  const ws = makeWorkspace({
-    [abs("a.txt")]: "aaa",
-    [abs("b.txt")]: "bbb",
+test("parseSingleEdit accepts minimal input", () => {
+  const parsed = parseSingleEdit({
+    path: "a.txt",
+    old_string: "foo",
+    new_string: "bar",
   });
-  const edits: EditItem[] = [
-    { path: "a.txt", oldText: "aaa", newText: "AAA" },
-    { path: "b.txt", oldText: "bbb", newText: "BBB" },
-  ];
-  const results = await applyEdits(edits, ws, cwd);
-  assert.strictEqual(results.every((r) => r.success), true);
-  assert.strictEqual(await ws.readText(abs("a.txt")), "AAA");
-  assert.strictEqual(await ws.readText(abs("b.txt")), "BBB");
+  assert.deepStrictEqual(parsed, { path: "a.txt", old_string: "foo", new_string: "bar", replace_all: false });
 });
 
-test("prepareArguments normalizes file_path alias to path", () => {
-  const prep = prepareArguments({
-    file_path: "C:/test/file.txt",
-    oldText: "foo",
-    newText: "bar",
-  });
-  assert.strictEqual(prep.path, "C:/test/file.txt");
-  assert.strictEqual("file_path" in prep, false);
-});
-
-test("prepareArguments normalizes path alias inside edits", () => {
-  const prep = prepareArguments({
-    edits: [{ filepath: "C:/test/file.txt", oldText: "foo", newText: "bar" }],
-  });
-  assert.ok(Array.isArray(prep.edits));
-  assert.strictEqual(prep.edits?.[0].path, "C:/test/file.txt");
-  assert.strictEqual("filepath" in (prep.edits?.[0] ?? {}), false);
-});
-
-test("parseEdits accepts file_path alias on top level", () => {
-  const parsed = parseEdits({
-    file_path: "C:/test/file.txt",
-    oldText: "foo",
-    newText: "bar",
-  });
-  assert.strictEqual(parsed.edits.length, 1);
-  assert.strictEqual(parsed.edits[0].path, "C:/test/file.txt");
-});
-
-test("parseEdits accepts filepath alias inside edits", () => {
-  const parsed = parseEdits({
-    edits: [{ filepath: "C:/test/file.txt", oldText: "foo", newText: "bar" }],
-  });
-  assert.strictEqual(parsed.edits.length, 1);
-  assert.strictEqual(parsed.edits[0].path, "C:/test/file.txt");
-});
-
-test("parseEdits throws clear error for empty top-level path", () => {
+test("parseSingleEdit rejects missing path", () => {
   assert.throws(
-    () => parseEdits({ path: "", oldText: "foo", newText: "bar" }),
+    () => parseSingleEdit({ old_string: "foo", new_string: "bar" } as any),
     /Missing path/,
+  );
+});
+
+test("parseMultiEdit accepts batch", () => {
+  const parsed = parseMultiEdit({
+    path: "a.txt",
+    edits: [
+      { old_string: "foo", new_string: "bar" },
+      { old_string: "baz", new_string: "qux", replace_all: true },
+    ],
+  });
+  assert.strictEqual(parsed.edits.length, 2);
+  assert.strictEqual(parsed.edits[1].replace_all, true);
+});
+
+test("parseMultiEdit rejects empty edits", () => {
+  assert.throws(
+    () => parseMultiEdit({ path: "a.txt", edits: [] } as any),
+    /Missing edits/,
   );
 });

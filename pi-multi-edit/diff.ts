@@ -1,11 +1,9 @@
-import type { ChangeStats } from "./types.js";
+export interface ChangeStats {
+  added: number;
+  removed: number;
+}
 
-/** Line-level change stats for TUI (+n / -n). No diff text is stored or returned. */
-
-export function computeChangeStats(
-  oldContent: string,
-  newContent: string,
-): ChangeStats {
+export function computeChangeStats(oldContent: string, newContent: string): ChangeStats {
   if (oldContent === newContent) return { added: 0, removed: 0 };
 
   const oldLines = oldContent.split("\n");
@@ -16,8 +14,7 @@ export function computeChangeStats(
   // Guard huge files — approximate via line-count delta.
   if (m * n > 500_000) {
     const delta = newLines.length - oldLines.length;
-    if (delta >= 0) return { added: delta, removed: 0 };
-    return { added: 0, removed: -delta };
+    return delta >= 0 ? { added: delta, removed: 0 } : { added: 0, removed: -delta };
   }
 
   const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));

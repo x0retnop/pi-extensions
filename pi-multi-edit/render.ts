@@ -1,6 +1,3 @@
-import { resolvePathFromRecord } from "./params.js";
-import type { ChangeStats, EditMode } from "./types.js";
-
 function charWidth(ch: string): number {
   const cp = ch.codePointAt(0) ?? 0;
   if (cp < 0x1000) return 1;
@@ -63,94 +60,36 @@ function shortenPath(p: string): string {
   return p;
 }
 
-function collectEditEntries(args: Record<string, unknown>): unknown[] {
-  const edits = Array.isArray(args.edits) ? args.edits : [];
-  if (edits.length > 0) return edits;
-  // Deprecated fallback; keep only to avoid breaking legacy callers.
-  if (Array.isArray(args.multi) && args.multi.length > 0) return args.multi;
-  if (typeof args.oldText === "string" && typeof args.newText === "string") {
-    return [{ oldText: args.oldText, newText: args.newText }];
-  }
-  return [];
+function resolvePath(args: Record<string, unknown>): string | undefined {
+  return typeof args.path === "string" && args.path ? args.path : undefined;
 }
 
-function resolveMode(args: Record<string, unknown>): EditMode {
-  const entries = collectEditEntries(args);
-  return entries.length > 1 ? "batch" : "single";
-}
-
-function collectPaths(args: Record<string, unknown>): Set<string> {
-  const entries = collectEditEntries(args);
-  const topPath = resolvePathFromRecord(args);
-  const paths = new Set<string>();
-  for (const e of entries) {
-    if (e && typeof e === "object") {
-      const p = resolvePathFromRecord(e as Record<string, unknown>) ?? topPath;
-      if (p) paths.add(p);
-    }
-  }
-  return paths;
-}
-
-function resolveTarget(args: Record<string, unknown>, mode: EditMode): string {
-  const paths = collectPaths(args);
-  if (paths.size === 0) return "...";
-  if (paths.size === 1) return shortenPath([...paths][0]);
-  return `${paths.size} files`;
+function editCount(args: Record<string, unknown>): number {
+  if (Array.isArray(args.edits)) return args.edits.length;
+  return 1;
 }
 
 function hasReplaceAll(args: Record<string, unknown>): boolean {
-  if (args.replaceAll === true) return true;
-  const entries = collectEditEntries(args);
-  for (const e of entries) {
-    if (e && typeof e === "object" && (e as Record<string, unknown>).replaceAll === true) {
-      return true;
-    }
+  if (args.replace_all === true) return true;
+  if (Array.isArray(args.edits)) {
+    return args.edits.some(
+      (e) => e && typeof e === "object" && (e as Record<string, unknown>).replace_all === true,
+    );
   }
   return false;
 }
 
-export function formatCallHeader(args: Record<string, unknown>, theme: any): string {
-  const mode = resolveMode(args);
-  const label = `edit:${mode}`;
-  const target = resolveTarget(args, mode);
-  const count = Math.max(collectEditEntries(args).length, 1);
-  const suffix = hasReplaceAll(args) ? ", replaceAll" : "";
-
+export function formatCallHeader(name: string, args: Record<string, unknown>, theme: any): string {
+  const path = resolvePath(args);
+  const target = path ? shortenPath(path) : "...";
+  const count = editCount(args);
+  const suffix = hasReplaceAll(args) ? ", replace_all" : "";
+  const countLabel = name === "multi_edit" ? `(${count}${suffix})` : "";
   return (
-    `${theme.fg("toolTitle", theme.bold(label))} ` +
+    `${theme.fg("toolTitle", theme.bold(name))} ` +
     `${theme.fg("accent", target)} ` +
-    `${theme.fg("dim", `(${count}${suffix})`)}`
-  );
-}
-
-function formatStats(stats: ChangeStats | undefined, theme: any): string {
-  if (!stats || (stats.added === 0 && stats.removed === 0)) {
-    return theme.fg("dim", "done");
-  }
-  return (
-    theme.fg("toolDiffAdded", `+${stats.added}`) +
-    theme.fg("dim", " / ") +
-    theme.fg("toolDiffRemoved", `-${stats.removed}`)
-  );
-}
-
-export function formatResultLines(
-  result: any,
-  context: any,
-  theme: any,
-  isPartial: boolean,
-): string[] {
-  if (isPartial) {
-    return [theme.fg("dim", "…")];
-  }
-
-  if (context?.isError) {
-    const text = result?.content?.[0]?.text ?? "failed";
-    return text.split("\n").map((line: string) => theme.fg("error", line));
-  }
-
-  return [formatStats(result?.details?.stats, theme)];
+    `${theme.fg("dim", countLabel)}`
+  ).trim();
 }
 
 export function makeTextComponent(getLines: (width: number) => string[]) {

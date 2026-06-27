@@ -1,91 +1,168 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { applyEdits } from "./engine.js";
+import { executeMultiEdit, executeSingleEdit } from "./engine.js";
 import {
-  buildPartialErrorResponse,
-  buildPreflightError,
-  buildSuccessResponse,
+  buildMultiError,
+  buildMultiSuccess,
+  buildSingleError,
+  buildSingleSuccess,
 } from "./messages.js";
-import { editParameters, parseEdits, prepareArguments } from "./params.js";
 import {
-  formatCallHeader,
-  formatResultLines,
-  makeTextComponent,
-} from "./render.js";
+  multiEditParameters,
+  parseMultiEdit,
+  parseSingleEdit,
+  singleEditParameters,
+} from "./params.js";
+import { formatCallHeader, makeTextComponent } from "./render.js";
+import type { EditResult } from "./types.js";
 import { createRealWorkspace, createVirtualWorkspace } from "./workspace.js";
+
+const EDIT_PROMPT_SNIPPET =
+  'Single replacement: {"path":"src/app.py","old_string":"foo","new_string":"bar"}. ' +
+  'To delete a block, set new_string to "".';
+
+const EDIT_GUIDELINES = [
+  "Use edit for a single replacement in one file.",
+  "old_string must match exactly including indentation, tabs, quotes, and trailing whitespace. Copy verbatim from read output.",
+  "If old_string appears more than once, either make it unique with more context or set replace_all: true.",
+  "For multiple independent edits in the same file, use multi_edit; do not chain several edit calls to the same file in one turn.",
+  "After a successful edit, the file is stale. Before calling edit again, re-read the current section and rebuild old_string from fresh output.",
+];
+
+const MULTI_EDIT_PROMPT_SNIPPET =
+  'Batch replacement: {"path":"src/app.py","edits":[{"old_string":"foo","new_string":"bar"},{"old_string":"baz","new_string":"qux"}]}.';
+
+const MULTI_EDIT_GUIDELINES = [
+  "Use multi_edit for several independent replacements in ONE file.",
+  "Edits are applied sequentially: edits[1] sees the file after edits[0] is applied.",
+  "Each old_string must be unique in the current file state unless replace_all is true for that edit.",
+  "If any edit fails, the whole batch is aborted unless the tool supports partial apply.",
+  "Prefer edit (single) for one change; prefer multi_edit only when the changes are in different, non-overlapping parts of the file.",
+];
 
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "edit",
     label: "edit",
     description:
-      "Atomic exact text replacement. Two modes: " +
-      "(1) single edit: {path, oldText, newText}; " +
-      "(2) batch edit: {path, edits:[{oldText, newText}, ...]}. " +
-      "oldText must match exactly. newText \"\" deletes the matched block. " +
-      "By default batch edits are atomic; set partialApply:true to apply matching edits and report failures separately.",
-    promptSnippet:
-      'Single edit: {\"path\":\"src/app.py\",\"oldText\":\"foo\",\"newText\":\"bar\"}. ' +
-      'Batch edit: {\"path\":\"src/app.py\",\"edits\":[{\"oldText\":\"foo\",\"newText\":\"bar\"},{\"oldText\":\"baz\",\"newText\":\"qux\"}]}.',
-    promptGuidelines: [
-      "Use `edits[]` for multiple changes in the same file; top-level `path` is required",
-      'Example batch: {\"path\":\"src/app.py\",\"edits\":[{\"oldText\":\"foo\",\"newText\":\"bar\"},{\"oldText\":\"baz\",\"newText\":\"qux\"}]}',
-      "PREFER batching multiple same-file changes into one `edits[]` call instead of many separate `edit` calls",
-      "NEVER send multiple separate `edit` calls for the same file — batch them",
-      "`path` is always a top-level or per-item field; NEVER put `path` inside `oldText` or `newText`",
-      "oldText MUST match exactly including indentation (tabs vs spaces), quotes (' vs \"), backticks, and trailing whitespace. Copy verbatim from `read` output",
-      "After a successful `edit` the file is stale. Before sending another `edit` to the same file, re-read the current section and rebuild `oldText` from fresh output. Do not reuse old `oldText` from a previous call",
-      "If preflight fails: STOP, re-read the exact current block, fix `oldText` from fresh output, then retry the WHOLE call. Do NOT patch `oldText` from memory or split the batch into separate calls",
-      "Set `partialApply:true` when batch edits are INDEPENDENT — matching edits will be applied and only failures are reported separately",
-      "When `partialApply:true` is used, retry only the failed edits after re-reading the current file",
-      'To delete a block: set newText to "" and oldText to the exact block including trailing newlines',
-    ],
-    parameters: editParameters,
-    prepareArguments,
+      "Replace a single block of text in a file. " +
+      "Provide path, old_string (exact text to find), and new_string (replacement). " +
+      "Set replace_all: true to replace every occurrence.",
+    promptSnippet: EDIT_PROMPT_SNIPPET,
+    promptGuidelines: EDIT_GUIDELINES,
+    parameters: singleEditParameters,
 
     renderShell: "self",
 
     renderCall(args: any, theme: any) {
-      return makeTextComponent(() => [formatCallHeader(args ?? {}, theme)]);
+      return makeTextComponent(() => [formatCallHeader("edit", args ?? {}, theme)]);
     },
 
-    renderResult(result: any, options: any, theme: any, context: any) {
-      const lines = formatResultLines(result, context, theme, !!options?.isPartial);
-      return makeTextComponent(() => lines);
+    renderResult(result: any, _options: any, theme: any, context: any) {
+      return makeTextComponent(() => {
+        if (context?.isError) {
+          const text = result?.content?.[0]?.text ?? "failed";
+          return text.split("\n").map((line: string) => theme.fg("error", line));
+        }
+        return [theme.fg("dim", "done")];
+      });
     },
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const { edits, partialApply } = parseEdits(params as Record<string, unknown>);
+      const edit = parseSingleEdit(params);
 
-      const preflight = await applyEdits(
-        edits,
+      // Preflight: virtual workspace catches mismatches before writing.
+      const preflight = await executeSingleEdit(
+        edit,
         createVirtualWorkspace(ctx.cwd),
         ctx.cwd,
         signal,
-        { preflight: true, continueOnError: true },
+        { preflight: true },
       );
-
-      const fails = preflight.filter((r) => !r.success);
-      const isBatch = edits.length > 1;
-
-      if (fails.length > 0 && !partialApply) {
-        throw new Error(buildPreflightError(preflight, edits.length, isBatch));
+      if (!preflight.result.success) {
+        buildSingleError(edit.path, preflight.result.message);
       }
 
-      const results = await applyEdits(
-        edits,
+      const { result, changed } = await executeSingleEdit(
+        edit,
         createRealWorkspace(),
         ctx.cwd,
         signal,
-        { collectDiff: true, continueOnError: partialApply },
+        { preflight: false },
       );
 
-      const failedResults = results.filter((r) => !r.success);
-      if (partialApply && failedResults.length > 0) {
-        return buildPartialErrorResponse(results, edits);
+      if (!result.success) {
+        buildSingleError(edit.path, result.message);
       }
 
-      return buildSuccessResponse(results, edits);
+      return buildSingleSuccess(result, result.stats, result.firstChangedLine);
+    },
+  });
+
+  pi.registerTool({
+    name: "multi_edit",
+    label: "multi_edit",
+    description:
+      "Apply multiple independent text replacements in a single file. " +
+      "Provide path and edits: [{old_string, new_string, replace_all?}, ...]. " +
+      "Edits are applied sequentially. If any edit fails, the whole batch is aborted.",
+    promptSnippet: MULTI_EDIT_PROMPT_SNIPPET,
+    promptGuidelines: MULTI_EDIT_GUIDELINES,
+    parameters: multiEditParameters,
+
+    renderShell: "self",
+
+    renderCall(args: any, theme: any) {
+      return makeTextComponent(() => [formatCallHeader("multi_edit", args ?? {}, theme)]);
+    },
+
+    renderResult(result: any, _options: any, theme: any, context: any) {
+      return makeTextComponent(() => {
+        if (context?.isError) {
+          const text = result?.content?.[0]?.text ?? "failed";
+          return text.split("\n").map((line: string) => theme.fg("error", line));
+        }
+        return [theme.fg("dim", "done")];
+      });
+    },
+
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const multi = parseMultiEdit(params);
+
+      // Preflight: virtual workspace catches mismatches before writing.
+      const preflight = await executeMultiEdit(
+        multi,
+        createVirtualWorkspace(ctx.cwd),
+        ctx.cwd,
+        signal,
+        { preflight: true },
+      );
+      const failedPreflights = preflight.results.filter((r) => !r.success);
+      if (failedPreflights.length > 0) {
+        buildMultiError(multi.path, preflight.results);
+      }
+
+      const { results, changed } = await executeMultiEdit(
+        multi,
+        createRealWorkspace(),
+        ctx.cwd,
+        signal,
+        { preflight: false },
+      );
+
+      const failed = results.filter((r) => !r.success);
+      if (failed.length > 0) {
+        buildMultiError(multi.path, results);
+      }
+
+      const stats = changed
+        ? results.find((r) => r.stats)?.stats
+        : undefined;
+      const firstChangedLine = changed
+        ? results.find((r) => r.firstChangedLine)?.firstChangedLine
+        : undefined;
+
+      return buildMultiSuccess(multi.path, results, stats, firstChangedLine);
     },
   });
 }

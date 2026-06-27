@@ -1,8 +1,17 @@
-export interface EditItem {
+export interface SingleEdit {
   path: string;
-  oldText: string;
-  newText: string;
-  replaceAll?: boolean;
+  old_string: string;
+  new_string: string;
+  replace_all?: boolean;
+}
+
+export interface MultiEdit {
+  path: string;
+  edits: Array<{
+    old_string: string;
+    new_string: string;
+    replace_all?: boolean;
+  }>;
 }
 
 export interface ChangeStats {
@@ -17,7 +26,6 @@ export interface EditResult {
   stats?: ChangeStats;
   firstChangedLine?: number;
   skipped?: boolean;
-  index?: number;
 }
 
 export interface Workspace {
@@ -26,12 +34,10 @@ export interface Workspace {
   checkWriteAccess: (absolutePath: string) => Promise<void>;
 }
 
-export type EditMode = "single" | "batch";
-
 export interface ExecuteResult {
   content: { type: "text"; text: string }[];
   details: {
-    stats: ChangeStats;
+    stats?: ChangeStats;
     firstChangedLine?: number;
   };
 }
