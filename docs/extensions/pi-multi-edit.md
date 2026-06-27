@@ -4,7 +4,7 @@ Agent-first file editing tools optimized for Kimi K2.x models.
 
 ## What it does
 
-Replaces Pi's built-in `edit` tool and adds a separate `multi_edit` tool. The shapes are chosen to match the `strreplace` / `createfile` vocabulary Kimi K2.6/K2.7 Code was trained on, while still supporting batch edits when they are genuinely useful.
+Replaces Pi's built-in `edit` tool and adds separate `multi_edit` and `insert` tools. The shapes are chosen to match the `strreplace` / `createfile` / `insert` vocabulary Kimi K2.6/K2.7 Code was trained on, while still supporting batch edits when they are genuinely useful.
 
 ## Tools
 
@@ -43,7 +43,22 @@ Multiple sequential replacements in one file.
 - The whole batch is aborted if any edit fails (atomic).
 - Each `old_string` must be unique in the current file state unless `replace_all` is true for that item.
 
-## Why two tools?
+### `insert`
+
+Insert one or more lines before a specific line number.
+
+```json
+{
+  "path": "src/app.py",
+  "insert_line": 42,
+  "new_string": "    new_line();"
+}
+```
+
+- `insert_line` is 1-indexed. Use `1` to prepend, `line_count + 1` to append.
+- For replacing existing text, use `edit` instead.
+
+## Why three tools?
 
 Modern coding models (Kimi K2.x, Claude) were trained on simple single `str_replace` operations. A complex batch schema inside the primary `edit` tool creates a mismatch: the model tends to under-use batches and falls back to many single edits, re-reading the file each time.
 
@@ -53,10 +68,12 @@ By separating `edit` (single) from `multi_edit` (batch), the model gets:
 - An explicit, well-defined tool for multiple independent replacements.
 - Clear guidance on when to use each.
 
+The `insert` tool matches the line-based insertion primitive from the same training vocabulary, avoiding awkward boundary overlap edits.
+
 ## Source
 
 - `pi-multi-edit/index.ts` — tool registration and prompts.
-- `pi-multi-edit/engine.ts` — matching and apply logic.
+- `pi-multi-edit/engine.ts` — matching, apply, and insert logic.
 - `pi-multi-edit/params.ts` — input schemas and parsing.
 - `pi-multi-edit/match.ts` — exact + fuzzy text matching.
 - `pi-multi-edit/normalize.ts` — BOM, CRLF/LF, and fuzzy normalization.
@@ -69,4 +86,5 @@ By separating `edit` (single) from `multi_edit` (batch), the model gets:
 
 - Preflight pass runs on a virtual workspace before writing. If preflight fails, no file is modified.
 - BOM and line endings (CRLF/LF) are preserved.
-- Fuzzy match is used as a fallback for whitespace/quote differences; the result reports success but the model is still encouraged to copy verbatim.
+- Fuzzy match is used as a fallback for whitespace/quote differences; the result reports success and flags the fuzzy match so the model can copy verbatim next time.
+- Error messages include line-number hints when possible.

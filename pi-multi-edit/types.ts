@@ -14,6 +14,12 @@ export interface MultiEdit {
   }>;
 }
 
+export interface InsertEdit {
+  path: string;
+  insert_line: number;
+  new_string: string;
+}
+
 export interface ChangeStats {
   added: number;
   removed: number;
@@ -26,6 +32,7 @@ export interface EditResult {
   stats?: ChangeStats;
   firstChangedLine?: number;
   skipped?: boolean;
+  usedFuzzy?: boolean;
 }
 
 export interface Workspace {

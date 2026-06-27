@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { resolve } from "node:path";
 
-import { executeMultiEdit, executeSingleEdit } from "../../pi-multi-edit/engine.js";
-import { parseMultiEdit, parseSingleEdit } from "../../pi-multi-edit/params.js";
+import { executeInsert, executeMultiEdit, executeSingleEdit } from "../../pi-multi-edit/engine.js";
+import { parseInsert, parseMultiEdit, parseSingleEdit } from "../../pi-multi-edit/params.js";
 import type { Workspace } from "../../pi-multi-edit/types.js";
 
 const cwd = "C:/10x001/project";
@@ -76,6 +76,33 @@ test("non-unique old_string fails without replace_all", async () => {
     undefined,
   );
   assert.strictEqual(result.result.success, false);
+  assert.match(result.result.message, /Found 2 occurrences/);
+});
+
+test("single edit error includes line number for duplicate", async () => {
+  const ws = makeWorkspace({ [abs("a.txt")]: "line1\nfoo\nfoo" });
+  const result = await executeSingleEdit(
+    { path: "a.txt", old_string: "foo", new_string: "bar" },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, false);
+  assert.match(result.result.message, /line 2/);
+});
+
+test("single edit fuzzy match is surfaced", async () => {
+  // Model sends ASCII quote but file has smart quote.
+  const ws = makeWorkspace({ [abs("a.txt")]: "foo ‘bar’ baz" });
+  const result = await executeSingleEdit(
+    { path: "a.txt", old_string: "'bar'", new_string: "'qux'" },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, true);
+  assert.strictEqual(result.result.usedFuzzy, true);
+  assert.match(result.result.message, /fuzzy match/);
 });
 
 test("multi_edit applies sequential changes", async () => {
@@ -97,25 +124,62 @@ test("multi_edit applies sequential changes", async () => {
   assert.strictEqual(await ws.readText(abs("a.txt")), "x y z");
 });
 
-test("multi_edit fails atomically on mismatch", async () => {
+test("multi_edit fails atomically on mismatch and does not write", async () => {
   const ws = makeWorkspace({ [abs("a.txt")]: "abc" });
-  await assert.rejects(
-    () =>
-      executeMultiEdit(
-        {
-          path: "a.txt",
-          edits: [
-            { old_string: "a", new_string: "x" },
-            { old_string: "missing", new_string: "y" },
-          ],
-        },
-        ws,
-        cwd,
-        undefined,
-      ),
-    /Batch edit failed/,
+  const result = await executeMultiEdit(
+    {
+      path: "a.txt",
+      edits: [
+        { old_string: "a", new_string: "x" },
+        { old_string: "missing", new_string: "y" },
+      ],
+    },
+    ws,
+    cwd,
+    undefined,
   );
+  assert.strictEqual(result.results[0].success, true);
+  assert.strictEqual(result.results[1].success, false);
+  assert.strictEqual(result.changed, true);
+  // Atomic: failed batch should not modify the file.
   assert.strictEqual(await ws.readText(abs("a.txt")), "abc");
+});
+
+test("insert prepends at line 1", async () => {
+  const ws = makeWorkspace({ [abs("a.txt")]: "line1\nline2" });
+  const result = await executeInsert(
+    { path: "a.txt", insert_line: 1, new_string: "header" },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, true);
+  assert.strictEqual(result.result.firstChangedLine, 1);
+  assert.strictEqual(await ws.readText(abs("a.txt")), "header\nline1\nline2");
+});
+
+test("insert appends at line_count + 1", async () => {
+  const ws = makeWorkspace({ [abs("a.txt")]: "line1\nline2" });
+  const result = await executeInsert(
+    { path: "a.txt", insert_line: 3, new_string: "footer" },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, true);
+  assert.strictEqual(await ws.readText(abs("a.txt")), "line1\nline2\nfooter");
+});
+
+test("insert rejects out of range line", async () => {
+  const ws = makeWorkspace({ [abs("a.txt")]: "line1\nline2" });
+  const result = await executeInsert(
+    { path: "a.txt", insert_line: 5, new_string: "x" },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.result.success, false);
+  assert.match(result.result.message, /out of range/);
 });
 
 test("parseSingleEdit accepts minimal input", () => {
@@ -150,5 +214,17 @@ test("parseMultiEdit rejects empty edits", () => {
   assert.throws(
     () => parseMultiEdit({ path: "a.txt", edits: [] } as any),
     /Missing edits/,
+  );
+});
+
+test("parseInsert accepts valid input", () => {
+  const parsed = parseInsert({ path: "a.txt", insert_line: 5, new_string: "x" });
+  assert.deepStrictEqual(parsed, { path: "a.txt", insert_line: 5, new_string: "x" });
+});
+
+test("parseInsert rejects missing insert_line", () => {
+  assert.throws(
+    () => parseInsert({ path: "a.txt", new_string: "x" } as any),
+    /Missing insert_line/,
   );
 });

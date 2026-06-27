@@ -1,6 +1,6 @@
 import { type Static, Type } from "typebox";
 
-import type { MultiEdit, SingleEdit } from "./types.ts";
+import type { InsertEdit, MultiEdit, SingleEdit } from "./types.ts";
 
 const pathProp = Type.String({
   description: "File path (relative or absolute). Copy from your last read.",
@@ -105,4 +105,38 @@ export function parseMultiEdit(input: unknown): MultiEdit {
   }
 
   return { path, edits };
+}
+
+const insertLineProp = Type.Integer({
+  description:
+    "Line number (1-indexed) BEFORE which the text is inserted. Use 1 to prepend, use line_count+1 to append.",
+  minimum: 1,
+});
+
+export const insertParameters = Type.Object(
+  {
+    path: pathProp,
+    insert_line: insertLineProp,
+    new_string: newStringProp,
+  },
+  { additionalProperties: false },
+);
+
+export type InsertInput = Static<typeof insertParameters>;
+
+export function parseInsert(input: unknown): InsertEdit {
+  if (!input || typeof input !== "object") {
+    throw new Error("Invalid insert tool input: expected object.");
+  }
+  const raw = input as Record<string, unknown>;
+
+  const path = typeof raw.path === "string" && raw.path ? raw.path : undefined;
+  const insert_line = typeof raw.insert_line === "number" ? raw.insert_line : undefined;
+  const new_string = typeof raw.new_string === "string" ? raw.new_string : undefined;
+
+  if (!path) throw new Error("Missing path — add the file path you just read.");
+  if (insert_line === undefined) throw new Error("Missing insert_line.");
+  if (new_string === undefined) throw new Error("Missing new_string.");
+
+  return { path, insert_line, new_string };
 }

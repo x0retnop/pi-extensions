@@ -69,6 +69,10 @@ function editCount(args: Record<string, unknown>): number {
   return 1;
 }
 
+function insertLine(args: Record<string, unknown>): number | undefined {
+  return typeof args.insert_line === "number" ? args.insert_line : undefined;
+}
+
 function hasReplaceAll(args: Record<string, unknown>): boolean {
   if (args.replace_all === true) return true;
   if (Array.isArray(args.edits)) {
@@ -83,12 +87,15 @@ export function formatCallHeader(name: string, args: Record<string, unknown>, th
   const path = resolvePath(args);
   const target = path ? shortenPath(path) : "...";
   const count = editCount(args);
+  const line = insertLine(args);
   const suffix = hasReplaceAll(args) ? ", replace_all" : "";
   const countLabel = name === "multi_edit" ? `(${count}${suffix})` : "";
+  const lineLabel = name === "insert" && line !== undefined ? `(line ${line})` : "";
   return (
     `${theme.fg("toolTitle", theme.bold(name))} ` +
     `${theme.fg("accent", target)} ` +
-    `${theme.fg("dim", countLabel)}`
+    `${theme.fg("dim", countLabel)} ` +
+    `${theme.fg("dim", lineLabel)}`
   ).trim();
 }
 

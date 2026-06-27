@@ -6,8 +6,9 @@ export function buildSingleSuccess(
   firstChangedLine?: number,
 ): { content: { type: "text"; text: string }[]; details: { stats?: ChangeStats; firstChangedLine?: number } } {
   const line = firstChangedLine ? ` (line ${firstChangedLine})` : "";
+  const fuzzy = result.usedFuzzy ? " [fuzzy]" : "";
   return {
-    content: [{ type: "text", text: `Edited ${result.path}${line}.` }],
+    content: [{ type: "text", text: `Edited ${result.path}${line}.${fuzzy}` }],
     details: { stats, firstChangedLine },
   };
 }
@@ -26,7 +27,8 @@ export function buildMultiSuccess(
   const failed = results.filter((r) => !r.success).length;
   const lines = results.map((r, i) => {
     const icon = r.success ? "✓" : "✗";
-    return `${icon} edits[${i}]: ${r.message}`;
+    const fuzzy = r.usedFuzzy ? " [fuzzy]" : "";
+    return `${icon} edits[${i}]: ${r.message}${fuzzy}`;
   });
 
   const header = failed > 0
@@ -45,4 +47,20 @@ export function buildMultiError(path: string, results: EditResult[]): never {
     .map((r, i) => `  edits[${i}]: ${r.message}`)
     .join("\n");
   throw new Error(`Batch edit failed for ${path}. No files modified.\n${errors}`);
+}
+
+export function buildInsertSuccess(
+  result: EditResult,
+  stats?: ChangeStats,
+  firstChangedLine?: number,
+): { content: { type: "text"; text: string }[]; details: { stats?: ChangeStats; firstChangedLine?: number } } {
+  const line = firstChangedLine ? ` at line ${firstChangedLine}` : "";
+  return {
+    content: [{ type: "text", text: `Inserted into ${result.path}${line}.` }],
+    details: { stats, firstChangedLine },
+  };
+}
+
+export function buildInsertError(path: string, message: string): never {
+  throw new Error(`Could not insert into ${path}: ${message}`);
 }

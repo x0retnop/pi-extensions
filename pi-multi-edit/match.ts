@@ -40,3 +40,11 @@ export function countOccurrences(content: string, oldString: string): number {
 export function normalizeEditString(text: string): string {
   return normalizeToLF(text);
 }
+
+/** Line number (1-indexed) of the first exact or fuzzy occurrence. */
+export function findFirstOccurrenceLine(content: string, oldString: string): number | undefined {
+  const m = findText(content, oldString, 0);
+  if (!m) return undefined;
+  const before = content.slice(0, m.index);
+  return before.split("\n").length;
+}

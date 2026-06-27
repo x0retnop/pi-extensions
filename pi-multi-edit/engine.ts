@@ -1,14 +1,26 @@
 import { isAbsolute, resolve as resolvePath } from "path";
 
-import { computeChangeStats, firstChangedLine, mergeStats } from "./diff.js";
-import { countOccurrences, findText, normalizeEditString } from "./match.js";
+import { computeChangeStats, firstChangedLine } from "./diff.js";
+import {
+  countOccurrences,
+  findFirstOccurrenceLine,
+  findText,
+  normalizeEditString,
+} from "./match.js";
 import {
   detectLineEnding,
   normalizeToLF,
   restoreLineEndings,
   stripBom,
 } from "./normalize.js";
-import type { ChangeStats, EditResult, MultiEdit, SingleEdit, Workspace } from "./types.js";
+import type {
+  ChangeStats,
+  EditResult,
+  InsertEdit,
+  MultiEdit,
+  SingleEdit,
+  Workspace,
+} from "./types.js";
 
 function toAbsolute(path: string, cwd: string): string {
   return isAbsolute(path) ? resolvePath(path) : resolvePath(cwd, path);
@@ -19,13 +31,42 @@ interface MatchFailure {
   message: string;
 }
 
+function buildErrorMessage(
+  content: string,
+  oldString: string,
+  failure: MatchFailure,
+): string {
+  if (failure.kind === "empty") {
+    return failure.message;
+  }
+
+  if (failure.kind === "duplicate") {
+    const line = findFirstOccurrenceLine(content, oldString);
+    return line !== undefined
+      ? `${failure.message} First occurrence is around line ${line}.`
+      : failure.message;
+  }
+
+  // not-found
+  const line = findFirstOccurrenceLine(content, oldString);
+  return line !== undefined
+    ? `${failure.message} Did you mean the text around line ${line}?`
+    : failure.message;
+}
+
 function matchReplacement(
   content: string,
   oldString: string,
   replaceAll: boolean,
-): { matches: Array<{ index: number; length: number }>; failure?: MatchFailure } {
+): {
+  matches: Array<{ index: number; length: number; usedFuzzy: boolean }>;
+  failure?: MatchFailure;
+} {
   if (oldString.length === 0) {
-    return { matches: [], failure: { kind: "empty", message: "old_string must not be empty." } };
+    return {
+      matches: [],
+      failure: { kind: "empty", message: "old_string must not be empty." },
+    };
   }
 
   const occurrences = countOccurrences(content, oldString);
@@ -46,12 +87,12 @@ function matchReplacement(
     };
   }
 
-  const matches: Array<{ index: number; length: number }> = [];
+  const matches: Array<{ index: number; length: number; usedFuzzy: boolean }> = [];
   let pos = 0;
   while (true) {
     const m = findText(content, oldString, pos);
     if (!m) break;
-    matches.push({ index: m.index, length: m.length });
+    matches.push({ index: m.index, length: m.length, usedFuzzy: m.usedFuzzy });
     pos = m.index + Math.max(1, m.length);
     if (!replaceAll) break;
   }
@@ -61,7 +102,7 @@ function matchReplacement(
 
 function applyReplacement(
   content: string,
-  matches: Array<{ index: number; length: number }>,
+  matches: Array<{ index: number; length: number; usedFuzzy: boolean }>,
   newString: string,
 ): string {
   let result = content;
@@ -99,11 +140,12 @@ function applySingleEdit(
       result: {
         path: displayPath,
         success: false,
-        message: failure.message,
+        message: buildErrorMessage(content, oldString, failure),
       },
     };
   }
 
+  const usedFuzzy = matches.some((m) => m.usedFuzzy);
   const newNormalized = applyReplacement(content, matches, newString);
   const newRaw = bom + restoreLineEndings(newNormalized, lineEnding);
   const changed = newRaw !== rawContent;
@@ -113,6 +155,7 @@ function applySingleEdit(
 
   const verb = options.preflight ? "Matched" : "Replaced";
   const count = matches.length;
+  const fuzzyNote = usedFuzzy ? " (fuzzy match — copy verbatim next time)" : "";
 
   return {
     newContent: newRaw,
@@ -120,9 +163,12 @@ function applySingleEdit(
     result: {
       path: displayPath,
       success: true,
-      message: changed ? `${verb} ${count} occurrence(s).` : "No change (old and new are identical).",
+      message: changed
+        ? `${verb} ${count} occurrence(s).${fuzzyNote}`
+        : "No change (old and new are identical).",
       stats,
       firstChangedLine: firstLine,
+      usedFuzzy,
     },
   };
 }
@@ -132,6 +178,7 @@ interface BatchStepResult {
   edit: { old_string: string; new_string: string; replace_all?: boolean };
   success: boolean;
   message: string;
+  usedFuzzy?: boolean;
 }
 
 function applyBatchEdits(
@@ -152,13 +199,26 @@ function applyBatchEdits(
     const newString = normalizeEditString(edit.new_string);
 
     if (oldString.length === 0) {
-      results.push({ index: i, edit, success: false, message: "old_string must not be empty." });
+      results.push({
+        index: i,
+        edit,
+        success: false,
+        message: "old_string must not be empty.",
+      });
       continue;
     }
 
     const occurrences = countOccurrences(content, oldString);
     if (occurrences === 0) {
-      results.push({ index: i, edit, success: false, message: "old_string not found." });
+      results.push({
+        index: i,
+        edit,
+        success: false,
+        message: buildErrorMessage(content, oldString, {
+          kind: "not-found",
+          message: "old_string not found.",
+        }),
+      });
       continue;
     }
     if (!(edit.replace_all ?? false) && occurrences > 1) {
@@ -166,28 +226,100 @@ function applyBatchEdits(
         index: i,
         edit,
         success: false,
-        message: `Found ${occurrences} occurrences. old_string must be unique or use replace_all: true.`,
+        message: buildErrorMessage(content, oldString, {
+          kind: "duplicate",
+          message: `Found ${occurrences} occurrences. old_string must be unique or use replace_all: true.`,
+        }),
       });
       continue;
     }
 
-    const matches: Array<{ index: number; length: number }> = [];
+    const matches: Array<{ index: number; length: number; usedFuzzy: boolean }> = [];
     let pos = 0;
     while (true) {
       const m = findText(content, oldString, pos);
       if (!m) break;
-      matches.push({ index: m.index, length: m.length });
+      matches.push({ index: m.index, length: m.length, usedFuzzy: m.usedFuzzy });
       pos = m.index + Math.max(1, m.length);
       if (!(edit.replace_all ?? false)) break;
     }
 
+    const usedFuzzy = matches.some((m) => m.usedFuzzy);
     content = applyReplacement(content, matches, newString);
     const verb = options.preflight ? "Matched" : "Replaced";
-    results.push({ index: i, edit, success: true, message: `${verb} ${matches.length} occurrence(s).` });
+    const fuzzyNote = usedFuzzy ? " (fuzzy match — copy verbatim next time)" : "";
+    results.push({
+      index: i,
+      edit,
+      success: true,
+      message: `${verb} ${matches.length} occurrence(s).${fuzzyNote}`,
+      usedFuzzy,
+    });
   }
 
   const newRaw = bom + restoreLineEndings(content, lineEnding);
   return { newRaw, results };
+}
+
+function applyInsert(
+  rawContent: string,
+  displayPath: string,
+  edit: InsertEdit,
+  options: { preflight?: boolean },
+): ApplySingleResult {
+  const { bom, text } = stripBom(rawContent);
+  const lineEnding = detectLineEnding(text);
+  const content = normalizeToLF(text);
+  const newString = normalizeEditString(edit.new_string);
+
+  const lines = content.split("\n");
+  const insertLine = edit.insert_line;
+
+  if (insertLine < 1 || insertLine > lines.length + 1) {
+    return {
+      newContent: rawContent,
+      changed: false,
+      result: {
+        path: displayPath,
+        success: false,
+        message: `insert_line ${insertLine} is out of range. Valid range: 1..${lines.length + 1}.`,
+      },
+    };
+  }
+
+  if (newString.length === 0) {
+    return {
+      newContent: rawContent,
+      changed: false,
+      result: {
+        path: displayPath,
+        success: true,
+        message: "No change (new_string is empty).",
+      },
+    };
+  }
+
+  lines.splice(insertLine - 1, 0, newString);
+  const newNormalized = lines.join("\n");
+  const newRaw = bom + restoreLineEndings(newNormalized, lineEnding);
+  const changed = newRaw !== rawContent;
+
+  const stats = changed ? computeChangeStats(rawContent, newRaw) : undefined;
+  const firstLine = insertLine;
+  const insertedLines = newString.split("\n").length;
+  const verb = options.preflight ? "Would insert" : "Inserted";
+
+  return {
+    newContent: newRaw,
+    changed,
+    result: {
+      path: displayPath,
+      success: true,
+      message: `${verb} ${insertedLines} line(s) at line ${insertLine}.`,
+      stats,
+      firstChangedLine: firstLine,
+    },
+  };
 }
 
 export interface ApplySingleOptions {
@@ -244,14 +376,7 @@ export async function executeMultiEdit(
   const allSuccess = stepResults.every((r) => r.success);
   const changed = newRaw !== rawContent;
 
-  if (!allSuccess && !options.continueOnError) {
-    const errors = stepResults
-      .filter((r) => !r.success)
-      .map((r) => `  edits[${r.index}]: ${r.message}`)
-      .join("\n");
-    throw new Error(`Batch edit failed. No files modified.\n${errors}`);
-  }
-
+  // Atomic by default: only write when every step succeeded or caller opted into partial apply.
   if (changed && !options.preflight && (allSuccess || options.continueOnError)) {
     await workspace.writeText(absPath, newRaw);
   }
@@ -263,8 +388,35 @@ export async function executeMultiEdit(
     path: multi.path,
     success: r.success,
     message: r.message,
+    usedFuzzy: r.usedFuzzy,
     ...(r.success && changed ? { stats, firstChangedLine: firstLine } : {}),
   }));
 
   return { results: editResults, changed };
+}
+
+export interface ApplyInsertOptions {
+  preflight?: boolean;
+}
+
+export async function executeInsert(
+  edit: InsertEdit,
+  workspace: Workspace,
+  cwd: string,
+  signal: AbortSignal | undefined,
+  options: ApplyInsertOptions = {},
+): Promise<{ result: EditResult; changed: boolean }> {
+  const absPath = toAbsolute(edit.path, cwd);
+  await workspace.checkWriteAccess(absPath);
+
+  if (signal?.aborted) throw new Error("Operation aborted");
+
+  const rawContent = await workspace.readText(absPath);
+  const { newContent, changed, result } = applyInsert(rawContent, edit.path, edit, options);
+
+  if (changed && !options.preflight) {
+    await workspace.writeText(absPath, newContent);
+  }
+
+  return { result, changed };
 }
