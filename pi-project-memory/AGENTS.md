@@ -2,9 +2,15 @@
 
 > Loaded together with the root `AGENTS.md`. This file contains only guidance specific to `pi-project-memory`.
 
-## What this is
+## Project memory
 
-Durable project memory backed by the 0x010 backend. Agents can recall facts and curate memory; users manage facts/todos via commands and TUI.
+This project keeps durable notes about conventions, architecture, patterns, gotchas, historical decisions, and open todos.
+
+- **Recall memory** when the task touches any of those, or after reading relevant files when something still feels project-specific.
+- **Start with a focused query** naming the topic, file, pattern, or decision.
+- **Glance over the results** and ask for more detail only on the facts that clearly affect the current step.
+- **Do not recall** for greetings, generic questions, trivial edits, or when the current files already answer the question.
+- **Don't fetch memory automatically** at the start of every session; wait until the task shows it needs project context.
 
 ## Backend
 
@@ -12,12 +18,6 @@ Durable project memory backed by the 0x010 backend. Agents can recall facts and 
 - **Canonical spec:** `0x010/docs/reference/PROJECT_MEMORY_SPEC.md`
 - **Backend module:** `0x010/app/project_memory/`
 - **Client API summary:** `pi-project-memory/docs/reference/API.md`
-
-## Agent workflow
-
-1. **Recall facts** — call `project_facts({ query })` when the user asks about conventions, architecture, or historical decisions.
-2. **Recent facts** — call `project_facts({ recent: true, limit: 20 })` to audit the latest memory.
-3. **Curate** — when curation is enabled, use `curate_facts({ action: "list" })`, then `update`, `merge`, or `delete`. Leave correct facts untouched.
 
 ## Important behaviors
 

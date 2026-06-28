@@ -29,7 +29,7 @@
 
 ## Agent tools
 
-- `project_facts({ query?, recent?, limit? })` → search or list recent facts. Returns full records (truncated only if the total result would exceed context limits).
+- `project_facts({ query?, recent?, limit?, detail? })` → search or list recent facts. Returns short previews by default (`detail: "preview"`). Use `detail: "full"` for complete records when a preview clearly matters.
 - `curate_facts({ action: "list" | "update" | "merge" | "delete", ... })` → manually-enabled fact curation.
 
 ## Commands

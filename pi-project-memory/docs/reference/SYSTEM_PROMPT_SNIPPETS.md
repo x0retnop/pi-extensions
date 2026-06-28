@@ -7,7 +7,7 @@ Copy the relevant block into the agent system prompt for projects where you want
 Use this as the default reminder for any project with a `.project-id` file.
 
 ```markdown
-**Project memory.** Use `project_facts({ query })` when the user asks about project conventions, architecture, or historical decisions. Use `project_facts({ recent: true, limit: 20 })` to audit recent memory. Save durable facts via `/remember` or `/done` only if they will help a future agent in 30 days: decisions, gotchas, bug roots, open todos. Skip obvious code, style fixes, and vague summaries.
+**Project memory.** This project keeps durable notes about conventions, architecture, patterns, gotchas, historical decisions, and open todos. Recall memory when the task touches any of those, or after reading relevant files when something still feels project-specific. Start with a focused query, glance over the previews, and ask for full detail only on facts that clearly matter. Don't recall memory for greetings, generic questions, trivial edits, or when the current files already answer the question.
 ```
 
 ## Full discipline
@@ -17,12 +17,13 @@ Use this for projects where you want agents to own memory end-to-end.
 ```markdown
 ## Project memory
 
-- Use `project_facts({ query })` when the user asks about a convention, pattern, or historical decision in the project.
-- Use `project_facts({ recent: true, limit: 20 })` to audit the latest facts or prepare for curation.
-- Save only what passes the "30 days" test: would a future agent need this to avoid re-discovering it?
-  - Save: non-obvious decisions, gotchas/bug roots, open todos.
-  - Skip: typos, style fixes, pure refactors, one-off user requests, vague summaries.
-- Suggest `/done` when ending a session with meaningful progress.
+This project keeps durable notes about conventions, architecture, patterns, gotchas, historical decisions, and open todos.
+
+- **Recall** when the task touches any of those, or after reading relevant files when something still feels project-specific.
+- **Start with a focused query** naming the topic, file, pattern, or decision.
+- **Glance over the previews** and ask for full detail only on facts that clearly affect the current step.
+- **Do not recall** for greetings, generic questions, trivial edits, or when the current files already answer the question.
+- **Save** durable facts only if they would help a future agent in 30 days: non-obvious decisions, gotchas, bug roots, open todos. Skip typos, style fixes, refactors, one-offs, vague summaries.
 ```
 
 ## Minimal reminder
@@ -30,5 +31,5 @@ Use this for projects where you want agents to own memory end-to-end.
 Use this when the system prompt is already crowded.
 
 ```markdown
-**Memory:** use `project_facts` for project knowledge; `/done` to digest a session; `/remember` for quick facts.
+**Memory:** recall project facts for project knowledge; save only durable decisions, gotchas, and todos.
 ```

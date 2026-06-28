@@ -61,6 +61,7 @@ interface ToolResultDetails {
   item_id?: string;
   count?: number;
   hits?: number;
+  detail?: "preview" | "full";
   phase?: string;
   duplicate?: boolean;
   score?: number;
@@ -212,6 +213,13 @@ function formatRecordPreview(r: ApiRecord, maxLen = DEFAULT_MAX_RECORD_LEN): str
   return s;
 }
 
+function formatRecordSummary(r: ApiRecord, maxLen = 280): string {
+  let s = `• ${r.topic}: ${r.what}`;
+  if (r.tags?.length) s += ` [${r.tags.join(", ")}]`;
+  if (s.length > maxLen) s = s.slice(0, maxLen - 3) + "...";
+  return s;
+}
+
 function formatRecordDetail(r: ApiRecord): string {
   let out = `## ${r.topic}\n`;
   out += `ID: ${r.item_id}\n`;
@@ -230,6 +238,16 @@ function formatListPreview(items: ApiRecord[], includeScore = false): string {
     .map((r, i) => {
       const score = includeScore && r.score !== undefined ? ` (score: ${r.score.toFixed(3)})` : "";
       return `--- ${i} ---\nID: ${r.item_id}${score}\n${formatRecordPreview(r)}`;
+    })
+    .join("\n\n");
+}
+
+function formatListSummary(items: ApiRecord[], includeScore = false): string {
+  if (items.length === 0) return "No items.";
+  return items
+    .map((r, i) => {
+      const score = includeScore && r.score !== undefined ? ` (score: ${r.score.toFixed(3)})` : "";
+      return `--- ${i} ---\nID: ${r.item_id}${score}\n${formatRecordSummary(r)}`;
     })
     .join("\n\n");
 }
@@ -369,13 +387,16 @@ export default function (pi: ExtensionAPI) {
     name: PROJECT_FACTS_TOOL,
     label: "Project Facts",
     description:
-      "Read durable facts about this project. Use for conventions, architecture, patterns, gotchas, and historical decisions.",
-    promptSnippet: "Get project facts that will help answer the user's question.",
+      "Search the project's durable memory. Use when you need project-specific context " +
+      "about conventions, architecture, patterns, gotchas, historical decisions, or open todos.",
+    promptSnippet: "Find project facts relevant to the current task or question.",
     promptGuidelines: [
-      "Call this tool at the start of a session or when facing a non-obvious decision.",
-      "Pass a specific `query` to search semantically, or set `recent: true` to see the latest facts.",
-      "The tool returns full records. Each fact is rendered with all fields (topic, what, why, where, tags).",
-      "Limit is 1-20. Use 10 by default, 20 only when you need a broad review. Very large results are truncated to protect context.",
+      "Use this tool when the task involves project conventions, architecture, patterns, gotchas, historical decisions, or open todos.",
+      "Use it after reading relevant files when something is still unclear or feels project-specific.",
+      "Start with a focused, natural-language query naming the topic, file, pattern, or decision.",
+      "The default response is a short preview. Use full detail only when a preview clearly matters to the current step.",
+      "Keep the limit small (3-5) for focused questions; use 10-20 only for broad orientation or auditing.",
+      "If the first results are not useful, refine the query instead of fetching many records at once.",
     ],
     parameters: Type.Object({
       query: Type.Optional(QuerySchema),
@@ -389,6 +410,13 @@ export default function (pi: ExtensionAPI) {
         default: 10,
         description: "Max facts to return (1-20).",
       })),
+      detail: Type.Optional(Type.Union([
+        Type.Literal("preview", { description: "Compact cards: topic + one-line what + tags. Best for quick scanning (default)." }),
+        Type.Literal("full", { description: "Full records with why, where, tags, and dates. Use when a preview clearly matters." }),
+      ], {
+        default: "preview",
+        description: "How much detail to return for each fact.",
+      })),
     }),
     async execute(_toolCallId, params, _signal, onUpdate, ctx): Promise<ToolResult> {
       const projectId = await getProjectIdOrError(ctx);
@@ -397,6 +425,7 @@ export default function (pi: ExtensionAPI) {
       const query = params.query?.trim();
       const recent = params.recent ?? !query;
       const limit = params.limit ?? 10;
+      const detail = params.detail ?? "preview";
 
       try {
         let records: ApiRecord[];
@@ -426,12 +455,13 @@ export default function (pi: ExtensionAPI) {
           };
         }
 
-        const preview = formatListPreview(records, !recent);
+        const formatter = detail === "preview" ? formatListSummary : formatListPreview;
+        const preview = formatter(records, !recent);
         const out = `Found ${records.length} fact(s) for "${projectId}":\n\n${preview}`;
         const clamped = clampTotalText(records, out);
         return {
           content: [{ type: "text", text: clamped }],
-          details: { project_id: projectId, hits: records.length },
+          details: { project_id: projectId, hits: records.length, detail },
         };
       } catch (err) {
         return errorResult(err instanceof Error ? err.message : String(err));
@@ -778,17 +808,13 @@ export default function (pi: ExtensionAPI) {
     name: CURATE_FACTS_TOOL,
     label: "Curate Project Facts",
     description:
-      "Curate saved project facts. List recent facts, then update, merge, or delete ones that are stale, duplicate, or incorrect. Leave correct facts untouched.",
-    promptSnippet: "Use when reviewing project memory facts for correctness, freshness, and duplicates.",
+      "Review and clean up the project's durable memory. Use to check facts for staleness, duplicates, or errors after listing the latest records.",
+    promptSnippet: "Review saved project facts for correctness, freshness, and duplicates.",
     promptGuidelines: [
-      "Start with action 'list' to fetch the latest facts (up to 20).",
-      "Inspect the files/directories listed in 'where' using normal tools (read, grep, bash).",
-      "For correct facts: do nothing.",
-      "For outdated or wrong facts: call 'delete' with the item_id.",
-      "For duplicate facts: call 'merge' with source_item_id (the worse/older fact) and target_item_id (the better fact). Optionally pass 'fields' to set the merged topic/what/why/where/tags. The source is deleted automatically.",
-      "For facts that need editing: call 'update' with item_id and 'fields'.",
-      "Always provide a concise reason when updating, merging, or deleting.",
-      "Never delete or merge without evidence from the current code or docs.",
+      "Start by listing the latest facts.",
+      "Inspect the files or directories mentioned in a fact before changing it.",
+      "Leave correct facts untouched. Update, merge, or delete only when you have evidence from current code or docs.",
+      "Provide a short reason for every change.",
     ],
     parameters: Type.Object({
       action: Type.String({
