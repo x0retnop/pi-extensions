@@ -11,10 +11,10 @@ Semantic search over past Pi sessions via the 0x010 Session Vector Index.
 ## Tool
 
 - `session_memory`
-  - `action: "search"` — semantic search across indexed sessions. Good for finding exact error messages, prior debugging steps, or decisions mentioned in a handoff file.
+  - `action: "search"` — semantic search across indexed sessions. Good for finding exact error messages, prior debugging steps, or decisions mentioned in a handoff file. Use `scope` (`current`, `project`, `all`) and optional `cwd` to narrow results.
   - `action: "content"` — read a specific session with safe limits.
-  - `action: "list"` — enumerate recent sessions.
-  - `action: "find"` — search and return the most relevant session content in one step. Prefer this when a handoff file points to details kept in session history.
+  - `action: "list"` — enumerate recent sessions. `scope` can be `current` (exact cwd), `project` (cwd + sub-directories) or `all`.
+  - `action: "find"` — search and return the most relevant session content in one step. Prefer this when a handoff file points to details kept in session history. Supports the same `scope`/`cwd` filtering as `search`.
 
 ## Important behaviors
 
@@ -49,7 +49,7 @@ Limits: session files larger than 256 MB are skipped; output is capped at 500 00
 
 ## Continuation tip
 
-When a `handoff-*.md` file says a specific detail is "in the previous session" or "in the session history", the next agent should call `session_memory(action="find", query="...")` to retrieve that detail in one step, or use `action="search"` to compare multiple candidates first.
+When a `handoff-*.md` file includes a `Details to Retrieve from Session History` section or says that a specific detail is "in the previous session" / "in the session history", the next agent should call `session_memory(action="find", query="...")` using the specific technical detail as the query. Use `action="search"` when comparing multiple candidates first.
 
 ## Source
 

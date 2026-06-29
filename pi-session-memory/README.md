@@ -13,8 +13,8 @@ pi install ./pi-session-memory
 - **`session_memory`** — unified tool for the agent:
   - `action="search"` — semantic search across indexed `.jsonl` sessions.
   - `action="content"` — safely read a specific session with hard limits.
-  - `action="list"` — list recent saved sessions for current or all projects.
-  - `action="find"` — search and return the most relevant session content in one step.
+  - `action="list"` — list recent saved sessions for current directory, project tree, or all projects.
+  - `action="find"` — search and return the most relevant session content in one step, optionally scoped to current/project/all.
 - **`/session-memory`** — interactive TUI menu for status, rebuild, search, resume, and export.
 
 ## Agent workflow
@@ -29,7 +29,8 @@ pi install ./pi-session-memory
   - Status — check index health.
   - Rebuild index — trigger incremental rebuild.
   - Search sessions — type a query and see results.
-  - Resume a session — pick current/all projects, choose a session, optionally add a note, and load context into the editor.
+  - List sessions — pick current directory, project tree, or all projects and choose a session to read.
+  - Resume a session — pick current directory, project tree, or all projects, choose a session, optionally add a note, and load context into the editor.
   - Export session to Markdown — export a local `.jsonl` session to `chat`, `outline`, or `full` Markdown in the current `cwd`.
 
 ## Requirements

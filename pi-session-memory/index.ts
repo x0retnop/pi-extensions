@@ -37,11 +37,18 @@ interface SessionListItem {
 // API clients
 // ---------------------------------------------------------------------------
 
-export async function apiSearch(query: string, limit: number): Promise<SearchHit[]> {
+export async function apiSearch(
+  query: string,
+  limit: number,
+  scope: "all" | "current" | "project" = "all",
+  cwd?: string,
+): Promise<SearchHit[]> {
+  const body: Record<string, any> = { query, limit, scope };
+  if (cwd) body.cwd = cwd;
   const res = await fetch(`${BASE_URL}/api/session_index/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query, limit }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -100,7 +107,7 @@ export async function apiRebuild(): Promise<any> {
 }
 
 export async function apiListSessions(
-  scope: "current" | "all",
+  scope: "current" | "project" | "all",
   cwd: string,
   limit = 50,
 ): Promise<SessionListItem[]> {
@@ -182,14 +189,17 @@ async function actionSearch(
   pi: ExtensionAPI,
   onUpdate?: (update: any) => void,
 ): Promise<any> {
+  const scope = params.scope ?? "all";
+  const cwd = params.cwd || ctx.cwd || ctx.sessionManager.getCwd();
+  const scopeLabel = scope === "all" ? "all projects" : scope === "project" ? "project tree" : "current directory";
   onUpdate?.({
-    content: [{ type: "text", text: `Searching sessions: "${params.query}"...` }],
-    details: { phase: "search" },
+    content: [{ type: "text", text: `Searching sessions (${scopeLabel}): "${params.query}"...` }],
+    details: { phase: "search", scope, cwd },
   });
 
   let hits: SearchHit[];
   try {
-    hits = await apiSearch(params.query, params.limit ?? 3);
+    hits = await apiSearch(params.query, params.limit ?? 3, scope, scope === "all" ? undefined : cwd);
   } catch (err) {
     return serverUnreachableResult(err);
   }
@@ -320,15 +330,16 @@ async function actionFind(
 async function actionList(params: any, _ctx: ExtensionContext): Promise<any> {
   const cwd = params.cwd || _ctx.cwd || _ctx.sessionManager.getCwd();
   const scope = params.scope ?? "current";
+  const scopeLabel = scope === "current" ? "current directory" : scope === "project" ? "project tree" : "all projects";
   try {
     const sessions = await apiListSessions(scope, cwd, params.limit ?? 50);
     if (sessions.length === 0) {
       return {
-        content: [{ type: "text", text: "No saved sessions found." }],
-        details: { sessionsCount: 0 },
+        content: [{ type: "text", text: `No saved sessions found for ${scopeLabel}.` }],
+        details: { sessionsCount: 0, scope, cwd },
       };
     }
-    let output = `Saved sessions (${scope === "current" ? "current project" : "all projects"}):\n\n`;
+    let output = `Saved sessions (${scopeLabel}):\n\n`;
     for (let i = 0; i < sessions.length; i++) {
       const s = sessions[i];
       output += `[${i}] ${formatSessionOption(s)}\n  sourcePath: ${s.source_path}\n\n`;
@@ -364,10 +375,10 @@ export default function (pi: ExtensionAPI) {
       "Use when the user asks about something from a previous conversation, or when a handoff/continuation file refers to details that are only in past sessions. action=search returns preview hits; action=content reads one session; action=list enumerates recent sessions; action=find searches and returns the top matching session content in one call.",
     promptGuidelines: [
       "TRIGGERS — call this tool when the user uses phrases like: 'recall', 'remember', 'where did we', 'how did I before', 'as we discussed earlier', 'in a previous session', 'как я делал раньше', 'в прошлый раз', 'где мы обсуждали', 'напомни', 'найди в историю'.",
-      "HANDOFF CONTINUATION — when starting from a handoff/continuation file, call this tool if the file mentions uncertain details, exact error messages, prior debugging, or decisions where the specifics are 'in the previous session' or 'in the session history'. Prefer action=find to retrieve the most relevant session content in one step. Do not treat the handoff as the only source of truth.",
+      "HANDOFF CONTINUATION — when starting from a handoff/continuation file, scan for the section 'Details to Retrieve from Session History' and for phrases like 'see the previous session', 'see session history', 'details are in the session history', 'the exact output is in the previous session', 'the raw ... is in the session history', 'in the previous session'. For each item, call session_memory(action='find', query='<specific technical detail>') to retrieve the raw detail. Prefer action=find. Do not treat the handoff as the only source of truth.",
       "WORKFLOW — for quick verification use action=find. Use action=search when you want to compare multiple sessions, then action=content with hitIndex for details. Use action=content directly when you already have sourcePath or hitIndex. Never guess from training data.",
       "QUERY QUALITY — for action=search use specific technical terms, file names, error messages, or framework names. Avoid vague single words.",
-      "LISTING — use action=list when the user asks to see recent sessions without a specific query. Scope can be 'current' or 'all'.",
+      "PROJECT SCOPING — pass scope='current' to search/list only the exact cwd, scope='project' to include sub-directories (e.g. list all sessions under 'pi extensions' including 'pi extensions/pi-session-memory'), and scope='all' for every indexed session. cwd can be omitted; the tool falls back to the active cwd.",
       "SCORE INTERPRETATION — score is cosine similarity [-1, 1]. Higher is better. Values > 0.5 are usually strongly relevant. Compare relative magnitudes within the result set.",
       "LIMITS — action=content uses safe defaults (maxMessages=30, maxChars=4000, toolResultLimit=1000). Increase only if the user explicitly asks for more.",
       "NEVER use the raw read tool on .jsonl session files — they can be 50 MB+. Always use session_memory.",
@@ -391,14 +402,14 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
       scope: Type.Optional(
-        Type.Union([Type.Literal("current"), Type.Literal("all")], {
+        Type.Union([Type.Literal("current"), Type.Literal("project"), Type.Literal("all")], {
           default: "current",
-          description: "For action=list: show sessions for current project or all projects.",
+          description: "For action=list: show sessions for current directory, project tree (cwd + sub-directories) or all projects. For action=search/find: restrict semantic search to the current directory, project tree or all projects.",
         }),
       ),
       cwd: Type.Optional(
         Type.String({
-          description: "For action=list: override current working directory. Usually leave empty.",
+          description: "Override current working directory. Used by action=list to pick the project folder and by action=search/find to restrict the search scope.",
         }),
       ),
       limit: Type.Optional(
@@ -529,8 +540,9 @@ export default function (pi: ExtensionAPI) {
       "[2] Rebuild index",
       "[3] Search sessions",
       "[4] Find session (search + read top hit)",
-      "[5] Resume a session",
-      "[6] Export session to Markdown",
+      "[5] List sessions",
+      "[6] Resume a session",
+      "[7] Export session to Markdown",
     ]);
 
     if (!choice) {
@@ -555,9 +567,12 @@ export default function (pi: ExtensionAPI) {
         await runFind(ctx);
         break;
       case 5:
-        await runResume(ctx);
+        await runList(ctx);
         break;
       case 6:
+        await runResume(ctx);
+        break;
+      case 7:
         await runExport(ctx);
         break;
       default:
@@ -605,9 +620,27 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    const cwd = ctx.cwd || ctx.sessionManager.getCwd();
+    const scopeChoice = await ctx.ui.select("Choose search scope", [
+      "[1] Current directory",
+      "[2] Project tree (cwd + sub-directories)",
+      "[3] All projects",
+    ]);
+    if (!scopeChoice) {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+    let scope: "current" | "project" | "all" = "current";
+    if (scopeChoice.startsWith("[2]")) scope = "project";
+    else if (scopeChoice.startsWith("[3]")) scope = "all";
+
     let result: any;
     try {
-      result = await actionSearch({ action: "search", query: query.trim(), limit: 8, minScore: 0.3 }, ctx as any, pi);
+      result = await actionSearch(
+        { action: "search", query: query.trim(), limit: 8, minScore: 0.3, scope, cwd },
+        ctx as any,
+        pi,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       ctx.ui.notify(`Error searching: ${msg}`, "error");
@@ -658,9 +691,27 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    const cwd = ctx.cwd || ctx.sessionManager.getCwd();
+    const scopeChoice = await ctx.ui.select("Choose search scope", [
+      "[1] Current directory",
+      "[2] Project tree (cwd + sub-directories)",
+      "[3] All projects",
+    ]);
+    if (!scopeChoice) {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+    let scope: "current" | "project" | "all" = "current";
+    if (scopeChoice.startsWith("[2]")) scope = "project";
+    else if (scopeChoice.startsWith("[3]")) scope = "all";
+
     let result: any;
     try {
-      result = await actionFind({ action: "find", query: query.trim(), limit: 1, minScore: 0.3 }, ctx as any, pi);
+      result = await actionFind(
+        { action: "find", query: query.trim(), limit: 1, minScore: 0.3, scope, cwd },
+        ctx as any,
+        pi,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       ctx.ui.notify(`Error finding session: ${msg}`, "error");
@@ -705,17 +756,20 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify("Session loaded into editor. Review and press Enter to send.", "info");
   }
 
-  async function runResume(ctx: any) {
+  async function runList(ctx: any) {
     const cwd = ctx.cwd || ctx.sessionManager.getCwd();
     const scopeChoice = await ctx.ui.select("Choose session scope", [
-      "[1] Current project",
-      "[2] All projects",
+      "[1] Current directory",
+      "[2] Project tree (cwd + sub-directories)",
+      "[3] All projects",
     ]);
     if (!scopeChoice) {
       ctx.ui.notify("Cancelled", "info");
       return;
     }
-    const scope = scopeChoice.startsWith("[2]") ? "all" : "current";
+    let scope: "current" | "project" | "all" = "current";
+    if (scopeChoice.startsWith("[2]")) scope = "project";
+    else if (scopeChoice.startsWith("[3]")) scope = "all";
 
     let sessions: SessionListItem[];
     try {
@@ -727,7 +781,56 @@ export default function (pi: ExtensionAPI) {
     }
 
     if (sessions.length === 0) {
-      ctx.ui.notify(`No saved sessions found for ${scope === "current" ? "current directory" : "all projects"}.`, "warning");
+      ctx.ui.notify("No saved sessions found.", "warning");
+      return;
+    }
+
+    const options = sessions.map((s, i) => `[${i}] ${formatSessionOption(s)}`);
+    options.push("[cancel]");
+    const selected = await ctx.ui.select("Select a session to read", options);
+    if (!selected || selected === "[cancel]") {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+
+    const idxMatch = selected.match(/^\[(\d+)\]/);
+    const idx = idxMatch ? parseInt(idxMatch[1], 10) : -1;
+    const sourcePath = sessions[idx]?.source_path;
+    if (!sourcePath) {
+      ctx.ui.notify("Could not resolve selected session", "error");
+      return;
+    }
+
+    await readSessionIntoEditor(ctx, sourcePath);
+  }
+
+  async function runResume(ctx: any) {
+    const cwd = ctx.cwd || ctx.sessionManager.getCwd();
+    const scopeChoice = await ctx.ui.select("Choose session scope", [
+      "[1] Current directory",
+      "[2] Project tree (cwd + sub-directories)",
+      "[3] All projects",
+    ]);
+    if (!scopeChoice) {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+    let scope: "current" | "project" | "all" = "current";
+    if (scopeChoice.startsWith("[2]")) scope = "project";
+    else if (scopeChoice.startsWith("[3]")) scope = "all";
+
+    let sessions: SessionListItem[];
+    try {
+      sessions = await apiListSessions(scope, cwd, 50);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.ui.notify(`Error listing sessions: ${msg}`, "error");
+      return;
+    }
+
+    if (sessions.length === 0) {
+      const scopeLabel = scope === "current" ? "current directory" : scope === "project" ? "project tree" : "all projects";
+      ctx.ui.notify(`No saved sessions found for ${scopeLabel}.`, "warning");
       return;
     }
 
