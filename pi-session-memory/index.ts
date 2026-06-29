@@ -31,7 +31,15 @@ interface SessionListItem {
   source_path: string;
   project: string;
   date: string;
+  preview: string;
 }
+
+interface StoredList {
+  sessions: SessionListItem[];
+  timestamp: number;
+}
+
+const LIST_ENTRY_TYPE = "session-memory-list";
 
 // ---------------------------------------------------------------------------
 // API clients
@@ -40,7 +48,7 @@ interface SessionListItem {
 export async function apiSearch(
   query: string,
   limit: number,
-  scope: "all" | "current" | "project" = "all",
+  scope: "all" | "project" = "project",
   cwd?: string,
 ): Promise<SearchHit[]> {
   const body: Record<string, any> = { query, limit, scope };
@@ -107,9 +115,9 @@ export async function apiRebuild(): Promise<any> {
 }
 
 export async function apiListSessions(
-  scope: "current" | "project" | "all",
+  scope: "project" | "all",
   cwd: string,
-  limit = 50,
+  limit = 4,
 ): Promise<SessionListItem[]> {
   const res = await fetch(`${BASE_URL}/api/session_index/list`, {
     method: "POST",
@@ -139,6 +147,29 @@ function getLastSearch(ctx: ExtensionContext): StoredSearch | null {
   return null;
 }
 
+function getLastList(ctx: ExtensionContext): StoredList | null {
+  const entries = ctx.sessionManager.getEntries();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i] as any;
+    if (e?.type === "custom" && e?.customType === LIST_ENTRY_TYPE && e?.data) {
+      return e.data as StoredList;
+    }
+  }
+  return null;
+}
+
+function getLastSearchOrList(ctx: ExtensionContext): StoredSearch | StoredList | null {
+  const entries = ctx.sessionManager.getEntries();
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i] as any;
+    if (e?.type === "custom" && e?.data) {
+      if (e?.customType === SEARCH_ENTRY_TYPE) return e.data as StoredSearch;
+      if (e?.customType === LIST_ENTRY_TYPE) return e.data as StoredList;
+    }
+  }
+  return null;
+}
+
 
 function formatHitPreview(hit: SearchHit, maxLen: number): string {
   let text = hit.text.trim();
@@ -147,10 +178,19 @@ function formatHitPreview(hit: SearchHit, maxLen: number): string {
 }
 
 function formatSessionOption(s: SessionListItem): string {
-  const project = s.project || extractProject(s.source_path);
   const date = s.date ? s.date.replace("T", " ").slice(0, 19) : "unknown";
-  const name = path.basename(s.source_path);
-  return `${date}  |  ${project}  |  ${name}`;
+  const id = sessionIdFromPath(s.source_path);
+  const preview = (s.preview || "").replace(/\s+/g, " ").trim();
+  return `${date}  |  ${id}  |  ${preview}`;
+}
+
+function sessionIdFromPath(sourcePath: string): string {
+  const name = path.basename(sourcePath, ".jsonl");
+  const parts = name.split("_");
+  if (parts.length >= 2) {
+    return parts[parts.length - 1].slice(0, 8);
+  }
+  return name.slice(0, 8);
 }
 
 function serverUnreachableResult(err: unknown) {
@@ -189,9 +229,9 @@ async function actionSearch(
   pi: ExtensionAPI,
   onUpdate?: (update: any) => void,
 ): Promise<any> {
-  const scope = params.scope ?? "all";
+  const scope = params.scope ?? "project";
   const cwd = params.cwd || ctx.cwd || ctx.sessionManager.getCwd();
-  const scopeLabel = scope === "all" ? "all projects" : scope === "project" ? "project tree" : "current directory";
+  const scopeLabel = scope === "all" ? "all projects" : "project tree";
   onUpdate?.({
     content: [{ type: "text", text: `Searching sessions (${scopeLabel}): "${params.query}"...` }],
     details: { phase: "search", scope, cwd },
@@ -199,7 +239,7 @@ async function actionSearch(
 
   let hits: SearchHit[];
   try {
-    hits = await apiSearch(params.query, params.limit ?? 3, scope, scope === "all" ? undefined : cwd);
+    hits = await apiSearch(params.query, params.limit ?? 3, scope, cwd);
   } catch (err) {
     return serverUnreachableResult(err);
   }
@@ -239,27 +279,28 @@ async function actionContent(params: any, ctx: ExtensionContext): Promise<any> {
   let sourcePath: string | undefined = params.sourcePath;
 
   if (!sourcePath && params.hitIndex !== undefined) {
-    const last = getLastSearch(ctx);
+    const last = getLastSearchOrList(ctx);
     if (!last) {
       return {
         content: [
-          { type: "text", text: "Error: No recent session_memory search found. Run action=search first or provide sourcePath." },
+          { type: "text", text: "Error: No recent session_memory search or list found. Run action=search/action=list first or provide sourcePath." },
         ],
-        details: { error: "No recent search" },
+        details: { error: "No recent search or list" },
         isError: true,
       };
     }
-    const hit = last.hits[params.hitIndex];
-    if (!hit) {
+    const item = "hits" in last ? last.hits[params.hitIndex] : last.sessions[params.hitIndex];
+    if (!item) {
+      const count = "hits" in last ? last.hits.length : last.sessions.length;
       return {
         content: [
-          { type: "text", text: `Error: hitIndex ${params.hitIndex} out of range (0-${last.hits.length - 1})` },
+          { type: "text", text: `Error: hitIndex ${params.hitIndex} out of range (0-${count - 1})` },
         ],
         details: { error: "Index out of range" },
         isError: true,
       };
     }
-    sourcePath = hit.source_path;
+    sourcePath = item.source_path;
   }
 
   if (!sourcePath) {
@@ -327,27 +368,42 @@ async function actionFind(
   return actionContent({ sourcePath: last.hits[0].source_path, ...params }, ctx);
 }
 
-async function actionList(params: any, _ctx: ExtensionContext): Promise<any> {
+async function actionList(
+  params: any,
+  _ctx: ExtensionContext,
+  pi: ExtensionAPI,
+): Promise<any> {
   const cwd = params.cwd || _ctx.cwd || _ctx.sessionManager.getCwd();
-  const scope = params.scope ?? "current";
-  const scopeLabel = scope === "current" ? "current directory" : scope === "project" ? "project tree" : "all projects";
+  const scope = params.scope ?? "project";
+  const scopeLabel = scope === "all" ? "all projects" : "project tree";
+  const limit = params.limit ?? (params.sessions === "history" ? 10 : 4);
+
   try {
-    const sessions = await apiListSessions(scope, cwd, params.limit ?? 50);
+    const sessions = await apiListSessions(scope, cwd, limit);
     if (sessions.length === 0) {
       return {
         content: [{ type: "text", text: `No saved sessions found for ${scopeLabel}.` }],
         details: { sessionsCount: 0, scope, cwd },
       };
     }
-    let output = `Saved sessions (${scopeLabel}):\n\n`;
+
+    const stored: StoredList = { sessions, timestamp: Date.now() };
+    pi.appendEntry(LIST_ENTRY_TYPE, stored);
+
+    let output = `Recent sessions for ${cwd} (${scopeLabel}):\n\n`;
     for (let i = 0; i < sessions.length; i++) {
       const s = sessions[i];
-      output += `[${i}] ${formatSessionOption(s)}\n  sourcePath: ${s.source_path}\n\n`;
+      output += `[${i}] ${formatSessionOption(s)}\n`;
     }
-    output += `Use session_memory(action="content", sourcePath=...) or /session-memory to load one.`;
+
+    output += `\nUse session_memory(action="content", hitIndex=N) to read a specific session.`;
+    if (scope === "project") {
+      output += ` Use scope="all" to search across every project.`;
+    }
+
     return {
       content: [{ type: "text", text: output }],
-      details: { sessionsCount: sessions.length },
+      details: { sessionsCount: sessions.length, scope, cwd },
     };
   } catch (err) {
     return serverUnreachableResult(err);
@@ -378,7 +434,9 @@ export default function (pi: ExtensionAPI) {
       "HANDOFF CONTINUATION — when starting from a handoff/continuation file, scan for the section 'Details to Retrieve from Session History' and for phrases like 'see the previous session', 'see session history', 'details are in the session history', 'the exact output is in the previous session', 'the raw ... is in the session history', 'in the previous session'. For each item, call session_memory(action='find', query='<specific technical detail>') to retrieve the raw detail. Prefer action=find. Do not treat the handoff as the only source of truth.",
       "WORKFLOW — for quick verification use action=find. Use action=search when you want to compare multiple sessions, then action=content with hitIndex for details. Use action=content directly when you already have sourcePath or hitIndex. Never guess from training data.",
       "QUERY QUALITY — for action=search use specific technical terms, file names, error messages, or framework names. Avoid vague single words.",
-      "PROJECT SCOPING — pass scope='current' to search/list only the exact cwd, scope='project' to include sub-directories (e.g. list all sessions under 'pi extensions' including 'pi extensions/pi-session-memory'), and scope='all' for every indexed session. cwd can be omitted; the tool falls back to the active cwd.",
+      "DEFAULT SCOPE — for action=list, action=search and action=find the default scope is 'project' (current cwd plus Pi sub-directories). This matches how the user usually wants 'past sessions for this project'. Use scope='all' only when the user explicitly asks to search across every project or uses phrases like 'anywhere', 'everywhere', 'in all projects', 'I don't remember which project'.",
+      "LISTING — use action=list when the user asks to see recent sessions without a specific query. Default limit is 4 and default scope is 'project'. If the user says 'previous session' or 'last session', use limit=1. If they say 'recent sessions' or 'past sessions', use the default limit=4. If they say 'session history', 'many sessions' or 'show more sessions', use limit=10. The list output contains compact previews (date + short ID + first user/assistant exchange) so the agent can pick which sessions to read.",
+      "READING AFTER LIST — after action=list, use session_memory(action='content', hitIndex=N) to read the session at index N. The list result is stored in the session, so hitIndex works exactly like after action=search.",
       "SCORE INTERPRETATION — score is cosine similarity [-1, 1]. Higher is better. Values > 0.5 are usually strongly relevant. Compare relative magnitudes within the result set.",
       "LIMITS — action=content uses safe defaults (maxMessages=30, maxChars=4000, toolResultLimit=1000). Increase only if the user explicitly asks for more.",
       "NEVER use the raw read tool on .jsonl session files — they can be 50 MB+. Always use session_memory.",
@@ -402,9 +460,9 @@ export default function (pi: ExtensionAPI) {
         }),
       ),
       scope: Type.Optional(
-        Type.Union([Type.Literal("current"), Type.Literal("project"), Type.Literal("all")], {
-          default: "current",
-          description: "For action=list: show sessions for current directory, project tree (cwd + sub-directories) or all projects. For action=search/find: restrict semantic search to the current directory, project tree or all projects.",
+        Type.Union([Type.Literal("project"), Type.Literal("all")], {
+          default: "project",
+          description: "'project' = current cwd plus Pi sub-directories (default). 'all' = every indexed session. Use 'all' only when the user explicitly asks to search across all projects.",
         }),
       ),
       cwd: Type.Optional(
@@ -468,7 +526,7 @@ export default function (pi: ExtensionAPI) {
         case "content":
           return actionContent(params, ctx);
         case "list":
-          return actionList(params, ctx);
+          return actionList(params, ctx, pi);
         case "find":
           if (!params.query?.trim()) {
             return {
@@ -493,7 +551,7 @@ export default function (pi: ExtensionAPI) {
       let detail = "";
       if (action === "search" || action === "find") detail = a.query || "";
       else if (action === "content") detail = a.sourcePath ? path.basename(a.sourcePath) : `hitIndex=${a.hitIndex ?? "?"}`;
-      else if (action === "list") detail = a.scope || "current";
+      else if (action === "list") detail = a.scope || "project";
       if (detail.length > 40) detail = detail.slice(0, 37) + "...";
       return new Text(theme.fg("toolTitle", theme.bold("session_memory ")) + theme.fg("accent", `${action} ${detail}`), 0, 0);
     },
@@ -622,17 +680,15 @@ export default function (pi: ExtensionAPI) {
 
     const cwd = ctx.cwd || ctx.sessionManager.getCwd();
     const scopeChoice = await ctx.ui.select("Choose search scope", [
-      "[1] Current directory",
-      "[2] Project tree (cwd + sub-directories)",
-      "[3] All projects",
+      "[1] Project tree (cwd + sub-directories)",
+      "[2] All projects",
     ]);
     if (!scopeChoice) {
       ctx.ui.notify("Cancelled", "info");
       return;
     }
-    let scope: "current" | "project" | "all" = "current";
-    if (scopeChoice.startsWith("[2]")) scope = "project";
-    else if (scopeChoice.startsWith("[3]")) scope = "all";
+    let scope: "project" | "all" = "project";
+    if (scopeChoice.startsWith("[2]")) scope = "all";
 
     let result: any;
     try {
@@ -693,17 +749,15 @@ export default function (pi: ExtensionAPI) {
 
     const cwd = ctx.cwd || ctx.sessionManager.getCwd();
     const scopeChoice = await ctx.ui.select("Choose search scope", [
-      "[1] Current directory",
-      "[2] Project tree (cwd + sub-directories)",
-      "[3] All projects",
+      "[1] Project tree (cwd + sub-directories)",
+      "[2] All projects",
     ]);
     if (!scopeChoice) {
       ctx.ui.notify("Cancelled", "info");
       return;
     }
-    let scope: "current" | "project" | "all" = "current";
-    if (scopeChoice.startsWith("[2]")) scope = "project";
-    else if (scopeChoice.startsWith("[3]")) scope = "all";
+    let scope: "project" | "all" = "project";
+    if (scopeChoice.startsWith("[2]")) scope = "all";
 
     let result: any;
     try {
@@ -759,17 +813,15 @@ export default function (pi: ExtensionAPI) {
   async function runList(ctx: any) {
     const cwd = ctx.cwd || ctx.sessionManager.getCwd();
     const scopeChoice = await ctx.ui.select("Choose session scope", [
-      "[1] Current directory",
-      "[2] Project tree (cwd + sub-directories)",
-      "[3] All projects",
+      "[1] Project tree (cwd + sub-directories)",
+      "[2] All projects",
     ]);
     if (!scopeChoice) {
       ctx.ui.notify("Cancelled", "info");
       return;
     }
-    let scope: "current" | "project" | "all" = "current";
-    if (scopeChoice.startsWith("[2]")) scope = "project";
-    else if (scopeChoice.startsWith("[3]")) scope = "all";
+    let scope: "project" | "all" = "project";
+    if (scopeChoice.startsWith("[2]")) scope = "all";
 
     let sessions: SessionListItem[];
     try {
@@ -807,17 +859,15 @@ export default function (pi: ExtensionAPI) {
   async function runResume(ctx: any) {
     const cwd = ctx.cwd || ctx.sessionManager.getCwd();
     const scopeChoice = await ctx.ui.select("Choose session scope", [
-      "[1] Current directory",
-      "[2] Project tree (cwd + sub-directories)",
-      "[3] All projects",
+      "[1] Project tree (cwd + sub-directories)",
+      "[2] All projects",
     ]);
     if (!scopeChoice) {
       ctx.ui.notify("Cancelled", "info");
       return;
     }
-    let scope: "current" | "project" | "all" = "current";
-    if (scopeChoice.startsWith("[2]")) scope = "project";
-    else if (scopeChoice.startsWith("[3]")) scope = "all";
+    let scope: "project" | "all" = "project";
+    if (scopeChoice.startsWith("[2]")) scope = "all";
 
     let sessions: SessionListItem[];
     try {
@@ -829,7 +879,7 @@ export default function (pi: ExtensionAPI) {
     }
 
     if (sessions.length === 0) {
-      const scopeLabel = scope === "current" ? "current directory" : scope === "project" ? "project tree" : "all projects";
+      const scopeLabel = scope === "project" ? "project tree" : "all projects";
       ctx.ui.notify(`No saved sessions found for ${scopeLabel}.`, "warning");
       return;
     }

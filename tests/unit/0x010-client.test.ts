@@ -183,7 +183,7 @@ test("pi-session-memory apiListSessions returns session list", async () => {
 
   try {
     await withMockUrl(sessionMemory.setBaseUrl, port, async () => {
-      const sessions = await sessionMemory.apiListSessions("current", "C:/10x001/project", 50);
+      const sessions = await sessionMemory.apiListSessions("project", "C:/10x001/project", 50);
       assert.strictEqual(sessions.length, 1);
       assert.strictEqual(sessions[0].project, "pi");
     });
