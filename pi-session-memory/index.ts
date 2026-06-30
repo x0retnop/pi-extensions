@@ -372,7 +372,9 @@ async function actionFind(
     };
   }
 
-  return actionContent({ sourcePath: last.hits[0].source_path, ...params }, ctx);
+  // Use hitIndex=0 instead of passing sourcePath. The stored search result keeps
+  // the exact source_path, so the LLM cannot truncate or misquote it.
+  return actionContent({ hitIndex: 0, ...params }, ctx);
 }
 
 async function actionList(
@@ -439,12 +441,12 @@ export default function (pi: ExtensionAPI) {
       "Use when the user asks about something from a previous conversation, or when a handoff/continuation file refers to details that are only in past sessions. action=search returns preview hits; action=content reads one session; action=list enumerates recent sessions; action=find searches and returns the top matching session content in one call.",
     promptGuidelines: [
       "TRIGGERS — call this tool when the user uses phrases like: 'recall', 'remember', 'where did we', 'how did I before', 'as we discussed earlier', 'in a previous session', 'как я делал раньше', 'в прошлый раз', 'где мы обсуждали', 'напомни', 'найди в историю'.",
-      "HANDOFF CONTINUATION — when starting from a handoff/continuation file, scan for the section 'Details to Retrieve from Session History' and for phrases like 'see the previous session', 'see session history', 'details are in the session history', 'the exact output is in the previous session', 'the raw ... is in the session history', 'in the previous session'. For each item, call session_memory(action='find', query='<specific technical detail>') to retrieve the raw detail. Prefer action=find. Do not treat the handoff as the only source of truth.",
+      "HANDOFF CONTINUATION — when starting from a handoff/continuation file, scan for the section 'Details to Retrieve from Session History' and for phrases like 'see the previous session', 'see session history', 'details are in the session history', 'the exact output is in the previous session', 'the raw ... is in the session history', 'in the previous session'. For each item, call session_memory(action='find', query='<specific technical detail>') to retrieve the raw detail. Prefer action=find. Do not treat the handoff as the only source of truth. Do not fabricate a sourcePath; let the tool resolve the hit internally.",
       "WORKFLOW — for quick verification use action=find. Use action=search when you want to compare multiple sessions, then action=content with hitIndex for details. Use action=content directly when you already have sourcePath or hitIndex. Never guess from training data.",
       "QUERY QUALITY — for action=search use specific technical terms, file names, error messages, or framework names. Avoid vague single words.",
       "DEFAULT SCOPE — for action=list, action=search and action=find the default scope is 'project' (current cwd plus Pi sub-directories). This matches how the user usually wants 'past sessions for this project'. Use scope='all' only when the user explicitly asks to search across every project or uses phrases like 'anywhere', 'everywhere', 'in all projects', 'I don't remember which project'.",
-      "LISTING — use action=list when the user asks to see recent sessions without a specific query. Default limit is 4 and default scope is 'project'. If the user says 'previous session' or 'last session', use limit=1. If they say 'recent sessions' or 'past sessions', use the default limit=4. If they say 'session history', 'many sessions' or 'show more sessions', use limit=10. The list output contains compact previews (date + short ID + first user/assistant exchange) so the agent can pick which sessions to read.",
-      "READING AFTER LIST — after action=list, use session_memory(action='content', hitIndex=N) to read the session at index N. The list result is stored in the session, so hitIndex works exactly like after action=search.",
+      "LISTING — use action=list when the user asks to see recent sessions without a specific query. Default limit is 4 and default scope is 'project'. If the user says 'previous session', 'last session', 'что делали в последней сессии', 'что было в прошлый раз', use limit=1. If they say 'recent sessions' or 'past sessions', use the default limit=4. If they say 'session history', 'many sessions' or 'show more sessions', use limit=10. The list output contains compact previews (date + short ID + first user/assistant exchange) so the agent can pick which sessions to read.",
+      "READING AFTER LIST OR SEARCH — after action=list or action=search, use session_memory(action='content', hitIndex=N) to read the session at index N. The result is stored in the session, so hitIndex works for both. Do not invent or copy a sourcePath from the output text; always use hitIndex.",
       "SCORE INTERPRETATION — score is cosine similarity [-1, 1]. Higher is better. Values > 0.5 are usually strongly relevant. Compare relative magnitudes within the result set.",
       "LIMITS — action=content uses safe defaults (maxMessages=30, maxChars=4000, toolResultLimit=1000). Increase only if the user explicitly asks for more.",
       "NEVER use the raw read tool on .jsonl session files — they can be 50 MB+. Always use session_memory.",
@@ -458,13 +460,13 @@ export default function (pi: ExtensionAPI) {
       ),
       sourcePath: Type.Optional(
         Type.String({
-          description: "Required for action=content unless hitIndex is provided. Absolute path to the .jsonl session file.",
+          description: "Required for action=content unless hitIndex is provided. Absolute path to the .jsonl session file. Prefer hitIndex; only use sourcePath if you have a full, exact path from a previous tool result and cannot use an index.",
         }),
       ),
       hitIndex: Type.Optional(
         Type.Integer({
           minimum: 0,
-          description: "Index from the last session_memory search result (0 = top hit).",
+          description: "Index from the last session_memory search or list result (0 = top hit). Use this instead of sourcePath whenever possible.",
         }),
       ),
       scope: Type.Optional(
