@@ -50,9 +50,11 @@ export async function apiSearch(
   limit: number,
   scope: "all" | "project" = "project",
   cwd?: string,
+  excludeSourcePath?: string,
 ): Promise<SearchHit[]> {
   const body: Record<string, any> = { query, limit, scope };
   if (cwd) body.cwd = cwd;
+  if (excludeSourcePath) body.exclude_source_path = excludeSourcePath;
   const res = await fetch(`${BASE_URL}/api/session_index/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -118,11 +120,14 @@ export async function apiListSessions(
   scope: "project" | "all",
   cwd: string,
   limit = 4,
+  excludeSourcePath?: string,
 ): Promise<SessionListItem[]> {
+  const body: Record<string, any> = { scope, cwd, limit };
+  if (excludeSourcePath) body.exclude_source_path = excludeSourcePath;
   const res = await fetch(`${BASE_URL}/api/session_index/list`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scope, cwd, limit }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -237,9 +242,11 @@ async function actionSearch(
     details: { phase: "search", scope, cwd },
   });
 
+  const excludeSourcePath = ctx.sessionManager.getSessionFile() || undefined;
+
   let hits: SearchHit[];
   try {
-    hits = await apiSearch(params.query, params.limit ?? 3, scope, cwd);
+    hits = await apiSearch(params.query, params.limit ?? 3, scope, cwd, excludeSourcePath);
   } catch (err) {
     return serverUnreachableResult(err);
   }
@@ -375,11 +382,12 @@ async function actionList(
 ): Promise<any> {
   const cwd = params.cwd || _ctx.cwd || _ctx.sessionManager.getCwd();
   const scope = params.scope ?? "project";
+  const excludeSourcePath = _ctx.sessionManager.getSessionFile() || undefined;
   const scopeLabel = scope === "all" ? "all projects" : "project tree";
   const limit = params.limit ?? (params.sessions === "history" ? 10 : 4);
 
   try {
-    const sessions = await apiListSessions(scope, cwd, limit);
+    const sessions = await apiListSessions(scope, cwd, limit, excludeSourcePath);
     if (sessions.length === 0) {
       return {
         content: [{ type: "text", text: `No saved sessions found for ${scopeLabel}.` }],
