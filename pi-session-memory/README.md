@@ -11,16 +11,19 @@ pi install ./pi-session-memory
 ## Features
 
 - **`session_memory`** — unified tool for the agent:
+  - `action="last"` — return the most recent session for the current project in one step.
   - `action="search"` — semantic search across indexed `.jsonl` sessions.
   - `action="content"` — safely read a specific session with hard limits.
-  - `action="list"` — list recent saved sessions for current directory, project tree, or all projects.
-  - `action="find"` — search and return the most relevant session content in one step, optionally scoped to current/project/all.
+  - `action="list"` — list recent saved sessions for project tree or all projects.
+  - `action="find"` — search and return the most relevant session content in one step, optionally scoped to project/all.
 - **`/session-memory`** — interactive TUI menu for status, rebuild, search, resume, and export.
 
 ## Agent workflow
 
-1. Ask the agent to recall something: "How did I set up OAuth last time?"
-2. Agent calls `session_memory(action="find", query="OAuth2 FastAPI setup")` to get the most relevant session content in one step.
+1. Ask the agent about the last session: "What did we do in the last session?" / "Что делали в последней сессии?"
+   - Agent calls `session_memory(action="last")` to get the latest session content in one step.
+2. Ask the agent to recall something: "How did I set up OAuth last time?"
+   - Agent calls `session_memory(action="find", query="OAuth2 FastAPI setup")` to get the most relevant session content in one step.
 3. Alternatively, agent calls `session_memory(action="search", query="OAuth2 FastAPI setup")` to compare hits, then `session_memory(action="content", hitIndex=0, maxMessages=20)`.
 
 ## User workflow

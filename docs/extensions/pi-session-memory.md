@@ -11,9 +11,10 @@ Semantic search over past Pi sessions via the 0x010 Session Vector Index.
 ## Tool
 
 - `session_memory`
-  - `action: "search"` — semantic search across indexed sessions. Good for finding exact error messages, prior debugging steps, or decisions mentioned in a handoff file. Use `scope` (`current`, `project`, `all`) and optional `cwd` to narrow results.
+  - `action: "last"` — return the most recent session for the current project in one step. Use when the user asks "what did we do in the last session" / "что делали в последней сессии".
+  - `action: "search"` — semantic search across indexed sessions. Good for finding exact error messages, prior debugging steps, or decisions mentioned in a handoff file. Use `scope` (`project`/`all`) and optional `cwd` to narrow results.
   - `action: "content"` — read a specific session with safe limits.
-  - `action: "list"` — enumerate recent sessions. `scope` can be `current` (exact cwd), `project` (cwd + sub-directories) or `all`.
+  - `action: "list"` — enumerate recent sessions. `scope` can be `project` (cwd + sub-directories) or `all`.
   - `action: "find"` — search and return the most relevant session content in one step. Prefer this when a handoff file points to details kept in session history. Supports the same `scope`/`cwd` filtering as `search`.
 
 ## Important behaviors

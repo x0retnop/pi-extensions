@@ -377,6 +377,32 @@ async function actionFind(
   return actionContent({ hitIndex: 0, ...params }, ctx);
 }
 
+async function actionLast(
+  params: any,
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+): Promise<any> {
+  const listResult = await actionList(
+    { ...params, action: "list", limit: 1, scope: params.scope ?? "project" },
+    ctx,
+    pi,
+  );
+
+  if (listResult.isError || (listResult.details as any)?.error || listResult.details?.sessionsCount === 0) {
+    return listResult;
+  }
+
+  const lastList = getLastList(ctx);
+  if (!lastList || lastList.sessions.length === 0) {
+    return {
+      content: [{ type: "text", text: "No previous sessions found for the current project." }],
+      details: { found: false },
+    };
+  }
+
+  return actionContent({ hitIndex: 0, ...params }, ctx);
+}
+
 async function actionList(
   params: any,
   _ctx: ExtensionContext,
@@ -429,6 +455,7 @@ const SessionMemoryActionSchema = Type.Union([
   Type.Literal("content"),
   Type.Literal("list"),
   Type.Literal("find"),
+  Type.Literal("last"),
 ]);
 
 export default function (pi: ExtensionAPI) {
@@ -438,14 +465,15 @@ export default function (pi: ExtensionAPI) {
     description:
       "Unified access to the user's past conversation history. Search for relevant sessions, list saved sessions, read a specific session safely, or find-and-read the most relevant session in one step.",
     promptSnippet:
-      "Use when the user asks about something from a previous conversation, or when a handoff/continuation file refers to details that are only in past sessions. action=search returns preview hits; action=content reads one session; action=list enumerates recent sessions; action=find searches and returns the top matching session content in one call.",
+      "Use when the user asks about something from a previous conversation, or when a handoff/continuation file refers to details that are only in past sessions. action=last returns the most recent session in the current project; action=find searches and returns the top matching session content; action=search returns preview hits; action=content reads one session; action=list enumerates recent sessions.",
     promptGuidelines: [
       "TRIGGERS — call this tool when the user uses phrases like: 'recall', 'remember', 'where did we', 'how did I before', 'as we discussed earlier', 'in a previous session', 'как я делал раньше', 'в прошлый раз', 'где мы обсуждали', 'напомни', 'найди в историю'.",
+      "LAST SESSION — if the user asks specifically about the most recent/previous session ('что делали в последней сессии', 'что было в прошлый раз', 'последняя сессия', 'previous session', 'last session'), use action='last'. This returns the latest session for the current project in one step. Do not use action=find for this.",
       "HANDOFF CONTINUATION — when starting from a handoff/continuation file, scan for the section 'Details to Retrieve from Session History' and for phrases like 'see the previous session', 'see session history', 'details are in the session history', 'the exact output is in the previous session', 'the raw ... is in the session history', 'in the previous session'. For each item, call session_memory(action='find', query='<specific technical detail>') to retrieve the raw detail. Prefer action=find. Do not treat the handoff as the only source of truth. Do not fabricate a sourcePath; let the tool resolve the hit internally.",
       "WORKFLOW — for quick verification use action=find. Use action=search when you want to compare multiple sessions, then action=content with hitIndex for details. Use action=content directly when you already have sourcePath or hitIndex. Never guess from training data.",
       "QUERY QUALITY — for action=search use specific technical terms, file names, error messages, or framework names. Avoid vague single words.",
       "DEFAULT SCOPE — for action=list, action=search and action=find the default scope is 'project' (current cwd plus Pi sub-directories). This matches how the user usually wants 'past sessions for this project'. Use scope='all' only when the user explicitly asks to search across every project or uses phrases like 'anywhere', 'everywhere', 'in all projects', 'I don't remember which project'.",
-      "LISTING — use action=list when the user asks to see recent sessions without a specific query. Default limit is 4 and default scope is 'project'. If the user says 'previous session', 'last session', 'что делали в последней сессии', 'что было в прошлый раз', use limit=1. If they say 'recent sessions' or 'past sessions', use the default limit=4. If they say 'session history', 'many sessions' or 'show more sessions', use limit=10. The list output contains compact previews (date + short ID + first user/assistant exchange) so the agent can pick which sessions to read.",
+      "LISTING — use action=list when the user asks to see recent sessions without a specific query. Default limit is 4 and default scope is 'project'. If they say 'recent sessions' or 'past sessions', use the default limit=4. If they say 'session history', 'many sessions' or 'show more sessions', use limit=10. The list output contains compact previews (date + short ID + first user/assistant exchange) so the agent can pick which sessions to read.",
       "READING AFTER LIST OR SEARCH — after action=list or action=search, use session_memory(action='content', hitIndex=N) to read the session at index N. The result is stored in the session, so hitIndex works for both. Do not invent or copy a sourcePath from the output text; always use hitIndex.",
       "SCORE INTERPRETATION — score is cosine similarity [-1, 1]. Higher is better. Values > 0.5 are usually strongly relevant. Compare relative magnitudes within the result set.",
       "LIMITS — action=content uses safe defaults (maxMessages=30, maxChars=4000, toolResultLimit=1000). Increase only if the user explicitly asks for more.",
@@ -455,7 +483,7 @@ export default function (pi: ExtensionAPI) {
       action: SessionMemoryActionSchema,
       query: Type.Optional(
         Type.String({
-          description: "Required for action=search and action=find. Be specific — use technical terms, file names, error messages, or problem descriptions.",
+          description: "Required for action=search and action=find. Be specific — use technical terms, file names, error messages, or problem descriptions. Not used for action=last.",
         }),
       ),
       sourcePath: Type.Optional(
@@ -546,9 +574,11 @@ export default function (pi: ExtensionAPI) {
             };
           }
           return actionFind(params, ctx, pi, onUpdate);
+        case "last":
+          return actionLast(params, ctx, pi);
         default:
           return {
-            content: [{ type: "text", text: `Error: unknown action "${params.action}". Use search, content, list, or find.` }],
+            content: [{ type: "text", text: `Error: unknown action "${params.action}". Use search, content, list, find, or last.` }],
             details: { error: "Unknown action" },
             isError: true,
           };

@@ -20,9 +20,10 @@
 
 ## Extension behavior
 
-- `session_memory(action="search")` → calls `/api/session_index/search`, stores results in session manager. Supports `scope` (`all`/`current`/`project`) and `cwd`.
+- `session_memory(action="last")` → returns the most recent session for the current project in one step (`list limit=1` + `content`).
+- `session_memory(action="search")` → calls `/api/session_index/search`, stores results in session manager. Supports `scope` (`project`/`all`) and `cwd`.
 - `session_memory(action="content")` → calls `/api/session_index/session_content`.
-- `session_memory(action="list")` → calls `/api/session_index/list`. Supports `scope` (`current`/`project`/`all`) and `cwd`.
+- `session_memory(action="list")` → calls `/api/session_index/list`. Supports `scope` (`project`/`all`) and `cwd`.
 - `session_memory(action="find")` → calls `/api/session_index/search`, stores the top hit, then calls `/api/session_index/session_content` for the most relevant session. Supports `scope` and `cwd`.
 - `/session-memory` → TUI menu that calls status / rebuild / search / find / list / session_content / export as needed.
 
