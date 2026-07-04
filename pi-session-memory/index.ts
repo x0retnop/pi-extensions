@@ -4,6 +4,7 @@ import { Text } from "@earendil-works/pi-tui";
 import path from "node:path";
 import { exportSessionToMarkdown, groupSessionsByProject, openSessionExportTUI, type ExportFormat } from "./local-export.js";
 import { extractProject } from "./project.js";
+import { browseItemFromHit, browseItemFromListItem, openSessionBrowser, type BrowseItem, type BrowserAction } from "./session-browser.js";
 
 // Allow runtime injection of a different base URL for tests.
 let BASE_URL =
@@ -615,13 +616,12 @@ export default function (pi: ExtensionAPI) {
     }
 
     const choice = await ctx.ui.select("Session memory", [
-      "[1] Status",
-      "[2] Rebuild index",
-      "[3] Search sessions",
-      "[4] Find session (search + read top hit)",
-      "[5] List sessions",
-      "[6] Resume a session",
-      "[7] Export session to Markdown",
+      "[1] Browse recent sessions",
+      "[2] Search sessions by topic",
+      "[3] Resume a session",
+      "[4] Export session to Markdown",
+      "[5] Status",
+      "[6] Rebuild index",
     ]);
 
     if (!choice) {
@@ -634,25 +634,22 @@ export default function (pi: ExtensionAPI) {
 
     switch (idx) {
       case 1:
-        await runStatus(ctx);
+        await runBrowse(ctx);
         break;
       case 2:
-        await runRebuild(ctx);
-        break;
-      case 3:
         await runSearch(ctx);
         break;
-      case 4:
-        await runFind(ctx);
-        break;
-      case 5:
-        await runList(ctx);
-        break;
-      case 6:
+      case 3:
         await runResume(ctx);
         break;
-      case 7:
+      case 4:
         await runExport(ctx);
+        break;
+      case 5:
+        await runStatus(ctx);
+        break;
+      case 6:
+        await runRebuild(ctx);
         break;
       default:
         ctx.ui.notify("Unknown choice", "error");
@@ -692,24 +689,49 @@ export default function (pi: ExtensionAPI) {
     }
   }
 
+  async function chooseScope(ctx: any): Promise<"project" | "all" | undefined> {
+    const choice = await ctx.ui.select("Choose session scope", [
+      "[1] Project tree (cwd + sub-directories)",
+      "[2] All projects",
+    ]);
+    if (!choice) return undefined;
+    return choice.startsWith("[2]") ? "all" : "project";
+  }
+
+  async function runBrowse(ctx: any) {
+    const cwd = ctx.cwd || ctx.sessionManager.getCwd();
+    const scope = await chooseScope(ctx);
+    if (!scope) return;
+
+    let sessions: SessionListItem[];
+    try {
+      sessions = await apiListSessions(scope, cwd, 50);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.ui.notify(`Error listing sessions: ${msg}`, "error");
+      return;
+    }
+
+    if (sessions.length === 0) {
+      ctx.ui.notify("No saved sessions found.", "warning");
+      return;
+    }
+
+    const items = sessions.map(browseItemFromListItem);
+    const picked = await openSessionBrowser({ ui: ctx.ui, title: "Recent sessions", items, mode: "read" });
+    if (picked) await handleBrowserAction(ctx, picked.item, picked.action);
+  }
+
   async function runSearch(ctx: any) {
-    const query = await ctx.ui.input("Search query", "e.g., OAuth2 FastAPI setup");
+    const query = await ctx.ui.input("Search sessions by topic", "e.g., OAuth2 FastAPI setup");
     if (!query?.trim()) {
       ctx.ui.notify("Cancelled", "info");
       return;
     }
 
     const cwd = ctx.cwd || ctx.sessionManager.getCwd();
-    const scopeChoice = await ctx.ui.select("Choose search scope", [
-      "[1] Project tree (cwd + sub-directories)",
-      "[2] All projects",
-    ]);
-    if (!scopeChoice) {
-      ctx.ui.notify("Cancelled", "info");
-      return;
-    }
-    let scope: "project" | "all" = "project";
-    if (scopeChoice.startsWith("[2]")) scope = "all";
+    const scope = await chooseScope(ctx);
+    if (!scope) return;
 
     let result: any;
     try {
@@ -736,32 +758,18 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    const options = last.hits.map((h, i) => {
-      const project = extractProject(h.source_path);
-      const date = h.date ? h.date.replace("T", " ").slice(0, 19) : "unknown";
-      const preview = h.text.trim().replace(/\s+/g, " ").slice(0, 80);
-      return `[${i}] ${project} · ${date} · ${preview}`;
+    const items = last.hits.map(browseItemFromHit);
+    const picked = await openSessionBrowser({
+      ui: ctx.ui,
+      title: `Search: ${query.trim()}`,
+      items,
+      mode: "read",
     });
-    options.push("[cancel]");
-
-    const selected = await ctx.ui.select("Select a result to read", options);
-    if (!selected || selected === "[cancel]") {
-      ctx.ui.notify("Cancelled", "info");
-      return;
-    }
-
-    const idxMatch = selected.match(/^\[(\d+)\]/);
-    const idx = idxMatch ? parseInt(idxMatch[1], 10) : -1;
-    const hit = last.hits[idx];
-    if (!hit) {
-      ctx.ui.notify("Could not resolve selected result", "error");
-      return;
-    }
-
-    await readSessionIntoEditor(ctx, hit.source_path);
+    if (picked) await handleBrowserAction(ctx, picked.item, picked.action);
   }
 
   async function runFind(ctx: any) {
+    // Kept as a quick "search + open best match" path for direct lookups.
     const query = await ctx.ui.input("Find session context", "e.g., exact error message from typecheck");
     if (!query?.trim()) {
       ctx.ui.notify("Cancelled", "info");
@@ -769,16 +777,8 @@ export default function (pi: ExtensionAPI) {
     }
 
     const cwd = ctx.cwd || ctx.sessionManager.getCwd();
-    const scopeChoice = await ctx.ui.select("Choose search scope", [
-      "[1] Project tree (cwd + sub-directories)",
-      "[2] All projects",
-    ]);
-    if (!scopeChoice) {
-      ctx.ui.notify("Cancelled", "info");
-      return;
-    }
-    let scope: "project" | "all" = "project";
-    if (scopeChoice.startsWith("[2]")) scope = "all";
+    const scope = await chooseScope(ctx);
+    if (!scope) return;
 
     let result: any;
     try {
@@ -831,64 +831,10 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.notify("Session loaded into editor. Review and press Enter to send.", "info");
   }
 
-  async function runList(ctx: any) {
-    const cwd = ctx.cwd || ctx.sessionManager.getCwd();
-    const scopeChoice = await ctx.ui.select("Choose session scope", [
-      "[1] Project tree (cwd + sub-directories)",
-      "[2] All projects",
-    ]);
-    if (!scopeChoice) {
-      ctx.ui.notify("Cancelled", "info");
-      return;
-    }
-    let scope: "project" | "all" = "project";
-    if (scopeChoice.startsWith("[2]")) scope = "all";
-
-    let sessions: SessionListItem[];
-    try {
-      sessions = await apiListSessions(scope, cwd, 50);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      ctx.ui.notify(`Error listing sessions: ${msg}`, "error");
-      return;
-    }
-
-    if (sessions.length === 0) {
-      ctx.ui.notify("No saved sessions found.", "warning");
-      return;
-    }
-
-    const options = sessions.map((s, i) => `[${i}] ${formatSessionOption(s)}`);
-    options.push("[cancel]");
-    const selected = await ctx.ui.select("Select a session to read", options);
-    if (!selected || selected === "[cancel]") {
-      ctx.ui.notify("Cancelled", "info");
-      return;
-    }
-
-    const idxMatch = selected.match(/^\[(\d+)\]/);
-    const idx = idxMatch ? parseInt(idxMatch[1], 10) : -1;
-    const sourcePath = sessions[idx]?.source_path;
-    if (!sourcePath) {
-      ctx.ui.notify("Could not resolve selected session", "error");
-      return;
-    }
-
-    await readSessionIntoEditor(ctx, sourcePath);
-  }
-
   async function runResume(ctx: any) {
     const cwd = ctx.cwd || ctx.sessionManager.getCwd();
-    const scopeChoice = await ctx.ui.select("Choose session scope", [
-      "[1] Project tree (cwd + sub-directories)",
-      "[2] All projects",
-    ]);
-    if (!scopeChoice) {
-      ctx.ui.notify("Cancelled", "info");
-      return;
-    }
-    let scope: "project" | "all" = "project";
-    if (scopeChoice.startsWith("[2]")) scope = "all";
+    const scope = await chooseScope(ctx);
+    if (!scope) return;
 
     let sessions: SessionListItem[];
     try {
@@ -905,21 +851,26 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    const options = sessions.map((s, i) => `[${i}] ${formatSessionOption(s)}`);
-    const selected = await ctx.ui.select("Select a session to load", options);
-    if (!selected) {
-      ctx.ui.notify("Cancelled", "info");
-      return;
-    }
+    const items = sessions.map(browseItemFromListItem);
+    const picked = await openSessionBrowser({ ui: ctx.ui, title: "Resume session", items, mode: "resume" });
+    if (picked) await handleBrowserAction(ctx, picked.item, picked.action);
+  }
 
-    const idxMatch = selected.match(/^\[(\d+)\]/);
-    const idx = idxMatch ? parseInt(idxMatch[1], 10) : -1;
-    const sourcePath = sessions[idx]?.source_path;
-    if (!sourcePath) {
-      ctx.ui.notify("Could not resolve selected session", "error");
-      return;
+  async function handleBrowserAction(ctx: any, item: BrowseItem, action: BrowserAction) {
+    switch (action) {
+      case "read":
+        await readSessionIntoEditor(ctx, item.source_path);
+        break;
+      case "resume":
+        await loadSessionAsContext(ctx, item.source_path);
+        break;
+      case "export":
+        await runExportFromItem(ctx, item.source_path);
+        break;
     }
+  }
 
+  async function loadSessionAsContext(ctx: any, sourcePath: string) {
     const note = await ctx.ui.input("Add a note for the agent (optional)", "e.g., focus on the OAuth setup discussion");
 
     let result: Awaited<ReturnType<typeof apiSessionContent>>;
@@ -940,6 +891,39 @@ export default function (pi: ExtensionAPI) {
     const fullText = `${headerParts.join("\n")}\n\n---\n\n${result.text}`;
     ctx.ui.setEditorText(fullText);
     ctx.ui.notify("Session context loaded into editor. Review and press Enter to send.", "info");
+  }
+
+  async function runExportFromItem(ctx: any, sourcePath: string) {
+    const cwd = ctx.cwd || ctx.sessionManager.getCwd();
+    const formatChoice = await ctx.ui.select("Export format", [
+      "[1] chat — only user/assistant text",
+      "[2] outline — user/assistant + short action summary",
+      "[3] full — everything including tool calls and results",
+    ]);
+    if (!formatChoice) {
+      ctx.ui.notify("Cancelled", "info");
+      return;
+    }
+    const formatMap: Record<string, ExportFormat> = {
+      "[1] chat — only user/assistant text": "chat",
+      "[2] outline — user/assistant + short action summary": "outline",
+      "[3] full — everything including tool calls and results": "full",
+    };
+    const format = formatMap[formatChoice];
+    if (!format) {
+      ctx.ui.notify("Unknown format", "error");
+      return;
+    }
+
+    const result = exportSessionToMarkdown(sourcePath, format, cwd);
+    if (result.ok) {
+      ctx.ui.notify(
+        `Exported to ${path.basename(result.path)}\n${result.entries} entries, ${result.chars} chars`,
+        "info",
+      );
+    } else {
+      ctx.ui.notify(`Export failed: ${(result as { error: string }).error}`, "error");
+    }
   }
 
   async function runExport(ctx: any) {
@@ -988,7 +972,14 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.registerCommand("session-memory", {
-    description: "Open the session memory menu (status, rebuild, search, find, resume, export)",
+    description: "Open the session memory menu (browse, search, resume, export, status, rebuild)",
+    handler: async (_args, ctx) => {
+      await showMainMenu(ctx);
+    },
+  });
+
+  pi.registerCommand("history", {
+    description: "Alias for /session-memory — browse and search past sessions",
     handler: async (_args, ctx) => {
       await showMainMenu(ctx);
     },
