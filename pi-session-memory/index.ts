@@ -5,6 +5,7 @@ import path from "node:path";
 import { exportSessionToMarkdown, groupSessionsByProject, openSessionExportTUI, type ExportFormat } from "./local-export.js";
 import { extractProject } from "./project.js";
 import { browseItemFromHit, browseItemFromListItem, openSessionBrowser, type BrowseItem, type BrowserAction } from "./session-browser.js";
+import { openSessionViewer, type ViewerAction } from "./session-viewer.js";
 
 // Allow runtime injection of a different base URL for tests.
 let BASE_URL =
@@ -804,31 +805,66 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    await readSessionIntoEditor(ctx, result.details.sourcePath as string);
+    const viewerAction = await viewSession(ctx, result.details.sourcePath as string);
+    await handleViewerAction(ctx, result.details.sourcePath as string, viewerAction);
   }
 
-  async function readSessionIntoEditor(ctx: any, sourcePath: string) {
-    let result: Awaited<ReturnType<typeof apiSessionContent>>;
+  async function fetchSessionText(sourcePath: string): Promise<Awaited<ReturnType<typeof apiSessionContent>> | undefined> {
     try {
-      result = await apiSessionContent(sourcePath, "compact");
+      return await apiSessionContent(sourcePath, "compact");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      ctx.ui.notify(`Error loading session: ${msg}`, "error");
-      return;
+      throw new Error(`Error loading session: ${msg}`);
+    }
+  }
+
+  async function viewSession(ctx: any, sourcePath: string): Promise<ViewerAction> {
+    let result: Awaited<ReturnType<typeof apiSessionContent>>;
+    try {
+      result = await fetchSessionText(sourcePath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      ctx.ui.notify(msg, "error");
+      return "back";
     }
 
-    const headerParts = [
-      `## Session: ${path.basename(sourcePath)}`,
-      `Project: ${result.project || extractProject(sourcePath)}`,
-      `Date: ${result.date || "unknown"}`,
-      `Messages: ${result.returned_messages}/${result.total_messages}${result.truncated ? " (truncated)" : ""}`,
-      `sourcePath: ${sourcePath}`,
-      "",
-      "---",
-      "",
-    ];
-    ctx.ui.setEditorText(headerParts.join("\n") + result.text);
-    ctx.ui.notify("Session loaded into editor. Review and press Enter to send.", "info");
+    return openSessionViewer({
+      ui: ctx.ui,
+      sourcePath,
+      project: result.project || extractProject(sourcePath),
+      date: result.date || "",
+      text: result.text,
+    });
+  }
+
+  async function handleBrowserAction(ctx: any, item: BrowseItem, action: BrowserAction) {
+    switch (action) {
+      case "read": {
+        const viewerAction = await viewSession(ctx, item.source_path);
+        await handleViewerAction(ctx, item.source_path, viewerAction);
+        break;
+      }
+      case "resume":
+        await loadSessionAsContext(ctx, item.source_path);
+        break;
+      case "export":
+        await runExportFromItem(ctx, item.source_path);
+        break;
+    }
+  }
+
+  async function handleViewerAction(ctx: any, sourcePath: string, viewerAction: ViewerAction) {
+    switch (viewerAction) {
+      case "resume":
+        await loadSessionAsContext(ctx, sourcePath);
+        break;
+      case "export":
+        await runExportFromItem(ctx, sourcePath);
+        break;
+      case "back":
+      default:
+        break;
+    }
   }
 
   async function runResume(ctx: any) {
@@ -854,20 +890,6 @@ export default function (pi: ExtensionAPI) {
     const items = sessions.map(browseItemFromListItem);
     const picked = await openSessionBrowser({ ui: ctx.ui, title: "Resume session", items, mode: "resume" });
     if (picked) await handleBrowserAction(ctx, picked.item, picked.action);
-  }
-
-  async function handleBrowserAction(ctx: any, item: BrowseItem, action: BrowserAction) {
-    switch (action) {
-      case "read":
-        await readSessionIntoEditor(ctx, item.source_path);
-        break;
-      case "resume":
-        await loadSessionAsContext(ctx, item.source_path);
-        break;
-      case "export":
-        await runExportFromItem(ctx, item.source_path);
-        break;
-    }
   }
 
   async function loadSessionAsContext(ctx: any, sourcePath: string) {

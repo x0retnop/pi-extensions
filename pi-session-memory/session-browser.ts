@@ -54,7 +54,7 @@ export async function openSessionBrowser(
           selectedIndex = Math.max(0, selectedIndex - pageSize());
         } else if (kb.matches(data, "tui.select.pageDown")) {
           selectedIndex = Math.min(items.length - 1, selectedIndex + pageSize());
-        } else if (kb.matches(data, "tui.select.cancel") || data === "q") {
+        } else if (kb.matches(data, "tui.select.cancel") || data === "q" || data === "Q") {
           closeWith();
           return;
         } else if (kb.matches(data, "tui.select.confirm")) {
@@ -83,8 +83,8 @@ export async function openSessionBrowser(
         else if (selectedIndex >= scrollOffset + maxVisible) scrollOffset = selectedIndex - maxVisible + 1;
         scrollOffset = Math.max(0, Math.min(scrollOffset, Math.max(0, items.length - maxVisible)));
 
-        const leftWidth = Math.max(36, Math.floor(width * 0.38));
-        const rightWidth = Math.max(20, width - leftWidth - 1);
+        const leftWidth = Math.max(32, Math.floor(width * 0.45));
+        const rightWidth = Math.max(24, width - leftWidth - 1);
 
         const lines: string[] = [];
         lines.push(truncateToWidth(theme.fg("accent", theme.bold(title)), width));
@@ -93,8 +93,8 @@ export async function openSessionBrowser(
             theme.fg(
               "dim",
               mode === "resume"
-                ? "↑↓ move · Enter resume · R read · E export · Esc cancel"
-                : "↑↓ move · Enter read · R resume · E export · Esc cancel",
+                ? "↑↓ move · Enter resume · R read · E export · Q cancel"
+                : "↑↓ move · Enter read · R resume · E export · Q cancel",
             ),
             width,
           ),
@@ -182,6 +182,68 @@ function formatDate(date: string): string {
   return date.replace("T", " ").slice(0, 19);
 }
 
+function clip(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return text.slice(0, limit - 1) + "…";
+}
+
+function extractUserMessages(text: string): string[] {
+  const matches = text.match(/\[User\]\s*(.+?)(?=\n\[|\n\[Assistant\]|\n\[ToolResult\]|$)/gs);
+  if (!matches) return [];
+  return matches
+    .map((m) => m.replace(/^\[User\]\s*/, "").trim())
+    .filter((m) => m.length > 0);
+}
+
+function extractAssistantMessages(text: string): string[] {
+  const matches = text.match(/\[Assistant\]\s*(.+?)(?=\n\[|\n\[User\]|\n\[ToolResult\]|$)/gs);
+  if (!matches) return [];
+  return matches
+    .map((m) => m.replace(/^\[Assistant\]\s*/, "").trim())
+    .filter((m) => m.length > 0);
+}
+
+function extractToolCommands(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const tools = text.match(/\[ToolResult\]\s*(.+?)(?=\n\[|\n\[User\]|\n\[Assistant\]|$)/gs);
+  if (tools) {
+    for (const t of tools) {
+      const body = t.replace(/^\[ToolResult\]\s*/, "").trim();
+      const first = body.split(/\r?\n/)[0]?.trim();
+      if (first && first.length > 3 && !seen.has(first)) {
+        seen.add(first);
+        out.push(first);
+      }
+    }
+  }
+  return out.slice(0, 3);
+}
+
+function pickBestTitle(users: string[]): string {
+  if (users.length === 0) return "";
+  // Prefer a substantive user message — not "hi", "ok", etc.
+  const substantive = users.filter((u) => u.length >= 20 && !/^\s*(hi|hello|hey|ok|okay|thanks|thx)\b/i.test(u));
+  const candidates = substantive.length > 0 ? substantive : users;
+  const sorted = [...candidates].sort((a, b) => b.length - a.length);
+  return clip(sorted[0].replace(/\s+/g, " ").trim(), 120);
+}
+
+function buildSnippet(users: string[], assistants: string[], tools: string[]): string {
+  const parts: string[] = [];
+  // Last user question is usually the most informative.
+  if (users.length > 0) {
+    parts.push(clip(users[users.length - 1].replace(/\s+/g, " ").trim(), 220));
+  }
+  if (assistants.length > 0) {
+    parts.push(clip(assistants[assistants.length - 1].replace(/\s+/g, " ").trim(), 160));
+  }
+  if (parts.length === 0 && tools.length > 0) {
+    parts.push("Tools: " + tools.join(" · "));
+  }
+  return parts.join("\n");
+}
+
 export function browseItemFromListItem(s: { source_path: string; project: string; date: string; preview?: string }): BrowseItem {
   const project = s.project || extractProject(s.source_path);
   const date = formatDate(s.date);
@@ -194,15 +256,12 @@ export function browseItemFromListItem(s: { source_path: string; project: string
     title = preview.slice(6, arrowIdx).trim();
     snippet = preview.slice(arrowIdx + 14).trim();
   } else {
-    title = preview.slice(0, 100);
-    snippet = "";
+    title = preview;
   }
 
-  if (!title) {
-    title = path.basename(s.source_path, ".jsonl");
-  }
+  if (!title) title = path.basename(s.source_path, ".jsonl");
   if (title.length > 120) title = title.slice(0, 119) + "…";
-  if (snippet.length > 300) snippet = snippet.slice(0, 299) + "…";
+  if (snippet.length > 220) snippet = snippet.slice(0, 219) + "…";
 
   return {
     source_path: s.source_path,
@@ -219,16 +278,12 @@ export function browseItemFromHit(h: { source_path: string; text: string; score:
   const date = formatDate(h.date || "");
   const text = (h.text || "").trim();
 
-  const userMatch = text.match(/\[User\]\s*(.+?)(?=\n\[Assistant\]|\n\[ToolResult\]|\n\[User\]|$)/s);
-  const assistantMatch = text.match(/\[Assistant\]\s*(.+?)(?=\n\[User\]|\n\[ToolResult\]|\n\[Assistant\]|$)/s);
+  const users = extractUserMessages(text);
+  const assistants = extractAssistantMessages(text);
+  const tools = extractToolCommands(text);
 
-  let title = userMatch ? userMatch[1].trim().replace(/\s+/g, " ") : "";
-  let snippet = assistantMatch ? assistantMatch[1].trim().replace(/\s+/g, " ") : "";
-
-  if (!title) title = path.basename(h.source_path, ".jsonl");
-  if (!snippet) snippet = text.replace(/\s+/g, " ").trim();
-  if (title.length > 120) title = title.slice(0, 119) + "…";
-  if (snippet.length > 400) snippet = snippet.slice(0, 399) + "…";
+  const title = pickBestTitle(users);
+  const snippet = buildSnippet(users, assistants, tools);
 
   return {
     source_path: h.source_path,
