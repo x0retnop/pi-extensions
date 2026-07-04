@@ -22,7 +22,7 @@
 
 - `session_memory(action="last")` → returns the most recent session for the current project in one step (`list limit=1` + `content`).
 - `session_memory(action="search")` → calls `/api/session_index/search`, stores results in session manager. Supports `scope` (`project`/`all`) and `cwd`.
-- `session_memory(action="content")` → calls `/api/session_index/session_content`.
+- `session_memory(action="content")` → calls `/api/session_index/session_content`. The extension always requests the fullest safe representation (`max_messages=1000`, `max_chars=100000`, `tool_result_limit=10000`) and asks the backend to compact `toolResult` entries into one-line digests. The full user/assistant dialogue is preserved.
 - `session_memory(action="list")` → calls `/api/session_index/list`. Supports `scope` (`project`/`all`) and `cwd`.
 - `session_memory(action="find")` → calls `/api/session_index/search`, stores the top hit, then calls `/api/session_index/session_content` for the most relevant session. Supports `scope` and `cwd`.
 - `/session-memory` → TUI menu that calls status / rebuild / search / find / list / session_content / export as needed.

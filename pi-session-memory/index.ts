@@ -70,9 +70,7 @@ export async function apiSearch(
 
 export async function apiSessionContent(
   sourcePath: string,
-  maxMessages: number,
-  maxChars: number,
-  toolResultLimit: number,
+  toolMode: "compact" | "full" = "compact",
 ): Promise<{
   source_path: string;
   project: string;
@@ -88,9 +86,10 @@ export async function apiSessionContent(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       source_path: sourcePath,
-      max_messages: maxMessages,
-      max_chars: maxChars,
-      tool_result_limit: toolResultLimit,
+      max_messages: 1000,
+      max_chars: 100000,
+      tool_result_limit: 10000,
+      tool_mode: toolMode,
     }),
   });
   if (!res.ok) {
@@ -318,14 +317,11 @@ async function actionContent(params: any, ctx: ExtensionContext): Promise<any> {
     };
   }
 
+  const toolMode: "compact" | "full" = params.toolMode === "full" ? "full" : "compact";
+
   let result: Awaited<ReturnType<typeof apiSessionContent>>;
   try {
-    result = await apiSessionContent(
-      sourcePath,
-      params.maxMessages ?? 30,
-      params.maxChars ?? 4000,
-      params.toolResultLimit ?? 1000,
-    );
+    result = await apiSessionContent(sourcePath, toolMode);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {
@@ -524,28 +520,13 @@ export default function (pi: ExtensionAPI) {
           description: "Minimum relevance score for action=search. Values > 0.5 are usually strongly relevant.",
         }),
       ),
-      maxMessages: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: 1000,
-          default: 30,
-          description: "For action=content: latest messages to include.",
-        }),
-      ),
-      maxChars: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: 100000,
-          default: 4000,
-          description: "For action=content: hard output character limit.",
-        }),
-      ),
-      toolResultLimit: Type.Optional(
-        Type.Integer({
-          minimum: 1,
-          maximum: 10000,
-          default: 1000,
-          description: "For action=content: max characters per tool result block to include.",
+      // Internal tuning parameters for action=content. Hidden from the agent
+      // schema because session reads should always return the fullest safe
+      // representation. The extension supplies conservative maxima and
+      // compact tool digests by default.
+      toolMode: Type.Optional(
+        Type.Literal("compact", {
+          description: "INTERNAL: tool result representation. Always compact.",
         }),
       ),
     }),
@@ -829,7 +810,7 @@ export default function (pi: ExtensionAPI) {
   async function readSessionIntoEditor(ctx: any, sourcePath: string) {
     let result: Awaited<ReturnType<typeof apiSessionContent>>;
     try {
-      result = await apiSessionContent(sourcePath, 30, 4000, 1000);
+      result = await apiSessionContent(sourcePath, "compact");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       ctx.ui.notify(`Error loading session: ${msg}`, "error");
@@ -943,7 +924,7 @@ export default function (pi: ExtensionAPI) {
 
     let result: Awaited<ReturnType<typeof apiSessionContent>>;
     try {
-      result = await apiSessionContent(sourcePath, 30, 4000, 1000);
+      result = await apiSessionContent(sourcePath, "compact");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       ctx.ui.notify(`Error loading session: ${msg}`, "error");

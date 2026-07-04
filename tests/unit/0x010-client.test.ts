@@ -145,7 +145,7 @@ test("pi-session-memory apiSessionContent returns session text", async () => {
 
   try {
     await withMockUrl(sessionMemory.setBaseUrl, port, async () => {
-      const result = await sessionMemory.apiSessionContent("C:/sessions/a.jsonl", 30, 4000, 1000);
+      const result = await sessionMemory.apiSessionContent("C:/sessions/a.jsonl");
       assert.strictEqual(result.text, "hello");
       assert.strictEqual(result.total_messages, 10);
     });
@@ -176,7 +176,7 @@ test("pi-session-memory apiListSessions returns session list", async () => {
   const { port, stop } = await startMockServer(async (req, res) => {
     assert.strictEqual(req.url, "/api/session_index/list");
     const body = JSON.parse(await readBody(req));
-    assert.strictEqual(body.scope, "current");
+    assert.strictEqual(body.scope, "project");
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ sessions: [{ source_path: "C:/sessions/a.jsonl", project: "pi", date: "2026-06-22" }] }));
   });
