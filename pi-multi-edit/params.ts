@@ -46,8 +46,10 @@ export const multiEditParameters = Type.Object(
   {
     path: pathProp,
     edits: Type.Array(multiEditItemSchema, {
+      minItems: 1,
+      maxItems: 4,
       description:
-        "Batch of independent replacements in ONE file. Each edit is applied to the result of the previous edit in the list.",
+        "Batch of independent replacements in ONE file. Each edit is applied to the result of the previous edit in the list. Maximum 4 edits per call — split larger changes into multiple calls with fresh reads between them.",
     }),
   },
   { additionalProperties: false },
@@ -85,6 +87,11 @@ export function parseMultiEdit(input: unknown): MultiEdit {
   const editsArr = Array.isArray(raw.edits) ? raw.edits : undefined;
   if (!editsArr || editsArr.length === 0) {
     throw new Error("Missing edits — provide at least one {old_string, new_string}.");
+  }
+  if (editsArr.length > 4) {
+    throw new Error(
+      `Too many edits (${editsArr.length}). multi_edit supports at most 4 edits per call. Split larger changes into multiple calls and re-read the file between them.`,
+    );
   }
 
   const edits: MultiEdit["edits"] = [];

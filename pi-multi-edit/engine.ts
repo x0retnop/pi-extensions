@@ -7,6 +7,7 @@ import {
   findText,
   normalizeEditString,
 } from "./match.js";
+import { findClosestLineHint, formatLineHint } from "./hint.js";
 import {
   detectLineEnding,
   normalizeToLF,
@@ -49,9 +50,18 @@ function buildErrorMessage(
 
   // not-found
   const line = findFirstOccurrenceLine(content, oldString);
-  return line !== undefined
-    ? `${failure.message} Did you mean the text around line ${line}?`
-    : failure.message;
+  if (line !== undefined) {
+    return `${failure.message} Did you mean the text around line ${line}?`;
+  }
+
+  // No exact or fuzzy match; provide a closest-line hint if possible.
+  const closestLine = findClosestLineHint(content, oldString);
+  if (closestLine !== undefined) {
+    const hint = formatLineHint(content, closestLine);
+    return `${failure.message} Closest match around line ${closestLine}${hint ? `: \`${hint}\`` : ""}. Re-read the file and copy the current block verbatim.`;
+  }
+
+  return `${failure.message} Re-read the file and copy the current block verbatim.`;
 }
 
 function matchReplacement(

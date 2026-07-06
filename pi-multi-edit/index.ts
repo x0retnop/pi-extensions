@@ -39,6 +39,8 @@ const MULTI_EDIT_PROMPT_SNIPPET =
 
 const MULTI_EDIT_GUIDELINES = [
   "Use multi_edit for several independent replacements in ONE file.",
+  "Maximum 4 edits per call. If you need more, split into multiple calls and re-read the file between them.",
+  "Re-read the file immediately before multi_edit. old_string must be copied verbatim from the current file.",
   "Edits are applied sequentially: edits[1] sees the file after edits[0] is applied.",
   "Each old_string must be unique in the current file state unless replace_all is true for that edit.",
   "If any edit fails, the whole batch is aborted (atomic).",

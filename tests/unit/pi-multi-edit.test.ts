@@ -217,6 +217,42 @@ test("parseMultiEdit rejects empty edits", () => {
   );
 });
 
+test("parseMultiEdit rejects more than 4 edits", () => {
+  assert.throws(
+    () =>
+      parseMultiEdit({
+        path: "a.txt",
+        edits: [
+          { old_string: "a", new_string: "1" },
+          { old_string: "b", new_string: "2" },
+          { old_string: "c", new_string: "3" },
+          { old_string: "d", new_string: "4" },
+          { old_string: "e", new_string: "5" },
+        ],
+      } as any),
+    /at most 4 edits/,
+  );
+});
+
+test("multi_edit error includes hint for matched edits", async () => {
+  const ws = makeWorkspace({ [abs("a.txt")]: "alpha beta gamma" });
+  const result = await executeMultiEdit(
+    {
+      path: "a.txt",
+      edits: [
+        { old_string: "alpha", new_string: "ALPHA" },
+        { old_string: "missing", new_string: "X" },
+      ],
+    },
+    ws,
+    cwd,
+    undefined,
+  );
+  assert.strictEqual(result.results[0].success, true);
+  assert.strictEqual(result.results[1].success, false);
+  assert.strictEqual(await ws.readText(abs("a.txt")), "alpha beta gamma");
+});
+
 test("parseInsert accepts valid input", () => {
   const parsed = parseInsert({ path: "a.txt", insert_line: 5, new_string: "x" });
   assert.deepStrictEqual(parsed, { path: "a.txt", insert_line: 5, new_string: "x" });

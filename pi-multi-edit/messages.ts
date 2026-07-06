@@ -46,7 +46,15 @@ export function buildMultiError(path: string, results: EditResult[]): never {
     .filter((r) => !r.success)
     .map((r, i) => `  edits[${i}]: ${r.message}`)
     .join("\n");
-  throw new Error(`Batch edit failed for ${path}. No files modified.\n${errors}`);
+  const successes = results
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => r.success)
+    .map(({ i }) => `edits[${i}]`)
+    .join(", ");
+  const hint = successes
+    ? `\nHint: ${successes} matched successfully but were not applied because the batch failed. Fix the failing edits and retry, or split into smaller single-edit calls.`
+    : "";
+  throw new Error(`Batch edit failed for ${path}. No files modified.\n${errors}${hint}`);
 }
 
 export function buildInsertSuccess(
