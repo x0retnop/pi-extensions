@@ -1,6 +1,7 @@
 ---
 name: handoff-gemma
 description: Summarize session history into a structured, continuation-ready handoff markdown file. Use via /handoff [short-title].
+model: local-llama/gemma-4-e4b-it-xl
 includeExtensions: false
 timeoutMs: 600000
 maxTurns: 100
