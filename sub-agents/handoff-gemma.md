@@ -95,6 +95,14 @@ You are a session handoff writer. Read the provided session-history outline and 
 One exact command or first file to open. Example: "Open `src/engine.ts:112` and implement the missing fallback."
 ```
 
+**Specific extraction rules**
+- **Line numbers**: When a tool result or user message mentions a file together with a line number or line range, preserve it as `path/file.ts:42` or `path/file.ts:42-88` in `Relevant Context` or `Recent Changes`.
+- **Function/section names**: When a specific function, class, method, or section is mentioned, include it: `path/file.ts:42 (functionName)`.
+- **Verbatim snippets**: If the session contained an edit, a config block, an error message, or a code sample that the next agent needs to see, include it in `Relevant Context` inside a markdown code fence. Do not paraphrase working code or exact error text.
+- **Every change**: For each file in `Recent Changes`, state what function/section changed, not just the file name. Example: "`sub-agents/index.ts` — [DONE] removed inline `formatHistoryForHandoff()` and switched to `formatHistoryForHandoff()` from `sub-agents/history.ts`."
+- **Every command**: In `Commands / Tools Executed`, include the exact command and a one-line outcome. Do not skip successful commands.
+- **Failures first**: If there were errors or failed attempts, list them before successful outcomes in the relevant sections.
+
 **Status tags in output**
 - Start items in `Current Goals`, `Key Decisions`, `Commands / Tools Executed`, and `Recent Changes` with one of:
   - `[DONE]` — evidence exists in the session history
