@@ -3,6 +3,11 @@ import path from "node:path";
 import { homedir } from "node:os";
 import type { TUI } from "@earendil-works/pi-tui";
 import { getKeybindings, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+  formatHistoryOutline,
+  runtimeEntryToOutlineEntry,
+  type RuntimeSessionEntry,
+} from "../common/history-outline.js";
 import { extractProject } from "./project.js";
 
 export type ExportFormat = "chat" | "outline" | "full";
@@ -72,19 +77,6 @@ export function makeExportFileName(sourcePath: string, format: ExportFormat): st
   return `${date}_${slug}.${format}.md`;
 }
 
-function formatDate(ts: number | string | undefined): string {
-  if (ts === undefined) return "";
-  try {
-    const num = typeof ts === "string" ? (ts.match(/^\d+$/) ? parseInt(ts, 10) : NaN) : ts;
-    const d = typeof num === "number" && !Number.isNaN(num)
-      ? new Date(num < 1e12 ? num * 1000 : num)
-      : new Date(ts);
-    if (Number.isNaN(d.getTime())) return String(ts);
-    return d.toISOString().replace("T", " ").slice(0, 19);
-  } catch {
-    return String(ts);
-  }
-}
 
 function scanSessions(dir: string, out: { mtime: number; path: string }[]) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -130,6 +122,19 @@ function extractUserPreview(sourcePath: string): string {
     // ignore
   }
   return "";
+}
+
+function extractTextBlocks(content: any): string[] {
+  if (!content) return [];
+  if (typeof content === "string") return content ? [content] : [];
+  if (!Array.isArray(content)) return [];
+  const out: string[] = [];
+  for (const block of content) {
+    if (block && typeof block === "object" && block.type === "text" && typeof block.text === "string") {
+      out.push(block.text);
+    }
+  }
+  return out;
 }
 
 export function listLocalSessions(limit = 100): LocalSessionItem[] {
@@ -212,67 +217,18 @@ function parseJsonlLine(raw: string): ParsedLine | undefined {
   }
 }
 
-function extractTextBlocks(content: any): string[] {
-  if (!content) return [];
-  if (typeof content === "string") return content ? [content] : [];
-  if (!Array.isArray(content)) return [];
-  const out: string[] = [];
-  for (const block of content) {
-    if (block && typeof block === "object" && block.type === "text" && typeof block.text === "string") {
-      out.push(block.text);
-    }
+function formatDate(ts: number | string | undefined): string {
+  if (ts === undefined) return "";
+  try {
+    const num = typeof ts === "string" ? (ts.match(/^\d+$/) ? parseInt(ts, 10) : NaN) : ts;
+    const d = typeof num === "number" && !Number.isNaN(num)
+      ? new Date(num < 1e12 ? num * 1000 : num)
+      : new Date(ts);
+    if (Number.isNaN(d.getTime())) return String(ts);
+    return d.toISOString().replace("T", " ").slice(0, 19);
+  } catch {
+    return String(ts);
   }
-  return out;
-}
-
-function extractToolCalls(content: any): Array<{ name: string; arguments?: any }> {
-  if (!content || !Array.isArray(content)) return [];
-  return content
-    .filter((b: any) => b && typeof b === "object" && b.type === "toolCall" && typeof b.name === "string")
-    .map((b: any) => ({ name: b.name, arguments: b.arguments }));
-}
-
-function extractThinking(content: any): string[] {
-  if (!content || !Array.isArray(content)) return [];
-  return content
-    .filter((b: any) => b && typeof b === "object" && b.type === "thinking" && typeof b.thinking === "string")
-    .map((b: any) => b.thinking);
-}
-
-function shortToolDescription(name: string, args: any): string {
-  if (!args || typeof args !== "object") return name;
-  const a = args;
-  if (name === "read" && (a.path || a.file_path)) return `read ${a.path || a.file_path}`;
-  if (name === "edit" && (a.path || a.file_path)) return `edit ${a.path || a.file_path}`;
-  if (name === "grep" && (a.path || a.pattern)) return `grep ${a.pattern || ""} ${a.path || ""}`.trim();
-  if (name === "bash") {
-    const cmd = a.command || "";
-    // Detect heredoc writes
-    const heredocMatch = cmd.match(/cat\s*<<\s*['"]?\w+['"]?[\s\S]*?>\s*(\S+)/);
-    if (heredocMatch) return `bash heredoc → ${heredocMatch[1]}`;
-    // Detect python -c or python script.py
-    const pyMatch = cmd.match(/python(?:3)?\s+(-c\s+['"][^'"]+['"]|\S+\.py)/);
-    if (pyMatch) return `python ${pyMatch[1]}`;
-    const firstWord = cmd.split(/\s+/)[0];
-    return `bash: ${firstWord}${cmd.length > firstWord.length ? " …" : ""}`;
-  }
-  if (name === "write" && a.path) return `write ${a.path}`;
-  const firstKey = Object.keys(a).find((k) => a[k] !== undefined);
-  if (!firstKey) return name;
-  const val = a[firstKey];
-  const preview = typeof val === "string" ? val.slice(0, 40) : JSON.stringify(val).slice(0, 40);
-  return `${name} ${firstKey}=${preview}${(typeof val === "string" && val.length > 40) || JSON.stringify(val).length > 40 ? "…" : ""}`;
-}
-
-function formatToolResultSummary(toolName: string, text: string, isError: boolean): string {
-  const status = isError ? "❌" : "✅";
-  const first = text.trim().split(/\r?\n/)[0] || "";
-  const preview = first.slice(0, 80) + (first.length > 80 ? "…" : "");
-  return `${status} ${toolName}${preview ? `: ${preview}` : ""}`;
-}
-
-function escapeMarkdown(text: string): string {
-  return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function buildEntryForFormat(entry: ParsedLine, format: ExportFormat): string {
@@ -287,40 +243,14 @@ function buildEntryForFormat(entry: ParsedLine, format: ExportFormat): string {
   }
 
   if (format === "outline") {
-    const ts = formatDate(entry.timestamp);
-    const timeLine = ts ? `*${ts}*` : "";
-    if (entry.role === "user") {
-      const text = entry.text || extractTextBlocks(entry.content).join("\n\n");
-      if (!text.trim()) return "";
-      return `## User${timeLine ? " — " + timeLine : ""}\n\n${text.trim()}`;
-    }
-    if (entry.role === "assistant") {
-      const text = entry.text || extractTextBlocks(entry.content).join("\n\n");
-      const tools = extractToolCalls(entry.content);
-      const lines: string[] = [];
-      if (text.trim()) lines.push(text.trim());
-      if (tools.length) {
-        lines.push("");
-        lines.push("**Actions:**");
-        for (const t of tools) lines.push(`- ${shortToolDescription(t.name, t.arguments)}`);
-      }
-      if (!lines.length) return "";
-      return `## Assistant${timeLine ? " — " + timeLine : ""}\n\n${lines.join("\n")}`;
-    }
-    if (entry.role === "toolResult") {
-      const text = entry.text || extractTextBlocks(entry.content).join("\n");
-      const summary = formatToolResultSummary(entry.toolName || "tool", text, !!entry.isError);
-      return `## ${summary}${timeLine ? " — " + timeLine : ""}`;
-    }
-    if (entry.role === "bash") {
-      const cmd = entry.content?.command || "";
-      const firstWord = cmd.split(/\s+/)[0];
-      return `## bash: ${firstWord}${cmd.length > firstWord.length ? " …" : ""}${timeLine ? " — " + timeLine : ""}`;
-    }
-    if (entry.role === "compactionSummary") {
-      return `## [context summary]`;
-    }
-    return "";
+    // Use the shared outline formatter for consistency with /handoff.
+    const outlineEntry = runtimeEntryToOutlineEntry(entry as RuntimeSessionEntry);
+    if (!outlineEntry) return "";
+    return formatHistoryOutline([outlineEntry], {
+      maxChars: Number.MAX_SAFE_INTEGER,
+      includeTimestamps: true,
+      includeLegend: false,
+    }).replace(/\n?\n---\n\n?$/, "");
   }
 
   // format === "full"
@@ -335,14 +265,9 @@ function buildEntryForFormat(entry: ParsedLine, format: ExportFormat): string {
 
   if (entry.role === "assistant") {
     const text = entry.text || extractTextBlocks(entry.content).join("\n\n");
-    const thinking = extractThinking(entry.content);
     const tools = extractToolCalls(entry.content);
     const parts: string[] = [];
     if (text.trim()) parts.push(text.trim());
-    if (thinking.length) {
-      parts.push("");
-      parts.push("<details>\n<summary>Thinking</summary>\n\n```text\n" + thinking.join("\n\n") + "\n```\n\n</details>");
-    }
     if (tools.length) {
       parts.push("");
       parts.push("**Tool calls:**");
@@ -397,6 +322,17 @@ function buildEntryForFormat(entry: ParsedLine, format: ExportFormat): string {
   }
 
   return "";
+}
+
+function extractToolCalls(content: any): Array<{ name: string; arguments?: any }> {
+  if (!content || !Array.isArray(content)) return [];
+  return content
+    .filter((b: any) => b && typeof b === "object" && b.type === "toolCall" && typeof b.name === "string")
+    .map((b: any) => ({ name: b.name, arguments: b.arguments }));
+}
+
+function escapeMarkdown(text: string): string {
+  return text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 export async function openSessionExportTUI(ui: any, groups: ProjectGroup[]): Promise<string | undefined> {
