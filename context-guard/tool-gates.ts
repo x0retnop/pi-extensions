@@ -17,7 +17,7 @@ export const TOOL_GATES: ToolGate[] = [
   //   description: "Web search, fetch, and code search tools.",
   //   defaultEnabled: false,
   //   toolsOn: ["web_search", "code_search", "fetch_content"],
-  //   toolsOff: ["web_access"],
+  //   toolsOff: [],
   // },
 ];
 

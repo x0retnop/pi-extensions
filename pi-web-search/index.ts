@@ -1,74 +1,29 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { setStatusBlock } from "../common/status.js";
 
 // ---------------------------------------------------------------------------
-// TUI helpers for compact, width-safe tool rendering
+// TUI helpers for compact, width-safe tool rendering.
+// Use pi-tui's Text component: it wraps/truncates by terminal cell width
+// (CJK/emoji safe, ANSI aware). Hand-rolled char-count truncation overflows
+// the box width on wide glyphs and corrupts the diff renderer.
 // ---------------------------------------------------------------------------
 
-interface RenderComponent {
-  render(width: number): string[];
-  invalidate(): void;
-}
-
-function safeTruncate(str: string, maxWidth: number, suffix = "..."): string {
-  let visible = 0;
-  let result = "";
-  let inAnsi = false;
-
-  for (let i = 0; i < str.length; i++) {
-    const ch = str.charCodeAt(i);
-
-    if (ch === 0x1b && str.charCodeAt(i + 1) === 0x5b) {
-      inAnsi = true;
-      result += str[i];
-      continue;
-    }
-
-    if (inAnsi) {
-      result += str[i];
-      if ((ch >= 0x41 && ch <= 0x5a) || (ch >= 0x61 && ch <= 0x7a)) {
-        inAnsi = false;
-      }
-      continue;
-    }
-
-    if (visible >= maxWidth - suffix.length) {
-      result += suffix;
-      break;
-    }
-    result += str[i];
-    visible++;
-  }
-
-  return result;
-}
-
-function makePlainText(text: string): RenderComponent {
-  return {
-    render(width: number) { return text ? [safeTruncate(text, width)] : []; },
-    invalidate() {},
-  };
-}
-
-function makeWrappedText(lines: string[]): RenderComponent {
-  return {
-    render(width: number) { return lines.map((line) => safeTruncate(line, width)); },
-    invalidate() {},
-  };
+function textComponent(text: string): Text {
+  return new Text(text, 0, 0);
 }
 
 function formatUrl(url: string, maxLen = 60): string {
-  return url.length > maxLen ? url.slice(0, maxLen - 3) + "..." : url;
+  return truncateToWidth(url, maxLen);
 }
 
 function formatQuery(q: string, maxLen = 50): string {
-  return q.length > maxLen ? q.slice(0, maxLen - 3) + "..." : q;
+  return truncateToWidth(q, maxLen);
 }
 
 const WEB_TOOLS = ["web_search", "fetch_content", "code_search"] as const;
-const GATE_TOOL = "web_access";
 const WEB_ACCESS_STATE_TYPE = "web-access-state";
 const PROVIDER_NAMES = ["exa", "brave", "ollama_cloud", "ddg"] as const;
 const PROVIDER_DESCRIPTION =
@@ -172,8 +127,8 @@ function getLatestWebAccessState(ctx: ExtensionContext): WebAccessState | null {
 
 function syncWebAccessTools(pi: ExtensionAPI, enabled: boolean): void {
   const current = pi.getActiveTools();
-  const base = current.filter((name) => name !== GATE_TOOL && !WEB_TOOLS.some((tool) => tool === name));
-  const next = enabled ? [...base, ...WEB_TOOLS] : [...base, GATE_TOOL];
+  const base = current.filter((name) => !WEB_TOOLS.some((tool) => tool === name));
+  const next = enabled ? [...base, ...WEB_TOOLS] : base;
   pi.setActiveTools([...new Set(next)]);
 }
 
@@ -356,66 +311,6 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: GATE_TOOL,
-    label: "Web Access",
-    description:
-      "Check and toggle web access. When web search is disabled, this tool is the only web tool available; " +
-      "call it to see the current status, the default provider, and the command to enable web tools.",
-    promptSnippet:
-      "If the user asks for web content and web tools are disabled, call web_access first.",
-    promptGuidelines: [
-      "When web tools are disabled and the user asks for web search, URLs, or code examples, call web_access.",
-      "web_access returns the current status, default provider, and instructions. Pass that information to the user.",
-      "To enable web tools, tell the user to run /web (or /web on).",
-    ],
-    parameters: Type.Object({}),
-
-    async execute(_toolCallId, _params, signal, _onUpdate, ctx) {
-      const state = getLatestWebAccessState(ctx);
-      const currentlyEnabled = state?.enabled ?? false;
-      const status = await getBackendStatus(signal);
-      const providerLine = formatProviderInfo(status);
-
-      if (currentlyEnabled) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text:
-                "Web access is already enabled. " +
-                `${providerLine} Use web_search, code_search, or fetch_content directly.`,
-            },
-          ],
-          details: { enabled: true, backend_status: status },
-        };
-      }
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text:
-              "Web access is currently disabled. " +
-              `${providerLine} Tell the user to run /web to enable web search, fetch, and code search tools.`,
-          },
-        ],
-        details: { enabled: false, backend_status: status },
-      };
-    },
-
-    renderCall(_args, theme) {
-      return makePlainText(theme.fg("toolTitle", theme.bold("web_access ")) + theme.fg("warning", "disabled"));
-    },
-
-    renderResult(result, _options, theme) {
-      const details = result.details as { enabled?: boolean } | undefined;
-      if (details?.enabled) {
-        return makePlainText(theme.fg("success", "Web access already enabled"));
-      }
-      return makePlainText(theme.fg("warning", "Web access disabled — remind user to run /web"));
-    },
-  });
-
-  pi.registerTool({
     name: "web_search",
     label: "Web Search",
     description:
@@ -526,12 +421,8 @@ export default function (pi: ExtensionAPI) {
       const queryList = normalizeQueryList(rawQueryList);
 
       if (queryList.length === 0) {
-        return makePlainText(theme.fg("toolTitle", theme.bold("search ")) + theme.fg("error", "(no query)"));
+        return textComponent(theme.fg("toolTitle", theme.bold("search ")) + theme.fg("error", "(no query)"));
       }
-
-      const firstQuery = formatQuery(queryList[0], 50);
-      const multiTag = queryList.length > 1 ? theme.fg("dim", ` +${queryList.length - 1}`) : "";
-      const queryText = `"${firstQuery}"${multiTag}`;
 
       const badges: string[] = [];
       if (input.depth && input.depth !== "standard") badges.push(input.depth);
@@ -545,16 +436,23 @@ export default function (pi: ExtensionAPI) {
         badges.push(input.domain_filter.length === 1 ? input.domain_filter[0] : `${input.domain_filter.length} domains`);
       }
 
-      let label = theme.fg("toolTitle", theme.bold("search ")) + theme.fg("accent", queryText);
+      const lines: string[] = [];
+      // Show the full query text (wrapped to terminal width by Text), capped
+      // only against pathological length — the request must stay readable.
+      let label = theme.fg("toolTitle", theme.bold("search ")) + theme.fg("accent", `"${formatQuery(queryList[0], 300)}"`);
       if (badges.length > 0) {
         label += theme.fg("dim", ` • ${badges.join(" · ")}`);
       }
-      return makePlainText(label);
+      lines.push(label);
+      for (const q of queryList.slice(1)) {
+        lines.push(theme.fg("dim", "+ ") + theme.fg("accent", `"${formatQuery(q, 300)}"`));
+      }
+      return textComponent(lines.join("\n"));
     },
 
     renderResult(result, { expanded, isPartial }, theme) {
       if (isPartial) {
-        return makeWrappedText([]);
+        return textComponent("");
       }
       const details = result.details as {
         error?: string;
@@ -570,7 +468,7 @@ export default function (pi: ExtensionAPI) {
       } | undefined;
 
       if (details?.error) {
-        return makePlainText(theme.fg("error", `Error: ${details.error}`));
+        return textComponent(theme.fg("error", `Error: ${details.error}`));
       }
 
       const count = details?.result_count ?? 0;
@@ -602,9 +500,7 @@ export default function (pi: ExtensionAPI) {
 
       if (details?.answer) {
         lines.push("");
-        const preview = expanded && details.answer.length > 600
-          ? details.answer.slice(0, 597) + "..."
-          : (details.answer.length > 280 ? details.answer.slice(0, 277) + "..." : details.answer);
+        const preview = truncateToWidth(details.answer, expanded ? 600 : 280);
         lines.push(theme.fg("accent", "Answer: ") + theme.fg("dim", preview));
       }
 
@@ -620,8 +516,7 @@ export default function (pi: ExtensionAPI) {
           const num = theme.fg("toolTitle", `${i + 1}.`);
           lines.push(`  ${num} ${theme.fg("accent", title)} ${theme.fg("muted", "—")} ${theme.fg("dim", url)}`);
           if (expanded && r.snippet) {
-            const snippet = r.snippet.length > 140 ? r.snippet.slice(0, 137) + "..." : r.snippet;
-            lines.push(`      ${theme.fg("dim", snippet)}`);
+            lines.push(`      ${theme.fg("dim", truncateToWidth(r.snippet, 140))}`);
           }
         }
 
@@ -630,7 +525,7 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      return makeWrappedText(lines);
+      return textComponent(lines.join("\n"));
     },
   });
 
@@ -714,24 +609,35 @@ export default function (pi: ExtensionAPI) {
       const input = args as { url?: string; urls?: string[]; max_chars?: number; save_full?: boolean };
       const urlList = input.urls ?? (input.url ? [input.url] : []);
       if (urlList.length === 0) {
-        return makePlainText(theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("error", "(no URL)"));
+        return textComponent(theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("error", "(no URL)"));
       }
 
-      const display = urlList.length === 1 ? formatUrl(urlList[0], 50) : `${urlList.length} URLs`;
       const badges: string[] = [];
       if (input.max_chars != null && input.max_chars !== 32000) badges.push(`${input.max_chars} chars`);
       if (input.save_full) badges.push("save_full");
 
-      let label = theme.fg("toolTitle", theme.bold("fetch ")) + theme.fg("accent", display);
+      const lines: string[] = [];
+      // Show the full URL (wrapped to terminal width by Text).
+      let label = theme.fg("toolTitle", theme.bold("fetch "))
+        + theme.fg("accent", urlList.length === 1 ? formatUrl(urlList[0], 300) : `${urlList.length} URLs`);
       if (badges.length > 0) {
         label += theme.fg("dim", ` • ${badges.join(" · ")}`);
       }
-      return makePlainText(label);
+      lines.push(label);
+      if (urlList.length > 1) {
+        for (const u of urlList.slice(0, 5)) {
+          lines.push(theme.fg("dim", "+ ") + theme.fg("accent", formatUrl(u, 300)));
+        }
+        if (urlList.length > 5) {
+          lines.push(theme.fg("dim", `+ ${urlList.length - 5} more URLs`));
+        }
+      }
+      return textComponent(lines.join("\n"));
     },
 
     renderResult(result, { expanded, isPartial }, theme) {
       if (isPartial) {
-        return makeWrappedText([]);
+        return textComponent("");
       }
       const details = result.details as {
         error?: string;
@@ -742,7 +648,7 @@ export default function (pi: ExtensionAPI) {
         results?: Array<{ url: string; title?: string; status_code?: number; chars_returned?: number; truncated?: boolean }>;
       } | undefined;
       if (details?.error) {
-        return makePlainText(theme.fg("error", `Error: ${details.error}`));
+        return textComponent(theme.fg("error", `Error: ${details.error}`));
       }
       const results = details?.results ?? [];
       const count = results.length || details?.urls?.length || 1;
@@ -760,7 +666,7 @@ export default function (pi: ExtensionAPI) {
       if (details?.save_full) {
         line += theme.fg("accent", " • save_full");
       }
-      if (!expanded) return makePlainText(line);
+      if (!expanded) return textComponent(line);
 
       const lines: string[] = [line];
       for (const r of results) {
@@ -780,7 +686,7 @@ export default function (pi: ExtensionAPI) {
         for (const p of savedPaths) lines.push(theme.fg("dim", `  ${p}`));
       }
 
-      return makeWrappedText(lines);
+      return textComponent(lines.join("\n"));
     },
   });
 
@@ -848,7 +754,7 @@ export default function (pi: ExtensionAPI) {
 
     renderCall(args, theme) {
       const input = args as { query?: string; num_results?: number; max_tokens?: number; provider?: string };
-      const display = !input.query ? "(no query)" : `"${formatQuery(input.query, 50)}"`;
+      const display = !input.query ? "(no query)" : `"${formatQuery(input.query, 300)}"`;
       const badges: string[] = [];
       if (input.num_results != null && input.num_results !== 10) badges.push(`${input.num_results}`);
       if (input.max_tokens != null && input.max_tokens !== 5000) badges.push(`${input.max_tokens} tokens`);
@@ -858,12 +764,12 @@ export default function (pi: ExtensionAPI) {
       if (badges.length > 0) {
         label += theme.fg("dim", ` • ${badges.join(" · ")}`);
       }
-      return makePlainText(label);
+      return textComponent(label);
     },
 
     renderResult(result, { expanded, isPartial }, theme) {
       if (isPartial) {
-        return makeWrappedText([]);
+        return textComponent("");
       }
       const details = result.details as {
         error?: string;
@@ -876,7 +782,7 @@ export default function (pi: ExtensionAPI) {
         results?: Array<{ title?: string; url?: string; snippet?: string }>;
       } | undefined;
       if (details?.error) {
-        return makePlainText(theme.fg("error", `Error: ${details.error}`));
+        return textComponent(theme.fg("error", `Error: ${details.error}`));
       }
       const count = details?.result_count ?? 0;
       const provider = details?.provider_used ?? "unknown";
@@ -899,9 +805,7 @@ export default function (pi: ExtensionAPI) {
 
       if (details?.answer) {
         lines.push("");
-        const preview = expanded && details.answer.length > 600
-          ? details.answer.slice(0, 597) + "..."
-          : (details.answer.length > 280 ? details.answer.slice(0, 277) + "..." : details.answer);
+        const preview = truncateToWidth(details.answer, expanded ? 600 : 280);
         lines.push(theme.fg("accent", "Answer: ") + theme.fg("dim", preview));
       }
 
@@ -917,8 +821,7 @@ export default function (pi: ExtensionAPI) {
           const num = theme.fg("toolTitle", `${i + 1}.`);
           lines.push(`  ${num} ${theme.fg("accent", title)} ${theme.fg("muted", "—")} ${theme.fg("dim", url)}`);
           if (expanded && r.snippet) {
-            const snippet = r.snippet.length > 140 ? r.snippet.slice(0, 137) + "..." : r.snippet;
-            lines.push(`      ${theme.fg("dim", snippet)}`);
+            lines.push(`      ${theme.fg("dim", truncateToWidth(r.snippet, 140))}`);
           }
         }
 
@@ -927,7 +830,7 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      return makeWrappedText(lines);
+      return textComponent(lines.join("\n"));
     },
   });
 }

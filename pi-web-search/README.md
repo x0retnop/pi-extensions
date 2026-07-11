@@ -26,7 +26,7 @@ Copy the extension folder to `~/.pi/agent/extensions/` and restart Pi.
 | `fetch_content` | Read a specific URL or list of URLs in markdown. |
 | `code_search` | Programming questions, API usage, code examples. |
 
-By default, web tools are disabled. Only the `web_access` gate tool is shown. The agent will call it when the user asks for web content and tell the user to run `/web`. After `/web on`, the tools become available on the next turn.
+By default, web tools are disabled: the agent has no web tools at all. Run `/web` (or `/web on`) to enable `web_search`, `fetch_content`, and `code_search`; they become available on the next turn. `/web off` removes them again.
 
 ## Configuration
 
