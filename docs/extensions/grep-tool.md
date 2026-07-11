@@ -12,7 +12,7 @@ Project-wide `grep` tool override powered by ripgrep.
 
 - `grep` — search across files.
   - `pattern` is a regex by default. Use `fixed_strings: true` for literal text.
-  - `output_mode`: `content` (default), `files_with_matches`, `count_matches`.
+  - `output_mode`: `content` (default), `files_with_matches`, `count_matches` (total plus per-file breakdown, top files first).
   - `path`, `glob`, `type`, `-i`, `-C`, `-B`, `-A`, `head_limit`, `include_ignored`, `allow_broad`.
 
 ## Important behaviors
