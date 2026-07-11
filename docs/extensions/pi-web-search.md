@@ -5,7 +5,7 @@ Web search, fetch, and code search through the 0x010 backend via MCP.
 ## What it does
 
 - Registers `web_search`, `fetch_content`, `code_search` tools when enabled.
-- When disabled, only `web_access` is visible — a status/check tool.
+- When disabled, no web tools are visible to the agent at all.
 - Talks to the 0x010 backend over HTTP (`/api/web_research/*`) and MCP (`/mcp`).
 
 ## Commands
@@ -19,7 +19,6 @@ Web search, fetch, and code search through the 0x010 backend via MCP.
 - `web_search` — general web search.
 - `fetch_content` — fetch readable markdown from URLs.
 - `code_search` — code-biased search.
-- `web_access` — status gate; available when web tools are off.
 
 ## Important behaviors
 

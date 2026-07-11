@@ -52,7 +52,7 @@ Several extensions call `pi.setActiveTools()`. Because Pi applies the **last** `
 |-----------|------|--------------|
 | `context-guard` | `session_start`, `session_tree` | Removes managed tools, then re-adds based on toggles (currently `session_memory`) |
 | `pi-project-memory` | `session_start`, `session_tree` | Adds `project_facts` and `curate_facts` if `.project-id` exists, removes if not |
-| `pi-web-search` | `session_start`, `session_tree` | Adds web tools if session state says ON, otherwise keeps only `web_access` |
+| `pi-web-search` | `session_start`, `session_tree` | Adds web tools if session state says ON, otherwise removes them entirely |
 
 **Risk**: if two extensions manage the same tool name, the last one wins. Currently no overlap.
 
@@ -120,7 +120,7 @@ Extensions store state in the session branch using `pi.appendEntry()`:
 
 ### 1. `context-guard` vs `pi-web-search` tool gate
 
-`context-guard/tool-gates.ts` has a commented-out `webAccess` gate. If enabled, both extensions would call `setActiveTools()` for `web_search`, `fetch_content`, `code_search`, and `web_access`. They must either be merged into one controller or use a shared state key.
+`context-guard/tool-gates.ts` has a commented-out `webAccess` gate. If enabled, both extensions would call `setActiveTools()` for `web_search`, `fetch_content`, and `code_search`. They must either be merged into one controller or use a shared state key.
 
 **Recommended fix**: leave web access control to `pi-web-search`. Remove or never enable the `context-guard` webAccess gate.
 

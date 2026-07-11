@@ -29,8 +29,8 @@ If a tool calls `pi.setActiveTools([...])` during its execute, the new tool set 
 If you need a tool to "unlock" other tools and use them in the same turn, use one of these workarounds:
 
 1. **Keep the target tools registered but validate a gate flag inside them.** The tools are always visible; they return an error if the gate is closed.
-2. **Make the gate tool perform the work itself.** Instead of toggling visibility, implement `web_search`/`fetch_content`/etc. logic behind a single tool like `web_access`.
-3. **Use a user slash command for the toggle.** Commands run in a separate user turn, so `setActiveTools()` is applied before the agent's next response. Example pattern: `/web` toggles web tools on/off; when off the agent sees only `web_access`, when on it sees the full web tools.
+2. **Make the gate tool perform the work itself.** Instead of toggling visibility, implement the `web_search`/`fetch_content`/etc. logic behind a single always-visible gateway tool.
+3. **Use a user slash command for the toggle.** Commands run in a separate user turn, so `setActiveTools()` is applied before the agent's next response. Example pattern: `/web` toggles web tools on/off; when off the agent sees no web tools at all, when on it sees the full web tools.
 
 ### Verification
 
