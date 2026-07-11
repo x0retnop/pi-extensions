@@ -195,7 +195,7 @@ export default function (pi: ExtensionAPI) {
           description:
             "content = matched lines with context (default), " +
             "files_with_matches = only file paths, " +
-            "count_matches = total number of matches",
+            "count_matches = total matches plus per-file breakdown (top files by match count)",
         },
         multiline: {
           type: "boolean",
@@ -403,9 +403,30 @@ export default function (pi: ExtensionAPI) {
         }
 
         if (mode === "count_matches") {
+          // Per-file breakdown by matching lines, so scoping questions
+          // ("which files have the most hits?") don't require bash `rg -c`.
+          const perFile = new Map<string, number>();
+          for (const m of matches) {
+            const f = m.file || "(unknown)";
+            perFile.set(f, (perFile.get(f) ?? 0) + 1);
+          }
+          const sorted = Array.from(perFile.entries()).sort((a, b) => b[1] - a[1]);
+          const fileCap = userLimit ?? 20;
+          const shown = sorted.slice(0, fileCap);
+          let text = `${totalMatches} matches in ${perFile.size} files`;
+          if (shown.length > 0) {
+            text += ":\n" + shown.map(([f, c]) => `${f}: ${c}`).join("\n");
+            if (sorted.length > shown.length) {
+              text += `\n[...and ${sorted.length - shown.length} more files]`;
+            }
+          }
           return {
-            content: [{ type: "text", text: String(totalMatches) }],
-            details: { count: totalMatches },
+            content: [{ type: "text", text }],
+            details: {
+              count: totalMatches,
+              files: perFile.size,
+              per_file: Object.fromEntries(shown),
+            },
           };
         }
 

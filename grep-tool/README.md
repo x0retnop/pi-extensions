@@ -5,7 +5,7 @@ Structured project-wide search via ripgrep. Tuned for agent use: safe defaults, 
 ## Features
 
 - **Structured output** — Uses `rg --json` for reliable parsing instead of raw shell text.
-- **Output modes** — `content` (with context), `files_with_matches` (paths only), `count_matches` (totals).
+- **Output modes** — `content` (with context), `files_with_matches` (paths only), `count_matches` (total plus per-file breakdown, top files first).
 - **Safe limits** — `head_limit` caps results and each returned line is truncated to 500 chars to avoid flooding the context window.
 - **Path normalization** — accepts relative paths, absolute paths, and Git Bash `/c/...` style paths.
 - **Noise filtering** — excludes `*.map` files by default and truncates individual result lines to 500 chars.
@@ -25,7 +25,7 @@ pi install ./grep-tool
 |-------|------|-------------|
 | `pattern` | `string` | Regex or literal search pattern |
 | `path` | `string?` | Relative or absolute path; Git Bash `/c/...` paths also work (default: cwd) |
-| `output_mode` | `string?` | `content`, `files_with_matches`, or `count_matches` |
+| `output_mode` | `string?` | `content`, `files_with_matches`, or `count_matches` (total + per-file breakdown) |
 | `head_limit` | `number?` | Max matches to return |
 | `glob` | `string?` | File name filter, e.g. `*.ts` |
 | `type` | `string?` | File type filter, e.g. `ts` |
