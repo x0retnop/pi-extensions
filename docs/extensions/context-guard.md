@@ -38,7 +38,7 @@ autoSkills, sessionMemory
 ## Dependencies
 
 - Can nullify effects from: `role-sw`, automatic skills, built-in Pi docs, ancestor AGENTS.md files.
-- Can hide/show tools provided by: `pi-session-memory` (`session_memory`).
+- Can hide/show tools provided by: `pi-session-memory` (`session_memory`). `pi-session-memory` reads the same `contextGuard.features.sessionMemory` flag to show an `sm:on` status bar block and mirrors state changes into the session as `session-memory-state` entries.
 
 ## Source
 

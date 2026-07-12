@@ -2,10 +2,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { Text } from "@earendil-works/pi-tui";
 import path from "node:path";
+import { homedir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { exportSessionToMarkdown, groupSessionsByProject, openSessionExportTUI, type ExportFormat } from "./local-export.js";
 import { extractProject } from "./project.js";
 import { browseItemFromHit, browseItemFromListItem, openSessionBrowser, type BrowseItem, type BrowserAction } from "./session-browser.js";
 import { openSessionViewer, type ViewerAction } from "./session-viewer.js";
+import { setStatusBlock } from "../common/status.js";
 
 // Allow runtime injection of a different base URL for tests.
 let BASE_URL =
@@ -15,6 +18,35 @@ let BASE_URL =
 
 export function setBaseUrl(url: string): void { BASE_URL = url; }
 const SEARCH_ENTRY_TYPE = "session-memory-search";
+const STATE_ENTRY_TYPE = "session-memory-state";
+
+/**
+ * Source of truth for the enabled flag is the context-guard tool gate
+ * (`contextGuard.features.sessionMemory` in ~/.pi/agent/settings.json).
+ * When context-guard is absent or has no stored value, the tool is enabled.
+ */
+function isSessionMemoryEnabled(): boolean {
+  try {
+    const settingsPath = path.join(homedir(), ".pi", "agent", "settings.json");
+    if (!existsSync(settingsPath)) return true;
+    const raw = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    const value = raw?.contextGuard?.features?.sessionMemory;
+    return typeof value === "boolean" ? value : true;
+  } catch {
+    return true;
+  }
+}
+
+function getLatestStateEntry(ctx: ExtensionContext): boolean | undefined {
+  const branch = (ctx as any).sessionManager?.getBranch?.() ?? [];
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const e = branch[i] as any;
+    if (e?.type === "custom" && e?.customType === STATE_ENTRY_TYPE) {
+      return typeof e.data?.enabled === "boolean" ? e.data.enabled : undefined;
+    }
+  }
+  return undefined;
+}
 
 interface SearchHit {
   item_id: string;
@@ -457,6 +489,32 @@ const SessionMemoryActionSchema = Type.Union([
 ]);
 
 export default function (pi: ExtensionAPI) {
+  // ---------------------------------------------------------------------------
+  // Status bar + enabled-state persistence
+  // ---------------------------------------------------------------------------
+  // The enabled flag lives in context-guard's settings (config). We mirror the
+  // current state into the session (custom entry) whenever it changes and show
+  // a status bar block while the tool is enabled.
+  let lastRecorded: boolean | undefined;
+
+  function refreshStatus(ctx: ExtensionContext, rescan: boolean): void {
+    const enabled = isSessionMemoryEnabled();
+    setStatusBlock(ctx, "session-memory", enabled ? "sm:on" : undefined);
+    if (rescan || lastRecorded === undefined) {
+      lastRecorded = getLatestStateEntry(ctx);
+    }
+    if (lastRecorded !== enabled) {
+      lastRecorded = enabled;
+      pi.appendEntry(STATE_ENTRY_TYPE, { enabled });
+    }
+  }
+
+  pi.on("session_start", (_event, ctx) => refreshStatus(ctx, true));
+  pi.on("session_tree", (_event, ctx) => refreshStatus(ctx, true));
+  // Cheap settings-file re-read per turn so live `/context-guard sessionMemory`
+  // toggles are reflected in the status bar without a restart.
+  pi.on("before_agent_start", (_event, ctx) => refreshStatus(ctx, false));
+
   pi.registerTool({
     name: "session_memory",
     label: "Session Memory",

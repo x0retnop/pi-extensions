@@ -23,6 +23,8 @@ Semantic search over past Pi sessions via the 0x010 Session Vector Index.
 - `action: "content"` uses safe defaults (`maxMessages=30`, `maxChars=4000`, `toolResultLimit=1000`).
 - Last search results are stored as custom session entries so `hitIndex` can be used in the next call.
 - Sessions are grouped by project using the `--...--` naming convention in session file paths.
+- **Status bar**: shows `sm:on` (via `common/status.ts` `setStatusBlock`) while the tool is enabled; hidden when disabled.
+- **Enable/disable** is owned by the `context-guard` tool gate `sessionMemory` (`/context-guard sessionMemory`). The extension reads `contextGuard.features.sessionMemory` from `~/.pi/agent/settings.json` (default: enabled) on `session_start`, `session_tree`, and each `before_agent_start`, so live toggles show up in the status bar without a restart. State changes are mirrored into the session as `session-memory-state` custom entries.
 - **Never use `read` on raw `.jsonl` session files** — they can be very large.
 
 ## Commands
@@ -46,7 +48,8 @@ Limits: session files larger than 256 MB are skipped; output is capped at 500 00
 ## State
 
 - 0x010 backend session index (for search/list/content).
-- Custom session entries with `customType: "session-memory-search"`.
+- Custom session entries with `customType: "session-memory-search"`, `"session-memory-list"`, `"session-memory-state"`.
+- Enabled flag: `~/.pi/agent/settings.json` → `contextGuard.features.sessionMemory` (written by context-guard).
 
 ## Continuation tip
 
