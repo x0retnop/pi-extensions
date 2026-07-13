@@ -1,4 +1,5 @@
-handoff-*.md
+# Generated /handoff outputs: handoff-MM-DD-HH-MM[-title].md
+handoff-[0-9]*.md
 session-*.md
 *.log
 .pm-transcript-diag.json
