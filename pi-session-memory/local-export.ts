@@ -36,6 +36,9 @@ interface ParsedLine {
   text?: string;
   summary?: string;
   type?: string;
+  /** Original parsed JSONL object, kept for the shared outline formatter which
+   *  expects the runtime entry shape ({type, message, ...}). */
+  raw?: RuntimeSessionEntry;
 }
 
 const SESSIONS_DIR = path.join(homedir(), ".pi", "agent", "sessions");
@@ -203,13 +206,14 @@ function parseJsonlLine(raw: string): ParsedLine | undefined {
         timestamp: m.timestamp || obj.timestamp,
         content: m.content,
         text: typeof m.content === "string" ? m.content : undefined,
+        raw: obj as RuntimeSessionEntry,
       };
     }
     if (etype === "compaction" && typeof obj.summary === "string") {
-      return { role: "compactionSummary", summary: obj.summary, timestamp: obj.timestamp };
+      return { role: "compactionSummary", summary: obj.summary, timestamp: obj.timestamp, raw: obj as RuntimeSessionEntry };
     }
     if (etype === "bashExecution" && obj.result) {
-      return { role: "bash", content: obj.result, timestamp: obj.timestamp };
+      return { role: "bash", content: obj.result, timestamp: obj.timestamp, raw: obj as RuntimeSessionEntry };
     }
     return undefined;
   } catch {
@@ -244,7 +248,10 @@ function buildEntryForFormat(entry: ParsedLine, format: ExportFormat): string {
 
   if (format === "outline") {
     // Use the shared outline formatter for consistency with /handoff.
-    const outlineEntry = runtimeEntryToOutlineEntry(entry as RuntimeSessionEntry);
+    // Must pass the raw runtime entry (with `type`/`message`), not the
+    // flattened ParsedLine — otherwise every entry converts to undefined
+    // and the export comes out empty.
+    const outlineEntry = runtimeEntryToOutlineEntry((entry.raw ?? entry) as RuntimeSessionEntry);
     if (!outlineEntry) return "";
     return formatHistoryOutline([outlineEntry], {
       maxChars: Number.MAX_SAFE_INTEGER,
