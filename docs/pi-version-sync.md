@@ -4,7 +4,7 @@
 
 How to check if extensions need updates after a Pi CLI release, without burning tokens.
 
-<!-- BASELINE: 0.77.0 — collection tested and working with this version. Do not analyze versions at or below this baseline. -->
+<!-- BASELINE: 0.80.7 — collection tested and working with this version. Do not analyze versions at or below this baseline. -->
 
 ## When to run this
 
@@ -84,6 +84,14 @@ These always mean an extension needs fixing:
 - Imports from `@mariozechner/pi-coding-agent` or `@mariozechner/pi-tui` → must be `@earendil-works/*`.
 - `compat.reasoningEffortMap` in provider definitions → must be `thinkingLevelMap`.
 - `renderShell: "self"` on tool overrides → verify still supported after tool rendering changes.
+- Imports of pi-ai's old global API (`getProviders`, `getModels`, `stream`, `complete`, ...) from the package root → moved to `@earendil-works/pi-ai/compat` in 0.80.0 (runtime loader aliases root → compat, so only typecheck breaks).
+- `compat.sendSessionIdHeader` in `models.json` → removed in 0.80.7, use `compat.sessionAffinityFormat` (`"openai"` / `"openai-nosession"` / `"openrouter"`).
+
+## Upgrade log
+
+| Upgrade | Notes |
+|---|---|
+| 0.79.10 → 0.80.7 | Clean. `getProviders` import moved to `/compat` (model-manager). See `PI-0.79.10-to-0.80.7.md` in repo root for the full feature digest. |
 
 ## Decision matrix
 
