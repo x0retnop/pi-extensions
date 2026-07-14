@@ -40,7 +40,7 @@ Multiple sequential replacements in one file.
 ```
 
 - Edits are applied sequentially: `edits[1]` sees the file after `edits[0]`.
-- The whole batch is aborted if any edit fails (atomic).
+- Partial apply: if some edits fail, the successful ones are still written and each failure is reported with a hint.
 - Each `old_string` must be unique in the current file state unless `replace_all` is true for that item.
 
 ### `insert`
@@ -81,10 +81,12 @@ The `insert` tool matches the line-based insertion primitive from the same train
 - `pi-multi-edit/messages.ts` — result formatting.
 - `pi-multi-edit/render.ts` — TUI call/result rendering.
 - `pi-multi-edit/workspace.ts` — real and virtual workspace wrappers.
+- `pi-multi-edit/lock.ts` — per-path async lock serializing same-file edits.
 
 ## Behaviors
 
 - Preflight pass runs on a virtual workspace before writing. If preflight fails, no file is modified.
+- Same-file edits are serialized per absolute path (`lock.ts`). Parallel `edit`/`multi_edit`/`insert` calls to one file can no longer interleave their read-modify-write cycle — previously the later full-file write silently overwrote the earlier edit while both reported success. Edits to different files still run in parallel.
 - BOM and line endings (CRLF/LF) are preserved.
 - Fuzzy match is used as a fallback for whitespace/quote differences; the result reports success and flags the fuzzy match so the model can copy verbatim next time.
 - Error messages include line-number hints when possible.

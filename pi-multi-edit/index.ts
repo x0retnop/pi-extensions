@@ -39,11 +39,11 @@ const MULTI_EDIT_PROMPT_SNIPPET =
 
 const MULTI_EDIT_GUIDELINES = [
   "Use multi_edit for several independent replacements in ONE file.",
-  "Maximum 4 edits per call. If you need more, split into multiple calls and re-read the file between them.",
+  "Keep batches small — up to 3 edits is ideal. Larger batches are accepted, but smaller ones are easier to fix when one edit fails.",
   "Re-read the file immediately before multi_edit. old_string must be copied verbatim from the current file.",
   "Edits are applied sequentially: edits[1] sees the file after edits[0] is applied.",
   "Each old_string must be unique in the current file state unless replace_all is true for that edit.",
-  "If any edit fails, the whole batch is aborted (atomic).",
+  "If some edits fail, the successful ones are still applied (partial apply). The result shows ✓/✗ per edit with a hint for each failure; re-read the file and retry only the failed ones.",
   "Prefer edit (single) for one change; prefer multi_edit only when the changes are in different, non-overlapping parts of the file.",
 ];
 
@@ -130,7 +130,7 @@ export default function (pi: ExtensionAPI) {
     description:
       "Apply multiple independent text replacements in a single file. " +
       "Provide path and edits: [{old_string, new_string, replace_all?}, ...]. " +
-      "Edits are applied sequentially. If any edit fails, the whole batch is aborted.",
+      "Edits are applied sequentially. If some edits fail, the successful ones are still applied and failures are reported per edit.",
     promptSnippet: MULTI_EDIT_PROMPT_SNIPPET,
     promptGuidelines: MULTI_EDIT_GUIDELINES,
     parameters: multiEditParameters,
@@ -153,29 +153,18 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const multi = parseMultiEdit(params);
 
-      // Preflight: virtual workspace catches mismatches before writing.
-      const preflight = await executeMultiEdit(
-        multi,
-        createVirtualWorkspace(ctx.cwd),
-        ctx.cwd,
-        signal,
-        { preflight: true },
-      );
-      const failedPreflights = preflight.results.filter((r: EditResult) => !r.success);
-      if (failedPreflights.length > 0) {
-        return buildMultiError(multi.path, preflight.results);
-      }
-
+      // Partial apply: successful edits are written even if others fail.
       const { results, changed } = await executeMultiEdit(
         multi,
         createRealWorkspace(),
         ctx.cwd,
         signal,
-        { preflight: false },
+        { preflight: false, continueOnError: true },
       );
 
       const failed = results.filter((r: EditResult) => !r.success);
-      if (failed.length > 0) {
+      if (failed.length > 0 && !changed) {
+        // Nothing matched at all — no write happened, report as a full error.
         return buildMultiError(multi.path, results);
       }
 

@@ -1,13 +1,14 @@
 import { isAbsolute, resolve as resolvePath } from "path";
 
 import { computeChangeStats, firstChangedLine } from "./diff.js";
+import { withFileLock } from "./lock.js";
 import {
   countOccurrences,
-  findFirstOccurrenceLine,
+  findOccurrenceLines,
   findText,
   normalizeEditString,
 } from "./match.js";
-import { findClosestLineHint, formatLineHint } from "./hint.js";
+import { findClosestLineHint, findMismatchHint, formatContextHint } from "./hint.js";
 import {
   detectLineEnding,
   normalizeToLF,
@@ -38,30 +39,37 @@ function buildErrorMessage(
   failure: MatchFailure,
 ): string {
   if (failure.kind === "empty") {
-    return failure.message;
+    return `EMPTY: ${failure.message}`;
   }
 
   if (failure.kind === "duplicate") {
-    const line = findFirstOccurrenceLine(content, oldString);
-    return line !== undefined
-      ? `${failure.message} First occurrence is around line ${line}.`
-      : failure.message;
+    const lines = findOccurrenceLines(content, oldString, 5);
+    const at = lines.length ? ` at lines ${lines.join(", ")}` : "";
+    return (
+      `AMBIGUOUS: ${failure.message.replace(/\.$/, "")}${at}. ` +
+      "Add surrounding context to make old_string unique (copy a few lines around the occurrence you need), or set replace_all: true."
+    );
   }
 
-  // not-found
-  const line = findFirstOccurrenceLine(content, oldString);
-  if (line !== undefined) {
-    return `${failure.message} Did you mean the text around line ${line}?`;
+  // not-found: give the agent everything needed to retry without a re-read.
+  let message = "NOT_FOUND: old_string does not match the file.";
+
+  const mismatch = findMismatchHint(content, oldString);
+  if (mismatch) {
+    message += ` ${mismatch.hint}`;
   }
 
-  // No exact or fuzzy match; provide a closest-line hint if possible.
-  const closestLine = findClosestLineHint(content, oldString);
+  const closestLine = mismatch?.contextLine ?? findClosestLineHint(content, oldString);
   if (closestLine !== undefined) {
-    const hint = formatLineHint(content, closestLine);
-    return `${failure.message} Closest match around line ${closestLine}${hint ? `: \`${hint}\`` : ""}. Re-read the file and copy the current block verbatim.`;
+    message += `\nActual file text around line ${closestLine}:\n${formatContextHint(content, closestLine)}`;
+    message +=
+      "\nFix old_string using the file text above and retry (re-read only if the block is larger than shown).";
+  } else {
+    message +=
+      " No similar text found — re-read the section you intended to edit and rebuild old_string from it.";
   }
 
-  return `${failure.message} Re-read the file and copy the current block verbatim.`;
+  return message;
 }
 
 function matchReplacement(
@@ -92,7 +100,7 @@ function matchReplacement(
       matches: [],
       failure: {
         kind: "duplicate",
-        message: `Found ${occurrences} occurrences. old_string must be unique or use replace_all: true.`,
+        message: `Found ${occurrences} occurrence(s) of old_string.`,
       },
     };
   }
@@ -175,7 +183,7 @@ function applySingleEdit(
       success: true,
       message: changed
         ? `${verb} ${count} occurrence(s).${fuzzyNote}`
-        : "No change (old and new are identical).",
+        : "⚠ No change — old_string and new_string are identical; the text may already be edited. Verify before continuing.",
       stats,
       firstChangedLine: firstLine,
       usedFuzzy,
@@ -213,7 +221,17 @@ function applyBatchEdits(
         index: i,
         edit,
         success: false,
-        message: "old_string must not be empty.",
+        message: "EMPTY: old_string must not be empty.",
+      });
+      continue;
+    }
+
+    if (oldString === newString) {
+      results.push({
+        index: i,
+        edit,
+        success: true,
+        message: "⚠ No change — old_string equals new_string (already applied?).",
       });
       continue;
     }
@@ -238,7 +256,7 @@ function applyBatchEdits(
         success: false,
         message: buildErrorMessage(content, oldString, {
           kind: "duplicate",
-          message: `Found ${occurrences} occurrences. old_string must be unique or use replace_all: true.`,
+          message: `Found ${occurrences} occurrence(s) of old_string.`,
         }),
       });
       continue;
@@ -344,18 +362,20 @@ export async function executeSingleEdit(
   options: ApplySingleOptions = {},
 ): Promise<{ result: EditResult; changed: boolean }> {
   const absPath = toAbsolute(edit.path, cwd);
-  await workspace.checkWriteAccess(absPath);
+  return withFileLock(absPath, async () => {
+    await workspace.checkWriteAccess(absPath);
 
-  if (signal?.aborted) throw new Error("Operation aborted");
+    if (signal?.aborted) throw new Error("Operation aborted");
 
-  const rawContent = await workspace.readText(absPath);
-  const { newContent, changed, result } = applySingleEdit(rawContent, edit.path, edit, options);
+    const rawContent = await workspace.readText(absPath);
+    const { newContent, changed, result } = applySingleEdit(rawContent, edit.path, edit, options);
 
-  if (changed && !options.preflight) {
-    await workspace.writeText(absPath, newContent);
-  }
+    if (changed && !options.preflight) {
+      await workspace.writeText(absPath, newContent);
+    }
 
-  return { result, changed };
+    return { result, changed };
+  });
 }
 
 export interface ApplyMultiOptions {
@@ -371,38 +391,40 @@ export async function executeMultiEdit(
   options: ApplyMultiOptions = {},
 ): Promise<{ results: EditResult[]; changed: boolean }> {
   const absPath = toAbsolute(multi.path, cwd);
-  await workspace.checkWriteAccess(absPath);
+  return withFileLock(absPath, async () => {
+    await workspace.checkWriteAccess(absPath);
 
-  if (signal?.aborted) throw new Error("Operation aborted");
+    if (signal?.aborted) throw new Error("Operation aborted");
 
-  const rawContent = await workspace.readText(absPath);
-  const { newRaw, results: stepResults } = applyBatchEdits(
-    rawContent,
-    multi.path,
-    multi.edits,
-    { preflight: options.preflight },
-  );
+    const rawContent = await workspace.readText(absPath);
+    const { newRaw, results: stepResults } = applyBatchEdits(
+      rawContent,
+      multi.path,
+      multi.edits,
+      { preflight: options.preflight },
+    );
 
-  const allSuccess = stepResults.every((r) => r.success);
-  const changed = newRaw !== rawContent;
+    const allSuccess = stepResults.every((r) => r.success);
+    const changed = newRaw !== rawContent;
 
-  // Atomic by default: only write when every step succeeded or caller opted into partial apply.
-  if (changed && !options.preflight && (allSuccess || options.continueOnError)) {
-    await workspace.writeText(absPath, newRaw);
-  }
+    // Atomic by default: only write when every step succeeded or caller opted into partial apply.
+    if (changed && !options.preflight && (allSuccess || options.continueOnError)) {
+      await workspace.writeText(absPath, newRaw);
+    }
 
-  const stats = changed ? computeChangeStats(rawContent, newRaw) : undefined;
-  const firstLine = changed ? firstChangedLine(rawContent, newRaw) : undefined;
+    const stats = changed ? computeChangeStats(rawContent, newRaw) : undefined;
+    const firstLine = changed ? firstChangedLine(rawContent, newRaw) : undefined;
 
-  const editResults: EditResult[] = stepResults.map((r) => ({
-    path: multi.path,
-    success: r.success,
-    message: r.message,
-    usedFuzzy: r.usedFuzzy,
-    ...(r.success && changed ? { stats, firstChangedLine: firstLine } : {}),
-  }));
+    const editResults: EditResult[] = stepResults.map((r) => ({
+      path: multi.path,
+      success: r.success,
+      message: r.message,
+      usedFuzzy: r.usedFuzzy,
+      ...(r.success && changed ? { stats, firstChangedLine: firstLine } : {}),
+    }));
 
-  return { results: editResults, changed };
+    return { results: editResults, changed };
+  });
 }
 
 export interface ApplyInsertOptions {
@@ -417,16 +439,18 @@ export async function executeInsert(
   options: ApplyInsertOptions = {},
 ): Promise<{ result: EditResult; changed: boolean }> {
   const absPath = toAbsolute(edit.path, cwd);
-  await workspace.checkWriteAccess(absPath);
+  return withFileLock(absPath, async () => {
+    await workspace.checkWriteAccess(absPath);
 
-  if (signal?.aborted) throw new Error("Operation aborted");
+    if (signal?.aborted) throw new Error("Operation aborted");
 
-  const rawContent = await workspace.readText(absPath);
-  const { newContent, changed, result } = applyInsert(rawContent, edit.path, edit, options);
+    const rawContent = await workspace.readText(absPath);
+    const { newContent, changed, result } = applyInsert(rawContent, edit.path, edit, options);
 
-  if (changed && !options.preflight) {
-    await workspace.writeText(absPath, newContent);
-  }
+    if (changed && !options.preflight) {
+      await workspace.writeText(absPath, newContent);
+    }
 
-  return { result, changed };
+    return { result, changed };
+  });
 }

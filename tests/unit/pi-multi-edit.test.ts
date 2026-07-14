@@ -76,7 +76,7 @@ test("non-unique old_string fails without replace_all", async () => {
     undefined,
   );
   assert.strictEqual(result.result.success, false);
-  assert.match(result.result.message, /Found 2 occurrences/);
+  assert.match(result.result.message, /Found 2 occurrence\(s\)/);
 });
 
 test("single edit error includes line number for duplicate", async () => {
@@ -88,7 +88,7 @@ test("single edit error includes line number for duplicate", async () => {
     undefined,
   );
   assert.strictEqual(result.result.success, false);
-  assert.match(result.result.message, /line 2/);
+  assert.match(result.result.message, /lines 2, 3/);
 });
 
 test("single edit fuzzy match is surfaced", async () => {
@@ -217,21 +217,18 @@ test("parseMultiEdit rejects empty edits", () => {
   );
 });
 
-test("parseMultiEdit rejects more than 4 edits", () => {
-  assert.throws(
-    () =>
-      parseMultiEdit({
-        path: "a.txt",
-        edits: [
-          { old_string: "a", new_string: "1" },
-          { old_string: "b", new_string: "2" },
-          { old_string: "c", new_string: "3" },
-          { old_string: "d", new_string: "4" },
-          { old_string: "e", new_string: "5" },
-        ],
-      } as any),
-    /at most 4 edits/,
-  );
+test("parseMultiEdit accepts more than 4 edits", () => {
+  const parsed = parseMultiEdit({
+    path: "a.txt",
+    edits: [
+      { old_string: "a", new_string: "1" },
+      { old_string: "b", new_string: "2" },
+      { old_string: "c", new_string: "3" },
+      { old_string: "d", new_string: "4" },
+      { old_string: "e", new_string: "5" },
+    ],
+  });
+  assert.strictEqual(parsed.edits.length, 5);
 });
 
 test("multi_edit error includes hint for matched edits", async () => {
@@ -251,6 +248,39 @@ test("multi_edit error includes hint for matched edits", async () => {
   assert.strictEqual(result.results[0].success, true);
   assert.strictEqual(result.results[1].success, false);
   assert.strictEqual(await ws.readText(abs("a.txt")), "alpha beta gamma");
+});
+
+test("parallel edits to the same file do not lose changes", async () => {
+  // Regression: two parallel edit calls used to interleave read -> apply ->
+  // write, both read the same original and the later full-file write
+  // overwrote the earlier one (silent lost edit, both reported success).
+  // Delay reads so an unlocked implementation would read stale content.
+  const ws = makeWorkspace({ [abs("a.txt")]: "foo bar" });
+  const origRead = ws.readText;
+  ws.readText = async (p) => {
+    const content = await origRead(p);
+    await new Promise((r) => setTimeout(r, 10));
+    return content;
+  };
+  const [r1, r2] = await Promise.all([
+    executeSingleEdit({ path: "a.txt", old_string: "foo", new_string: "FOO" }, ws, cwd, undefined),
+    executeSingleEdit({ path: "a.txt", old_string: "bar", new_string: "BAR" }, ws, cwd, undefined),
+  ]);
+  assert.strictEqual(r1.result.success, true);
+  assert.strictEqual(r2.result.success, true);
+  assert.strictEqual(await origRead(abs("a.txt")), "FOO BAR");
+});
+
+test("parallel edits to different files stay parallel and both apply", async () => {
+  const ws = makeWorkspace({ [abs("a.txt")]: "foo", [abs("b.txt")]: "bar" });
+  const [r1, r2] = await Promise.all([
+    executeSingleEdit({ path: "a.txt", old_string: "foo", new_string: "FOO" }, ws, cwd, undefined),
+    executeSingleEdit({ path: "b.txt", old_string: "bar", new_string: "BAR" }, ws, cwd, undefined),
+  ]);
+  assert.strictEqual(r1.result.success, true);
+  assert.strictEqual(r2.result.success, true);
+  assert.strictEqual(await ws.readText(abs("a.txt")), "FOO");
+  assert.strictEqual(await ws.readText(abs("b.txt")), "BAR");
 });
 
 test("parseInsert accepts valid input", () => {

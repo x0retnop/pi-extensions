@@ -48,3 +48,19 @@ export function findFirstOccurrenceLine(content: string, oldString: string): num
   const before = content.slice(0, m.index);
   return before.split("\n").length;
 }
+
+/** Line numbers (1-indexed) of all fuzzy occurrences, capped. */
+export function findOccurrenceLines(content: string, oldString: string, cap = 5): number[] {
+  const fuzzyContent = normalizeForFuzzyMatch(content);
+  const fuzzyOld = normalizeForFuzzyMatch(oldString);
+  if (!fuzzyOld) return [];
+  const lines: number[] = [];
+  let pos = 0;
+  while (lines.length < cap) {
+    const idx = fuzzyContent.indexOf(fuzzyOld, pos);
+    if (idx === -1) break;
+    lines.push(fuzzyContent.slice(0, idx).split("\n").length);
+    pos = idx + Math.max(1, fuzzyOld.length);
+  }
+  return lines;
+}

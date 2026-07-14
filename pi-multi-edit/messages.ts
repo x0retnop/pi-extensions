@@ -34,9 +34,12 @@ export function buildMultiSuccess(
   const header = failed > 0
     ? `Partial apply: ${applied}/${results.length} edits applied, ${failed} failed.`
     : `Batch edit applied: ${applied}/${results.length} edits.`;
+  const footer = failed > 0
+    ? "\nThe file WAS modified with the successful edits. Re-read it, then retry only the failed edits using the hints above."
+    : "";
 
   return {
-    content: [{ type: "text", text: `${header}\n${lines.join("\n")}` }],
+    content: [{ type: "text", text: `${header}\n${lines.join("\n")}${footer}` }],
     details: { stats, firstChangedLine },
   };
 }
