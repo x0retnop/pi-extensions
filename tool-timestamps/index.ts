@@ -3,8 +3,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 /**
  * tool-timestamps — TUI-only timeline of tool executions.
  *
- * Shows a dim widget above the editor with one row per finished tool call:
- *   07-14 15:32:01  bash (2.3s)  npm test
+ * Modes (cycle with /timestamps):
+ * - compact (default): one dim line above the editor with the latest event
+ *     07-14 18:17:38  bash (119ms)  ls "/c/..."  ·  24 events
+ * - expanded: up to 8 recent rows
+ * - hidden: widget removed
+ *
+ * /timestamps all opens a scrollable list with every event of the session.
  *
  * Rows come from two sources:
  * - session entries (read-only scan on session_start) — covers /resume history;
@@ -16,6 +21,9 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 const WIDGET_KEY = "tool-timestamps";
 const MAX_ROWS = 8; // TUI caps widgets at 10 lines
 const MAX_TARGET = 50;
+const MAX_STORED = 1000;
+
+type Mode = "compact" | "expanded" | "hidden";
 
 interface Row {
   time: number; // Unix ms
@@ -32,6 +40,15 @@ function pad2(n: number): string {
 function fmtStamp(ms: number): string {
   const d = new Date(ms);
   return `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+function fmtTime(ms: number): string {
+  const d = new Date(ms);
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  return sameDay ? hm : `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${hm}`;
 }
 
 function fmtDur(ms: number): string {
@@ -54,25 +71,40 @@ function extractTarget(args: unknown): string {
   return truncate(v.split("\n")[0].trim(), MAX_TARGET);
 }
 
+function fmtRow(r: Row): string {
+  const dur = r.durMs !== undefined ? ` (${fmtDur(r.durMs)})` : "";
+  const mark = r.isError ? "✗ " : "";
+  return `${fmtStamp(r.time)}  ${mark}${r.tool}${dur}${r.target ? "  " + r.target : ""}`;
+}
+
 export default function (pi: ExtensionAPI) {
   const rows: Row[] = [];
   const starts = new Map<string, { time: number; tool: string; target: string }>();
+  let mode: Mode = "compact";
 
   function renderWidget(ctx: ExtensionContext): void {
     if (!ctx.hasUI) return;
-    if (rows.length === 0) {
+    if (mode === "hidden" || rows.length === 0) {
       ctx.ui.setWidget(WIDGET_KEY, undefined);
+      return;
+    }
+    if (mode === "compact") {
+      const r = rows[rows.length - 1];
+      const dur = r.durMs !== undefined ? ` (${fmtDur(r.durMs)})` : "";
+      const mark = r.isError ? "✗ " : "";
+      ctx.ui.setWidget(WIDGET_KEY, (_tui, theme) => ({
+        render(width: number) {
+          const line = `${fmtTime(r.time)}  ${mark}${r.tool}${dur}${r.target ? "  " + r.target : ""}  ·  ${rows.length} events`;
+          return [theme.fg("dim", truncate(line, width))];
+        },
+        invalidate() {},
+      }));
       return;
     }
     const visible = rows.slice(-MAX_ROWS);
     ctx.ui.setWidget(WIDGET_KEY, (_tui, theme) => ({
       render(width: number) {
-        return visible.map((r) => {
-          const dur = r.durMs !== undefined ? ` (${fmtDur(r.durMs)})` : "";
-          const mark = r.isError ? "✗ " : "";
-          const line = `${fmtStamp(r.time)}  ${mark}${r.tool}${dur}${r.target ? "  " + r.target : ""}`;
-          return theme.fg("dim", truncate(line, width));
-        });
+        return visible.map((r) => theme.fg("dim", truncate(fmtRow(r), width)));
       },
       invalidate() {},
     }));
@@ -80,9 +112,34 @@ export default function (pi: ExtensionAPI) {
 
   function pushRow(ctx: ExtensionContext, row: Row): void {
     rows.push(row);
-    if (rows.length > 200) rows.splice(0, rows.length - 200);
+    if (rows.length > MAX_STORED) rows.splice(0, rows.length - MAX_STORED);
     renderWidget(ctx);
   }
+
+  pi.registerCommand("timestamps", {
+    description: "Tool timeline: cycle widget mode, or 'all' for scrollable full list",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI) return;
+      const arg = (args ?? "").trim().toLowerCase();
+      if (arg === "all") {
+        if (rows.length === 0) {
+          ctx.ui.notify("No tool executions recorded yet", "info");
+          return;
+        }
+        // Scrollable full list, oldest first. Enter/Esc closes — viewer only.
+        await ctx.ui.select(
+          `Tool timeline (${rows.length} events)`,
+          rows.map(fmtRow)
+        );
+        return;
+      }
+      if (arg === "off") mode = "hidden";
+      else if (arg === "on") mode = "compact";
+      else mode = mode === "compact" ? "expanded" : mode === "expanded" ? "hidden" : "compact";
+      renderWidget(ctx);
+      ctx.ui.notify(`timestamps: ${mode}`, "info");
+    },
+  });
 
   // Rebuild rows from session history (startup, /resume, /new, /fork).
   pi.on("session_start", (_event, ctx) => {
@@ -117,7 +174,7 @@ export default function (pi: ExtensionAPI) {
       }
     }
     rows.sort((a, b) => a.time - b.time);
-    if (rows.length > 200) rows.splice(0, rows.length - 200);
+    if (rows.length > MAX_STORED) rows.splice(0, rows.length - MAX_STORED);
     renderWidget(ctx);
   });
 
