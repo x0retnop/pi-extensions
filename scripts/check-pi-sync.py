@@ -37,10 +37,22 @@ OBSOLETE_PATTERNS = {
     "reasoningEffortMap": "Deprecated provider key -- use thinkingLevelMap (changed in 0.72.0)",
 }
 
-# Keywords that, if seen in CHANGELOG entries above baseline, warrant attention
-RED_FLAG_TERMS = [
+# Terms whose presence in newer CHANGELOG sections means real risk for this
+# collection (breaking changes, obsolete APIs). These drive the RESULT verdict
+# and the local-file rg mapping.
+CRITICAL_TERMS = [
     "Breaking Changes",
     "minimum supported Node",
+    "package scope",
+    "@mariozechner",
+    "reasoningEffortMap",
+    "jiti",
+]
+
+# Terms worth surfacing as information (new ExtensionAPI surface, rendering
+# hooks, notable changes). Shown with changelog context, but they do NOT
+# force an "attention needed" verdict by themselves.
+INTEREST_TERMS = [
     "Extension API",
     "registerProvider",
     "registerTool",
@@ -49,15 +61,37 @@ RED_FLAG_TERMS = [
     "thinking_level_select",
     "tool rendering",
     "theme sharing",
-    "jiti",
-    "package scope",
-    "@mariozechner",
-    "reasoningEffortMap",
-    "thinkingLevelMap",
     "incremental bash",
     "compact read",
     "renderShell",
+    "entry renderer",
+    "agent_settled",
+    "InlineExtension",
+    "pi-ai/compat",
 ]
+
+# Terms for which a local rg mapping is actionable
+LOCAL_MAP_TERMS = (
+    "registerProvider",
+    "registerTool",
+    "registerCommand",
+    "message_end",
+    "thinking_level_select",
+    "reasoningEffortMap",
+    "renderShell",
+)
+
+# Keywords for the condensed per-release highlights section
+HIGHLIGHT_KEYWORDS = (
+    "extension", "event", "render", "widget", "tui", " ui ", "display",
+    "tool", "message", "session", "entry", "hook", "shortcut", "theme",
+    "setting", "skill", "compaction", "context",
+)
+ALWAYS_SHOW = ("extension", "entry renderer", "widget", "tui", "render", "breaking")
+PROVIDER_NOISE = (
+    "bedrock", "fireworks", "cloudflare", "copilot", "azure", "z.ai",
+    "openai", "anthropic", "bedrock", "vertex", "mistral", "groq",
+)
 
 EXCLUDED_SCAN_PATHS = {
     "node_modules",
@@ -174,6 +208,42 @@ def scan_local_obsoletes():
     return results
 
 
+def changelog_context(text, term, limit=2):
+    """Return up to `limit` changelog lines mentioning term (trimmed)."""
+    out = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("-") and term.lower() in s.lower():
+            out.append(s[:220])
+            if len(out) >= limit:
+                break
+    return out
+
+
+def is_interesting(bullet):
+    """Filter for the highlights digest: keep extension/UI/tooling bullets,
+    drop provider-specific fix noise unless it touches extension surface."""
+    l = bullet.lower()
+    if any(k in l for k in ALWAYS_SHOW):
+        return True
+    if any(k in l for k in PROVIDER_NOISE):
+        return False
+    return any(k in l for k in HIGHLIGHT_KEYWORDS)
+
+
+def print_highlights(newer, per_version=10):
+    """Condensed digest of what changed, so the user doesn't read the full log."""
+    print("\n--- Release Highlights (filtered digest) ---")
+    for _, s, t in newer:
+        bullets = [l.strip() for l in t.splitlines() if l.strip().startswith("-")]
+        hits = [b for b in bullets if is_interesting(b)]
+        print(f"\n  [{s}]  ({len(bullets)} bullets total, {len(hits)} relevant)")
+        for b in hits[:per_version]:
+            print(f"    {b[:220]}")
+        if len(hits) > per_version:
+            print(f"    ... +{len(hits) - per_version} more")
+
+
 def rg_local(pattern):
     """Run rg if available, else fallback to simple file scan."""
     try:
@@ -238,19 +308,29 @@ def main():
     for _, s, _ in newer:
         print(f"  - {s}")
 
-    # Check red flags in newer sections
+    # Check flags in newer sections
     combined_text = "\n".join(t for _, _, t in newer)
-    flags_found = []
-    for term in RED_FLAG_TERMS:
-        if term.lower() in combined_text.lower():
-            flags_found.append(term)
+    critical = [t for t in CRITICAL_TERMS if t.lower() in combined_text.lower()]
+    interesting = [t for t in INTEREST_TERMS if t.lower() in combined_text.lower()]
+
+    print_highlights(newer)
 
     print("\n--- CHANGELOG Red Flags ---")
-    if flags_found:
-        for f in flags_found:
+    if critical:
+        for f in critical:
             print(f"  ! {f}")
+            for ctx_line in changelog_context(combined_text, f):
+                print(f"      {ctx_line}")
     else:
         print("  None detected.")
+
+    if interesting:
+        print("\n--- Notable Changes (informational) ---")
+        for f in interesting:
+            lines = changelog_context(combined_text, f)
+            print(f"  * {f}")
+            for ctx_line in lines:
+                print(f"      {ctx_line}")
 
     # Local obsolete patterns
     print("\n--- Local Extension Scan ---")
@@ -264,22 +344,10 @@ def main():
     else:
         print("  No known obsolete patterns found.")
 
-    # Map red flags to local files for concrete API terms
+    # Map actionable API terms to local files
     api_hits = {}
-    for term in flags_found:
-        if any(
-            x in term
-            for x in (
-                "registerProvider",
-                "registerTool",
-                "registerCommand",
-                "message_end",
-                "thinking_level_select",
-                "reasoningEffortMap",
-                "thinkingLevelMap",
-                "renderShell",
-            )
-        ):
+    for term in critical + interesting:
+        if any(x in term for x in LOCAL_MAP_TERMS):
             hits = rg_local(term)
             if hits:
                 api_hits[term] = hits
@@ -295,11 +363,11 @@ def main():
 
     # Summary
     print("\n" + "=" * 60)
-    if flags_found or obsolete:
+    if critical or obsolete:
         print("RESULT: Attention needed. Review the matches above.")
         print("Next: run 'npx tsc --noEmit' on flagged extensions.")
     else:
-        print("RESULT: No issues detected. Pi update looks safe for this collection.")
+        print("RESULT: No breaking issues detected. Review Notable Changes above.")
     print("=" * 60)
 
 
