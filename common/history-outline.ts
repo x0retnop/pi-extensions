@@ -206,6 +206,12 @@ export function renderOutlineEntry(entry: OutlineEntry, options: Required<Format
   }
 }
 
+// llama-server silently truncates the prompt at the first NUL (0x00) byte in
+// message content (verified 2026-07-14, build b9902). Session history can
+// contain binary/UTF-16 tool output (e.g. a UTF-16 .ini read as text) — strip
+// C0 controls except \n\r\t so the outline can never carry a NUL downstream.
+const CONTROL_CHARS_RE = /[\x00-\x08\x0B\x0C\x0E-\x1F]/g;
+
 export function formatHistoryOutline(
   entries: OutlineEntry[],
   options: FormatOutlineOptions = {},
@@ -275,7 +281,7 @@ export function formatHistoryOutline(
     ].join("");
   }
 
-  const result = legend + body;
+  const result = (legend + body).replace(CONTROL_CHARS_RE, "");
   return result.length > opts.maxChars ? result.slice(0, opts.maxChars) : result;
 }
 
