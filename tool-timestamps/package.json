@@ -1,0 +1,18 @@
+{
+  "name": "pi-extension-tool-timestamps",
+  "version": "0.1.0",
+  "description": "TUI-only timeline of tool executions (widget above editor)",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}

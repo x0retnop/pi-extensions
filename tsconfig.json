@@ -29,6 +29,7 @@
     "role-sw/**/*.ts",
     "simple-gate/**/*.ts",
     "sub-agents/**/*.ts",
+    "tool-timestamps/**/*.ts",
     "tests/**/*.ts",
     "strip-cache-retention.ts"
   ]
