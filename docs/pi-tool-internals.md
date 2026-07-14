@@ -105,9 +105,10 @@ From `docs/pi-internals.md` §2:
 5. Default Pi docs block  ← only when NO customPrompt is set
    - Available tools list (uses promptSnippet)
    - Guidelines list      (uses promptGuidelines)
-6. Current date
-7. Current working directory
+6. Current working directory
 ```
+
+(`Current date` was removed from the default prompt in Pi 0.80.7; see `docs/pi-internals.md` §2.)
 
 Key implication: **with a custom system prompt the textual tool list is skipped**, but the tool JSON schemas are still sent to the provider.
 

@@ -49,9 +49,10 @@ The final text is assembled **in this order**:
    - Available tools list
    - Guidelines list
    - Pi docs paths (readme, docs, examples)
-6. Current date: YYYY-MM-DD
-7. Current working directory: <cwd>
+6. Current working directory: <cwd>
 ```
+
+Note: since Pi 0.80.7 the `Current date:` line is **no longer appended** (removed to fix cross-day prompt-cache invalidation). If the agent needs today's date, inject it via an extension (`before_agent_start`) — context-guard's `date` rule does exactly that.
 
 ### Key behavior
 - If `customPrompt` is present, the **entire default Pi block** (tools list, guidelines, docs references) is skipped. Only tool *definitions* (JSON Schema) are still sent to the provider API.
@@ -70,7 +71,7 @@ The final text is assembled **in this order**:
     <skill><name>...</name><description>...</description><location>...</location></skill>
   </available_skills>
   ```
-- `Current date` and `Current working directory` are **hard-appended** at the very end. There is **no setting** to disable them.
+- `Current working directory` is **hard-appended** at the very end. There is **no setting** to disable it.
 
 ---
 
@@ -120,7 +121,6 @@ If you write a cleanup extension, register it **after** the ones you want to cle
 | Themes | `--no-themes` |
 
 **Cannot be disabled by settings:**
-- `Current date: ...`
 - `Current working directory: ...`
 - Ancestor traversal for `AGENTS.md` / `CLAUDE.md` (only `--no-context-files` disables the whole block)
 - XML wrapping of AGENTS.md
