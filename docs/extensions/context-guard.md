@@ -25,6 +25,7 @@ autoSkills, sessionMemory
 
 ## Important behaviors
 
+- **Date rule.** Since Pi 0.80.7 the default prompt no longer contains `Current date:`. With the `date` rule enabled (default), context-guard appends `Current date: YYYY-MM-DD` (local, day granularity — the prompt cache busts at most once per day). Disabled → strips any date line. Time-of-day is deliberately NOT injected: the system prompt is the prompt-cache prefix and a per-turn clock would bust the cache on every request; use `date` in bash for the clock.
 - **Order matters.** `context-guard` runs on `before_agent_start`. It can strip parts that `role-sw` just injected. If `roleOverride` is disabled, the active role markdown is removed.
 - **Ancestor AGENTS.md files.** The `ancestorAgents` rule keeps only the `AGENTS.md` located exactly in `cwd`. It does **not** solve the "two AGENTS.md" problem when Pi is launched inside an extension subfolder — it would strip the root file too.
 - **Tool gates** work by calling `pi.setActiveTools()` on `session_start` and `session_tree`. They can conflict with other extensions that also mutate the active tool list.

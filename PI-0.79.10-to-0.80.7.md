@@ -55,6 +55,7 @@ Safe upgrade. One-line code fix required (`getProviders` import), no behavior br
 - `model-manager/provider-utils.ts`: `getProviders` import → `@earendil-works/pi-ai/compat`.
 - `npm run typecheck` clean; unit tests 65/68 (3 failures are pre-existing uncommitted `pi-multi-edit` WIP, verified via stash — not upgrade-related).
 - `docs/pi-version-sync.md` baseline raised 0.77.0 → 0.80.7.
+- Follow-up: `context-guard` `date` rule inverted — since 0.80.7 drops `Current date:` from the default prompt, the rule now *injects* `Current date: YYYY-MM-DD` when enabled (day granularity only, cache-safe); disabling still strips it.
 
 ## Worth doing later (candidates, not required)
 
