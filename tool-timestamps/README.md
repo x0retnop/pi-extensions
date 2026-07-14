@@ -1,27 +1,35 @@
 # tool-timestamps
 
-TUI-only timeline of tool executions, shown as a dim widget above the editor. Helps the user see *when* the agent did what. Never touches tool registration, session files, or LLM context.
+TUI-only timeline of tool executions. Helps the user see *when* the agent did what. Never touches tool registration or LLM context.
 
 ## Install
 
 Copy the extension folder to `~/.pi/agent/extensions/` and restart Pi.
 
-## Modes (`/timestamps` cycles)
+## Two modes, picked automatically
 
-- **compact** (default) — one line: `18:17:38  bash (119ms)  ls "/c/..."  ·  24 events`
-- **expanded** — up to 8 recent rows
-- **hidden** — widget removed
+### Inline mode (Pi >= 0.80.4, recommended)
 
-`/timestamps all` — scrollable list with every event of the session (viewer: Enter/Esc closes). `/timestamps on` / `off` — jump to compact / hidden.
+Each finished tool call gets a dim row **right below it in the chat scrollback**:
 
-Row format: `MM-DD HH:MM:SS  tool (duration)  target`. Live calls include duration; errors are marked with `✗`. On startup / `/resume` / `/new` / `/fork` the timeline is rebuilt read-only from session entries (timestamps are stored on every message, durations are not — so history rows show time only).
+```
+07-14 18:17:38  bash (119ms)  ls "/c/10x001/..."
+```
 
-## Why a widget and not inline timestamps in the chat scrollback
+- Implemented as persisted display-only session entries (`pi.appendEntry` + `pi.registerEntryRenderer`) — rendered in session order, restored on `/resume`, **never sent to the model**.
+- `Ctrl+O` (global tool-output expand) reveals a short result snippet under the row (`↳ ...`). Errors are marked `✗`.
+- Rows are stored in the session jsonl (small: stamp, tool, target, duration, ≤2 snippet lines).
 
-Everything in the scrollback is owned by the individual tool renderers. The only extension hook that injects rows there (custom messages) is also sent to the LLM. A keyed `setWidget` slot is the only zero-conflict, zero-LLM-impact surface — correlation with the scrollback is by row order and target text (use `/timestamps all`).
+### Widget fallback (Pi < 0.80.4)
+
+A dim widget above the editor. `/timestamps` cycles `compact` (1 line) → `expanded` (8 rows) → `hidden`; `/timestamps on` / `off` jump directly.
+
+### `/timestamps all` (both modes)
+
+Scrollable list with every tool call of the session, oldest first (viewer: Enter/Esc closes). Built from a read-only scan of session messages, so it also covers sessions recorded before this extension existed.
 
 ## Design
 
-- Data sources: `session_start` entry scan (`ctx.sessionManager.getEntries()`) + `tool_execution_start` / `tool_execution_end` events.
-- Rendering: `ctx.ui.setWidget("tool-timestamps", ...)`; list view: `ctx.ui.select(...)`.
-- No tools registered or overridden, nothing persisted, nothing sent to the LLM. Silent in print/RPC mode (`ctx.hasUI === false`).
+- Data: `tool_execution_start` / `tool_execution_end` events (live) + `ctx.sessionManager.getEntries()` scan (list view).
+- Rendering: entry renderer (inline) or keyed `setWidget` slot (fallback). No tools registered or overridden, nothing sent to the LLM. Silent in print/RPC mode (`ctx.hasUI === false`).
+- Inline mode requires Pi >= 0.80.4 (`registerEntryRenderer`); detected at load, no version pinning needed.

@@ -3,21 +3,20 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 /**
  * tool-timestamps — TUI-only timeline of tool executions.
  *
- * Modes (cycle with /timestamps):
- * - compact (default): one dim line above the editor with the latest event
- *     07-14 18:17:38  bash (119ms)  ls "/c/..."  ·  24 events
- * - expanded: up to 8 recent rows
- * - hidden: widget removed
+ * On Pi >= 0.80.4 each finished tool call gets a dim inline row right below it
+ * in the chat scrollback:
+ *   07-14 18:17:38  bash (119ms)  ls "/c/..."
+ * Implemented as persisted display-only session entries (pi.appendEntry +
+ * registerEntryRenderer): rendered in session order, restored on /resume,
+ * never sent to the LLM. Ctrl+O (global expand) reveals a result snippet.
  *
- * /timestamps all opens a scrollable list with every event of the session.
+ * On older Pi the extension falls back to a widget above the editor
+ * (modes: compact / expanded / hidden, cycle with /timestamps).
  *
- * Rows come from two sources:
- * - session entries (read-only scan on session_start) — covers /resume history;
- * - live tool_execution_start/end events — adds duration for new calls.
- *
- * Nothing is registered, overridden, persisted, or sent to the LLM.
+ * /timestamps all opens a scrollable list with every tool call of the session.
  */
 
+const ENTRY_TYPE = "tool-timestamp";
 const WIDGET_KEY = "tool-timestamps";
 const MAX_ROWS = 8; // TUI caps widgets at 10 lines
 const MAX_TARGET = 50;
@@ -31,6 +30,7 @@ interface Row {
   target: string;
   durMs?: number; // live calls only
   isError?: boolean;
+  snippet?: string; // first result lines, inline mode only
 }
 
 function pad2(n: number): string {
@@ -71,6 +71,25 @@ function extractTarget(args: unknown): string {
   return truncate(v.split("\n")[0].trim(), MAX_TARGET);
 }
 
+/** First meaningful result lines, control chars stripped. Kept small — persisted in the session file. */
+function extractSnippet(result: unknown): string {
+  if (!result || typeof result !== "object") return "";
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  const joined = content
+    .filter((c: any) => c?.type === "text" && typeof c.text === "string")
+    .map((c: any) => c.text as string)
+    .join("\n")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+  return joined
+    .split("\n")
+    .filter((l) => l.trim())
+    .slice(0, 2)
+    .map((l) => truncate(l.trim(), 120))
+    .join("\n");
+}
+
 function fmtRow(r: Row): string {
   const dur = r.durMs !== undefined ? ` (${fmtDur(r.durMs)})` : "";
   const mark = r.isError ? "✗ " : "";
@@ -78,12 +97,39 @@ function fmtRow(r: Row): string {
 }
 
 export default function (pi: ExtensionAPI) {
-  const rows: Row[] = [];
+  // Entry renderers exist on Pi >= 0.80.4. Cast: repo types may lag behind.
+  const registerEntryRenderer = (pi as any).registerEntryRenderer as
+    | ((customType: string, renderer: (entry: any, options: { expanded: boolean }, theme: any) => any) => void)
+    | undefined;
+  const inlineMode = typeof registerEntryRenderer === "function";
+
+  const rows: Row[] = []; // for /timestamps all and the widget fallback
   const starts = new Map<string, { time: number; tool: string; target: string }>();
   let mode: Mode = "compact";
 
+  if (inlineMode) {
+    registerEntryRenderer(ENTRY_TYPE, (entry, options, theme) => {
+      const d = entry.data as Row | undefined;
+      if (!d || typeof d.time !== "number") return undefined;
+      return {
+        render(width: number) {
+          const lines = [theme.fg("dim", truncate(fmtRow(d), width))];
+          if (options.expanded && d.snippet) {
+            for (const sl of d.snippet.split("\n")) {
+              lines.push(theme.fg("dim", truncate(`    ↳ ${sl}`, width)));
+            }
+          }
+          return lines;
+        },
+        invalidate() {},
+      };
+    });
+  }
+
+  // ---- widget fallback (Pi < 0.80.4) ----
+
   function renderWidget(ctx: ExtensionContext): void {
-    if (!ctx.hasUI) return;
+    if (inlineMode || !ctx.hasUI) return;
     if (mode === "hidden" || rows.length === 0) {
       ctx.ui.setWidget(WIDGET_KEY, undefined);
       return;
@@ -110,14 +156,20 @@ export default function (pi: ExtensionAPI) {
     }));
   }
 
-  function pushRow(ctx: ExtensionContext, row: Row): void {
+  // ---- data collection ----
+
+  function recordRow(ctx: ExtensionContext, row: Row): void {
     rows.push(row);
     if (rows.length > MAX_STORED) rows.splice(0, rows.length - MAX_STORED);
-    renderWidget(ctx);
+    if (inlineMode) {
+      pi.appendEntry(ENTRY_TYPE, row);
+    } else {
+      renderWidget(ctx);
+    }
   }
 
   pi.registerCommand("timestamps", {
-    description: "Tool timeline: cycle widget mode, or 'all' for scrollable full list",
+    description: "Tool timeline: 'all' for scrollable full list; on old Pi also cycles widget mode",
     handler: async (args, ctx) => {
       if (!ctx.hasUI) return;
       const arg = (args ?? "").trim().toLowerCase();
@@ -127,10 +179,11 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         // Scrollable full list, oldest first. Enter/Esc closes — viewer only.
-        await ctx.ui.select(
-          `Tool timeline (${rows.length} events)`,
-          rows.map(fmtRow)
-        );
+        await ctx.ui.select(`Tool timeline (${rows.length} events)`, rows.map(fmtRow));
+        return;
+      }
+      if (inlineMode) {
+        ctx.ui.notify("timestamps: inline mode (Pi >= 0.80.4). Use /timestamps all for the full list.", "info");
         return;
       }
       if (arg === "off") mode = "hidden";
@@ -141,7 +194,8 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Rebuild rows from session history (startup, /resume, /new, /fork).
+  // Rebuild the rows list from session history (startup, /resume, /new, /fork).
+  // Inline rows themselves come from persisted entries and need no backfill.
   pi.on("session_start", (_event, ctx) => {
     rows.length = 0;
     starts.clear();
@@ -190,12 +244,13 @@ export default function (pi: ExtensionAPI) {
     const start = starts.get(event.toolCallId);
     starts.delete(event.toolCallId);
     const now = Date.now();
-    pushRow(ctx, {
+    recordRow(ctx, {
       time: now,
       tool: event.toolName,
       target: start?.target ?? "",
       durMs: start ? now - start.time : undefined,
       isError: event.isError,
+      snippet: inlineMode ? extractSnippet(event.result) : undefined,
     });
   });
 }
