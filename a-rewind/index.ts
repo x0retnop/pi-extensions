@@ -1,8 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { formatDurationHMS, formatTimerStatus, setStatusBlock } from "../common/status.js";
+import { formatTimerStatus, setStatusBlock } from "../common/status.js";
 
 const EXT = "a-rewind";
 const TIMER_STATUS_KEY = "_";
+const PAUSE_STATUS_KEY = "_paused";
 
 type NotifyLevel = "info" | "warning" | "error";
 
@@ -10,6 +11,12 @@ let timerEnabled = true;
 let activeTaskStartedAtMs: number | undefined;
 let lastTaskDurationMs: number | undefined;
 let completedTasksTotalMs = 0;
+
+// Pause state: /pause sets pauseRequested, the turn_start handler turns it
+// into an active wait that /continue (or abort) resolves.
+let pauseRequested = false;
+let pauseActive = false;
+let pauseResolve: (() => void) | undefined;
 
 function formatError(err: unknown): string {
 	return err instanceof Error ? err.message : String(err);
@@ -83,6 +90,10 @@ export default function aRewind(pi: ExtensionAPI) {
 		resetTimerState();
 		updateTimerStatus(ctx);
 
+		// Defensive reset: a pending pause must never leak into a new session.
+		pauseRequested = false;
+		pauseResolve?.();
+
 		if (_event.reason === "resume") {
 			const leaf = ctx?.sessionManager?.getLeafEntry?.();
 			if (leaf?.type === "message" && leaf.message?.role === "assistant") {
@@ -96,21 +107,72 @@ export default function aRewind(pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("before_agent_start", async (_event: any, ctx: any) => {
-		startTaskTimer();
+	// The timer hooks are agent_start/agent_settled (not before_agent_start/
+	// agent_end): sendMessage(triggerTurn) — used by /retry — and steering or
+	// follow-up continuations never emit before_agent_start, so those runs were
+	// invisible to the timer. agent_settled fires once per full run, after all
+	// queued continuations, so one notification covers the whole task.
+	pi.on("agent_start", async (_event: any, ctx: any) => {
+		if (activeTaskStartedAtMs === undefined) {
+			startTaskTimer();
+		}
 		updateTimerStatus(ctx);
 	});
 
-	pi.on("agent_end", async (_event: any, ctx: any) => {
+	pi.on("agent_settled", async (_event: any, ctx: any) => {
 		const durationMs = finishTaskTimer();
 		if (durationMs !== undefined) {
 			notify(ctx, `task time: ${formatDuration(durationMs)}`, "info");
 		}
+		// A pause requested during the final turn never reaches a turn boundary.
+		pauseRequested = false;
 		updateTimerStatus(ctx);
 	});
 
 	pi.on("turn_end", async (_event: any, ctx: any) => {
 		updateTimerStatus(ctx);
+	});
+
+	// /pause implementation: the agent loop awaits turn_start handlers before
+	// each LLM request, at a point where the previous assistant message and all
+	// its tool results are already persisted and no HTTP stream is open. Waiting
+	// here freezes the loop at a clean boundary without touching history.
+	pi.on("turn_start", async (_event: any, ctx: any) => {
+		if (!pauseRequested || pauseActive) return;
+		pauseRequested = false;
+
+		const signal: AbortSignal | undefined = ctx?.signal;
+		if (signal?.aborted) return; // run is already dying; don't pause it
+
+		pauseActive = true;
+		const pausedAtMs = Date.now();
+		setStatusBlock(ctx, PAUSE_STATUS_KEY, "⏸ paused");
+		notify(ctx, "paused at turn boundary. Use /continue to resume.", "info");
+
+		try {
+			await new Promise<void>((resolve) => {
+				pauseResolve = () => {
+					pauseResolve = undefined;
+					signal?.removeEventListener("abort", onAbort);
+					resolve();
+				};
+				const onAbort = () => pauseResolve?.();
+				signal?.addEventListener("abort", onAbort, { once: true });
+			});
+		} finally {
+			pauseActive = false;
+			setStatusBlock(ctx, PAUSE_STATUS_KEY, undefined);
+			// Exclude paused wall time from the task timer.
+			if (activeTaskStartedAtMs !== undefined) {
+				activeTaskStartedAtMs += Date.now() - pausedAtMs;
+			}
+			updateTimerStatus(ctx);
+		}
+	});
+
+	pi.on("session_shutdown", async () => {
+		pauseRequested = false;
+		pauseResolve?.();
 	});
 
 	// Strip the internal retry trigger from the LLM context. It is only needed to
@@ -155,17 +217,7 @@ export default function aRewind(pi: ExtensionAPI) {
 					return;
 				}
 
-				const result = await ctx.navigateTree(targetId, {
-					summarize: false,
-					label: EXT,
-				});
-
-				if (result?.cancelled) {
-					notify(ctx, "rewind cancelled.", "warning");
-					return;
-				}
-
-				notify(ctx, "rewound to before the latest assistant message.", "info");
+				await navigateToEntry(ctx, targetId, "rewound to before the latest assistant message.");
 			} catch (err) {
 				notify(ctx, formatError(err), "error");
 			}
@@ -192,17 +244,7 @@ export default function aRewind(pi: ExtensionAPI) {
 					return;
 				}
 
-				const result = await ctx.navigateTree(targetId, {
-					summarize: false,
-					label: EXT,
-				});
-
-				if (result?.cancelled) {
-					notify(ctx, "step back cancelled.", "warning");
-					return;
-				}
-
-				notify(ctx, "stepped back one entry.", "info");
+				await navigateToEntry(ctx, targetId, "stepped back one entry.");
 			} catch (err) {
 				notify(ctx, formatError(err), "error");
 			}
@@ -237,17 +279,7 @@ export default function aRewind(pi: ExtensionAPI) {
 					return;
 				}
 
-				const result = await ctx.navigateTree(targetId, {
-					summarize: false,
-					label: EXT,
-				});
-
-				if (result?.cancelled) {
-					notify(ctx, "rewind to user message cancelled.", "warning");
-					return;
-				}
-
-				notify(ctx, "rewound to the latest user message. All agent actions after it have been undone.", "info");
+				await navigateToEntry(ctx, targetId, "rewound to the latest user message. All agent actions after it have been undone.");
 			} catch (err) {
 				notify(ctx, formatError(err), "error");
 			}
@@ -333,6 +365,65 @@ export default function aRewind(pi: ExtensionAPI) {
 			}
 		},
 	});
+
+	pi.registerCommand("pause", {
+		description: "Pause the agent loop at the next turn boundary (resume with /continue)",
+		handler: async (_args: string, ctx: any) => {
+			try {
+				if (pauseActive) {
+					notify(ctx, "already paused. Use /continue to resume.", "info");
+					return;
+				}
+				if (pauseRequested) {
+					notify(ctx, "pause already requested — will pause at the next turn boundary.", "info");
+					return;
+				}
+				if (typeof ctx?.isIdle === "function" && ctx.isIdle()) {
+					notify(ctx, "agent is idle — nothing to pause.", "warning");
+					return;
+				}
+				pauseRequested = true;
+				notify(ctx, "pause requested — agent will pause at the next turn boundary.", "info");
+			} catch (err) {
+				notify(ctx, formatError(err), "error");
+			}
+		},
+	});
+
+	pi.registerCommand("continue", {
+		description: "Resume an agent loop paused with /pause",
+		handler: async (_args: string, ctx: any) => {
+			try {
+				if (pauseActive) {
+					notify(ctx, "continuing...", "info");
+					pauseResolve?.();
+					return;
+				}
+				if (pauseRequested) {
+					pauseRequested = false;
+					notify(ctx, "pause request cancelled.", "info");
+					return;
+				}
+				notify(ctx, "not paused.", "info");
+			} catch (err) {
+				notify(ctx, formatError(err), "error");
+			}
+		},
+	});
+}
+
+async function navigateToEntry(ctx: any, targetId: string, okMessage: string): Promise<void> {
+	const result = await ctx.navigateTree(targetId, {
+		summarize: false,
+		label: EXT,
+	});
+
+	if (result?.cancelled) {
+		notify(ctx, "rewind cancelled.", "warning");
+		return;
+	}
+
+	notify(ctx, okMessage, "info");
 }
 
 function getCurrentBranch(ctx: any): any[] {

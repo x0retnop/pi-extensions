@@ -1,6 +1,6 @@
 # A Rewind
 
-Automatically catches a common failed-assistant pattern in Pi: when the assistant says it will use tools, but does not emit an actual structured tool call. It can ask Pi to retry with a stricter instruction, and also provides a manual rewind command for the latest assistant message.
+Session navigation helpers, a task timer, a manual retry command for resuming interrupted sessions, and a pause/continue pair that freezes the agent loop at a turn boundary.
 
 ## Install
 
@@ -12,24 +12,21 @@ pi install git:github.com/x0retnop/pi-extension-a-rewind
 
 | Command | Description |
 | --- | --- |
-| `/a-rewind-auto on` | Enable automatic guard mode. |
-| `/a-rewind-auto off` | Disable automatic guard mode. |
-| `/a-rewind-auto status` | Show whether automatic guard mode is enabled. |
-| `/a-rewind-last` | Rewind the current session to before the latest assistant message. |
+| `/a-rewind` | Rewind the current session to before the latest assistant message. |
 | `/a-rewind-step` | Rewind the session one step back (undo the latest entry). |
-| `/a-rewind-tt on` | Enable task timer display in the status bar. |
-| `/a-rewind-tt off` | Disable task timer display. |
-| `/a-rewind-tt status` | Show whether task timer display is enabled. |
+| `/a-rewind-user` | Rewind to the latest user message (undo all agent actions after it). |
+| `/a-rewind-tt [on\|off\|status]` | Toggle the task timer display in the status bar. |
+| `/pause` | Freeze the agent loop at the next turn boundary. Works while the agent is streaming. |
+| `/continue` | Resume a loop frozen by `/pause` (or cancel a pending pause request). |
+| `/retry` | Continue the agent loop from the current session leaf after rewinding to a clean state. |
 
 ## Behavior
 
-- Watches assistant messages for tool-use preambles without real tool calls.
-- In auto mode, injects a retry instruction and filters the failed assistant output from the next model context.
-- Persists the auto-mode setting in the session.
-- Adds a small status indicator when available.
-- Ignores unexpected message-shape errors inside the `message_end` handler so the guard does not interrupt Pi event processing.
-- Tracks task duration from `before_agent_start` to `agent_end` and shows it in the status bar when enabled.
-- Notifies task completion time after each agent run.
+- Rewinding uses `ctx.navigateTree()`, which creates a branch without deleting history.
+- On session resume, warns when the last leaf is an interrupted assistant message so you know to rewind before continuing.
+- `/pause` waits inside the `turn_start` handler, which the agent loop awaits before each LLM request. The freeze happens at a clean boundary: the previous assistant message and its tool results are already persisted and no HTTP stream is open. No history edits, no trigger messages. The current LLM response and its tool calls always finish first — pausing mid-stream or mid-tool is impossible.
+- `/retry` injects a hidden trigger message (`customType: "a-retry-trigger"`, `display: false`) and starts a turn; a `context` hook strips the trigger before it reaches the model. It refuses to run when the leaf is an interrupted (`aborted`/`error`) or tool-pending (`toolUse`) assistant message — rewind first.
+- Task timer starts on `agent_start`, finishes on `agent_settled` (one notification per full run, including `/retry` and steering continuations), and excludes paused wall time.
 
 ## Marker format
 
@@ -37,7 +34,7 @@ Internal hidden/filter markers intentionally use single-bracket strings such as 
 
 ## Settings
 
-No file-based settings. Use `/a-rewind-auto on|off|status` and `/a-rewind-tt on|off|status`.
+No file-based settings. Use `/a-rewind-tt on|off|status` for the timer display.
 
 ## Compatibility
 
