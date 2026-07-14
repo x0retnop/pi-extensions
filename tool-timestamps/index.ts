@@ -5,10 +5,12 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
  *
  * On Pi >= 0.80.4 each finished tool call gets a dim inline row right below it
  * in the chat scrollback:
- *   07-14 18:17:38  bash (119ms)  ls "/c/..."
+ *   07-14 21:34:47  read (1ms)
+ * Just timestamp + tool + duration: anything else (target, result snippet)
+ * duplicates what the tool's own renderer already shows.
  * Implemented as persisted display-only session entries (pi.appendEntry +
  * registerEntryRenderer): rendered in session order, restored on /resume,
- * never sent to the LLM. Ctrl+O (global expand) reveals a result snippet.
+ * never sent to the LLM.
  *
  * On older Pi the extension falls back to a widget above the editor
  * (modes: compact / expanded / hidden, cycle with /timestamps).
@@ -30,7 +32,6 @@ interface Row {
   target: string;
   durMs?: number; // live calls only
   isError?: boolean;
-  snippet?: string; // first result lines, inline mode only
 }
 
 function pad2(n: number): string {
@@ -71,29 +72,18 @@ function extractTarget(args: unknown): string {
   return truncate(v.split("\n")[0].trim(), MAX_TARGET);
 }
 
-/** First meaningful result lines, control chars stripped. Kept small — persisted in the session file. */
-function extractSnippet(result: unknown): string {
-  if (!result || typeof result !== "object") return "";
-  const content = (result as { content?: unknown }).content;
-  if (!Array.isArray(content)) return "";
-  const joined = content
-    .filter((c: any) => c?.type === "text" && typeof c.text === "string")
-    .map((c: any) => c.text as string)
-    .join("\n")
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
-  return joined
-    .split("\n")
-    .filter((l) => l.trim())
-    .slice(0, 2)
-    .map((l) => truncate(l.trim(), 120))
-    .join("\n");
-}
-
 function fmtRow(r: Row): string {
   const dur = r.durMs !== undefined ? ` (${fmtDur(r.durMs)})` : "";
   const mark = r.isError ? "✗ " : "";
   return `${fmtStamp(r.time)}  ${mark}${r.tool}${dur}${r.target ? "  " + r.target : ""}`;
+}
+
+/** Minimal inline row: timestamp + tool + duration. Target/result are already
+ * shown by the tool's own renderer — repeating them makes noisy duplicates. */
+function fmtInline(r: Row): string {
+  const dur = r.durMs !== undefined ? ` (${fmtDur(r.durMs)})` : "";
+  const mark = r.isError ? "✗ " : "";
+  return `${fmtStamp(r.time)}  ${mark}${r.tool}${dur}`;
 }
 
 export default function (pi: ExtensionAPI) {
@@ -108,18 +98,12 @@ export default function (pi: ExtensionAPI) {
   let mode: Mode = "compact";
 
   if (inlineMode) {
-    registerEntryRenderer(ENTRY_TYPE, (entry, options, theme) => {
+    registerEntryRenderer(ENTRY_TYPE, (entry, _options, theme) => {
       const d = entry.data as Row | undefined;
       if (!d || typeof d.time !== "number") return undefined;
       return {
         render(width: number) {
-          const lines = [theme.fg("dim", truncate(fmtRow(d), width))];
-          if (options.expanded && d.snippet) {
-            for (const sl of d.snippet.split("\n")) {
-              lines.push(theme.fg("dim", truncate(`    ↳ ${sl}`, width)));
-            }
-          }
-          return lines;
+          return [theme.fg("dim", truncate(fmtInline(d), width))];
         },
         invalidate() {},
       };
@@ -250,7 +234,6 @@ export default function (pi: ExtensionAPI) {
       target: start?.target ?? "",
       durMs: start ? now - start.time : undefined,
       isError: event.isError,
-      snippet: inlineMode ? extractSnippet(event.result) : undefined,
     });
   });
 }

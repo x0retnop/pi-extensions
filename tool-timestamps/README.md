@@ -13,12 +13,12 @@ Copy the extension folder to `~/.pi/agent/extensions/` and restart Pi.
 Each finished tool call gets a dim row **right below it in the chat scrollback**:
 
 ```
-07-14 18:17:38  bash (119ms)  ls "/c/10x001/..."
+07-14 21:34:47  read (1ms)
 ```
 
+- Timestamp + tool + duration only. Target, result output, and exit codes are already shown by each tool's own renderer — repeating them makes noisy duplicates. Errors are marked `✗`.
 - Implemented as persisted display-only session entries (`pi.appendEntry` + `pi.registerEntryRenderer`) — rendered in session order, restored on `/resume`, **never sent to the model**.
-- `Ctrl+O` (global tool-output expand) reveals a short result snippet under the row (`↳ ...`). Errors are marked `✗`.
-- Rows are stored in the session jsonl (small: stamp, tool, target, duration, ≤2 snippet lines).
+- Rows are stored in the session jsonl (small: stamp, tool, target, duration). Target is kept for `/timestamps all` but not shown inline.
 
 ### Widget fallback (Pi < 0.80.4)
 
