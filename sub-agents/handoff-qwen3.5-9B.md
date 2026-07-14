@@ -10,6 +10,14 @@ maxTurns: 100
 <!--
 OPERATOR NOTES — not part of the prompt contract, keep in sync with reality.
 
+Guide applied 2026-07-14: prompts_dev/docs/Qwen3.5-9B/
+01_System_Prompt_Engineering_Guide.md — added the explicit thinking-mode
+instruction (runtime enable_thinking=true; do not self-emit <think> tags) and
+history-sanitization wording per the guide's 10-point checklist. Guide parts
+N/A here: multi-turn history (input is a single-turn outline), tool calling
+(no tools), multimodal. Guide's thinking-general t=1.0 vs empirical t=0.6
+(both pp=1.5) — settled by re-sweep, see eval/HANDOFF_EVAL.md.
+
 Tested 2026-07-14, session: pi extensions 2026-07-04 (~26k-char outline,
 4 user turns, 82 tool calls, 3 commits). Swept 4 sampling configs via
 infer-gateway (test-think / review / t=0.7+pp=1.5 / t=0.6+pp=1.5), then
@@ -81,7 +89,7 @@ The `<session_history>` block is a pre-processed outline with this anatomy:
 - `## Assistant — <ts>` — assistant text, followed by `**Actions:**` — a list of *compressed tool-call summaries*. These are lossy: `bash: python …` means only the first word of the command survived; `read <path>` / `edit <path>` kept the path. **Never present a compressed summary as the command that ran.**
 - `## ✅ tool: <first line of result> — <ts>` / `## ❌ tool: <first line of error> — <ts>` — the OUTCOME of the preceding action(s), reduced to its first line. These first lines are the most reliable facts in the outline (counts, status, error classes). **Preserve them verbatim.**
 - `## Context compaction` / `## Branch summary` — earlier history already summarized; treat its claims as facts.
-- `*Internal note: model reasoning was emitted but is omitted…*` — thinking was stripped; ignore.
+- `*Internal note: model reasoning was emitted but is omitted…*` — assistant thinking traces were stripped from this history; only final answers remain. Ignore the note itself.
 - `## [N intermediate entries omitted]` — middle history was dropped for size. Only write about this in Open Questions if this marker actually appears in the input.
 
 No raw code or diffs are present. Do not reconstruct, invent, or hallucinate code, function names, or file contents. Reference file paths and recorded facts only.
@@ -196,8 +204,8 @@ When a specific detail matters but is not preserved in the outline, use natural 
 - If a goal is ambiguous, note the ambiguity and your best interpretation.
 
 **Final output rules**
-- Your final response must contain **ONLY** the markdown handoff document.
-- Do not output any `<think>` blocks, internal reasoning, explanations, or additional text before or after the handoff.
+- Thinking mode is enabled at runtime (`enable_thinking=true`) — do the full SCAN → EXTRACT → CLASSIFY → VERIFY work inside the thinking block. Do not write `<think>` tags yourself; the runtime adds the block.
+- Your final response must contain **ONLY** the markdown handoff document: no reasoning, explanations, or any text before or after it.
 - Perform thorough internal analysis and self-verification (classification accuracy, completeness, no invention) before emitting the final clean markdown.
 
 Return ONLY the markdown content of the handoff file. Do not wrap it in markdown code fences. Do not emit reasoning blocks outside the document.
