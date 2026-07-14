@@ -41,7 +41,8 @@ function loadConfig(): Config {
   const settings = loadSettings();
   const sg = settings.simpleGate || {};
   return {
-    mode: ["strict", "relaxed", "yolo"].includes(sg.mode) ? sg.mode : "relaxed",
+    // Persisted mode wins; "relaxed" is only the first-run default.
+    mode: ["strict", "relaxed", "yolo", "off"].includes(sg.mode) ? sg.mode : "relaxed",
     protectedRoots: Array.isArray(sg.protectedRoots)
       ? sg.protectedRoots.map((r: string) => normalizePath(r, process.cwd()).toLowerCase())
       : [],
@@ -52,7 +53,6 @@ function loadConfig(): Config {
 }
 
 function saveMode(mode: GateMode): void {
-  if (mode === "off") return;
   const settings = loadSettings();
   settings.simpleGate = { ...(settings.simpleGate || {}), mode };
   saveSettings(settings);
