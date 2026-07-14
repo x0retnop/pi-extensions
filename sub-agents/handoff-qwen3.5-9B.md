@@ -16,7 +16,9 @@ instruction (runtime enable_thinking=true; do not self-emit <think> tags) and
 history-sanitization wording per the guide's 10-point checklist. Guide parts
 N/A here: multi-turn history (input is a single-turn outline), tool calling
 (no tools), multimodal. Guide's thinking-general t=1.0 vs empirical t=0.6
-(both pp=1.5) — settled by re-sweep, see eval/HANDOFF_EVAL.md.
+(both pp=1.5) re-swept 2x2 on the new body: tie within variance, zero
+corruption at either temp — kept t=0.6 (guide's "precise" row; old-body t=1.0
+invented specifics). Details: eval/HANDOFF_EVAL.md.
 
 Tested 2026-07-14, session: pi extensions 2026-07-04 (~26k-char outline,
 4 user turns, 82 tool calls, 3 commits). Swept 4 sampling configs via
