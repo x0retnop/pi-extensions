@@ -8,9 +8,12 @@ What it does:
 - Detects the installed Pi version (global npm/pnpm > local node_modules > package.json).
 - Fetches the upstream CHANGELOG from the Pi mono-repo.
 - Lists releases newer than your installed version.
+- Prints a filtered digest ("Release Highlights") of relevant changes per
+  release, so you don't have to read the full CHANGELOG.
 - Scans local *.ts / *.json for known obsolete patterns (renamed packages,
   deprecated API keys, etc.).
-- Flags CHANGELOG red-flag terms that may affect extensions.
+- Flags CHANGELOG terms that may affect extensions, split into critical
+  (drive the verdict) and informational (shown with changelog context lines).
 
 Exit codes:
 - 0: no issues detected (or no newer releases).
