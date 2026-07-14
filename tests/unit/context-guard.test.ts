@@ -51,6 +51,20 @@ test("applyPromptRules strips date when disabled", () => {
   assert.ok(result.includes("<project_context>"));
 });
 
+test("applyPromptRules injects today's date when enabled and missing (Pi >= 0.80.7)", () => {
+  const prompt = makePrompt().replace(/\nCurrent date: [^\n]*/, "");
+  const result = applyPromptRules(prompt, {}, { cwd });
+  const d = new Date();
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  const today = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  assert.ok(result.includes(`Current date: ${today}`));
+});
+
+test("applyPromptRules does not duplicate an existing date line", () => {
+  const result = applyPromptRules(makePrompt(), {}, { cwd });
+  assert.strictEqual(result.match(/Current date:/g)!.length, 1);
+});
+
 test("applyPromptRules strips cwd when disabled", () => {
   const result = applyPromptRules(makePrompt(), { cwd: false }, { cwd });
   assert.ok(!result.includes("Current working directory:"));

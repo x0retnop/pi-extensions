@@ -60,11 +60,18 @@ export const PROMPT_RULES: PromptRule[] = [
   {
     id: "date",
     label: "Current date",
-    description: "Injected timestamp before every LLM call.",
+    description:
+      "Append `Current date: YYYY-MM-DD` to the system prompt. Pi >= 0.80.7 no longer adds it (cross-day cache bust). Day granularity only: time-of-day would change the prompt every turn and destroy the prompt cache — use `date` in bash for the clock.",
     defaultEnabled: true,
     apply: (prompt, _ctx, enabled) => {
-      if (enabled) return prompt;
-      return prompt.replace(/\nCurrent date: [^\n]*/g, "");
+      if (!enabled) {
+        return prompt.replace(/\nCurrent date: [^\n]*/g, "");
+      }
+      if (/^Current date: /m.test(prompt)) return prompt;
+      const d = new Date();
+      const p2 = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+      return `${prompt}\nCurrent date: ${stamp}`;
     },
   },
   {
