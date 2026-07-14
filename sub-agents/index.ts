@@ -29,10 +29,10 @@ function sanitizeFilename(name: string): string {
 async function runHandoff(title: string | undefined, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const cwd = ctx.cwd;
   const agents = await loadBuiltinAgents();
-  const agent = agents.find((a) => a.name === "handoff-gemma");
+  const agent = agents.find((a) => a.name === "handoff-instr");
 
   if (!agent) {
-    const msg = `handoff-gemma agent not found. Available:\n${formatAgentList(agents)}`;
+    const msg = `handoff-instr agent not found. Available:\n${formatAgentList(agents)}`;
     if (ctx.hasUI) ctx.ui.notify(msg, "error");
     else console.error(msg);
     return;
@@ -62,7 +62,7 @@ async function runHandoff(title: string | undefined, ctx: ExtensionCommandContex
   const result = await runSingleAgent(
     cwd,
     agents,
-    "handoff-gemma",
+    "handoff-instr",
     task,
     undefined,
     undefined,
