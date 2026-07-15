@@ -314,18 +314,21 @@ export default function (pi: ExtensionAPI) {
     name: "web_search",
     label: "Web Search",
     description:
-      "General-purpose web search. Use it when you need current facts, URLs, official docs, news, or discussion threads that are not in your training context. Returns a markdown answer plus a list of sources with URLs.",
+      "General-purpose web search. Use it when you need current facts, URLs, official docs, news, or discussion threads that are not in your training context. " +
+      "Returns a markdown list of sources (title, URL, snippet) plus a backend-LLM summary unless 'raw' is set.",
     promptSnippet:
       "Use for current events, docs, URLs, or facts outside your training data. One call = one research round.",
     promptGuidelines: [
       "Use for current facts, URLs, official docs, news, or discussions outside your training context.",
       "Prefer the two-step workflow: web_search to discover sources, then fetch_content on the best URLs for detailed reading.",
-      "For broad or multi-angle topics, pass 'queries' with 2-4 varied phrasings instead of a single 'query'.",
-      "Use 'depth' to choose result count: 'quick' = 5, 'standard' = 10, 'deep' = 15. 'num_results' overrides this if set.",
+      "For broad or multi-angle topics, pass 'queries' with 2-4 varied phrasings instead of a single 'query' — they run in parallel and merge with URL dedup.",
+      "Result count: 'depth' presets apply when 'num_results' is not set ('quick' = 5, 'standard' = 10, 'deep' = 15). Set 'num_results' explicitly for any other count; it overrides 'depth'.",
       "Use 'recency_filter' for time-sensitive topics: 'day' or 'week' for news, 'month' or 'year' for broader context.",
       "Use 'domain_filter' to include or exclude domains, e.g. ['docs.python.org'] or ['-medium.com'].",
-      "Use 'answer_mode' when you want the backend to synthesize a direct answer from results (you lose the raw source list).",
-      "Use 'summarize' for a bullet overview. Use 'include_content' only when you need full page text inline; it is slow and token-heavy.",
+      "Use 'answer_mode' when you want a direct answer synthesized by the backend LLM on top of the source list.",
+      "Use 'summarize' for a bullet overview. Use 'include_content' only when you need full page text inline; it is slow, token-heavy, and only exa supports it (the backend auto-prefers exa when set).",
+      "Set 'raw' to skip the backend LLM summary when you will read and synthesize sources yourself — faster and cheaper.",
+      "The footer line shows which provider served the results and whether fallback was used; if results are poor, retry with a different 'provider'.",
       "Do not use for programming examples or API docs — use code_search for those.",
     ],
     parameters: Type.Object({
@@ -333,16 +336,16 @@ export default function (pi: ExtensionAPI) {
         description: "Single search query. Prefer 'queries' for multi-angle research.",
       })),
       queries: Type.Optional(Type.Array(Type.String(), {
-        description: "2-4 related queries with varied phrasing/scope. Preferred for research.",
+        description: "2-4 related queries with varied phrasing/scope. Preferred for research; they run in parallel.",
       })),
       num_results: Type.Optional(Type.Number({
-        description: "Max results (default: 10). Overrides 'depth' if both are set.",
+        description: "Max results. Overrides the 'depth' preset; omit to use the depth default.",
       })),
       include_content: Type.Optional(Type.Boolean({
-        description: "Fetch full page content inline. Slower and token-heavy.",
+        description: "Fetch full page content inline (exa only; the backend auto-prefers exa when set). Slower and token-heavy.",
       })),
       depth: Type.Optional(StringEnum(["quick", "standard", "deep"], {
-        description: "Preset result count: 'quick' = 5, 'standard' = 10, 'deep' = 15.",
+        description: "Preset result count used when 'num_results' is not set: 'quick' = 5, 'standard' = 10, 'deep' = 15.",
       })),
       recency_filter: Type.Optional(StringEnum(["day", "week", "month", "year"], {
         description: "Limit results by recency.",
@@ -351,10 +354,13 @@ export default function (pi: ExtensionAPI) {
         description: "Include domains like ['docs.python.org'] or exclude with ['-medium.com'].",
       })),
       summarize: Type.Optional(Type.Boolean({
-        description: "Return bullet summary from backend LLM instead of raw result list.",
+        description: "Return bullet summary from backend LLM on top of the result list.",
       })),
       answer_mode: Type.Optional(Type.Boolean({
         description: "Return direct answer synthesized by backend LLM from results.",
+      })),
+      raw: Type.Optional(Type.Boolean({
+        description: "Skip the backend LLM summary/answer entirely — faster, cheaper, raw sources only.",
       })),
       provider: Type.Optional(StringEnum(PROVIDER_NAMES, {
         description: PROVIDER_DESCRIPTION,
@@ -381,15 +387,19 @@ export default function (pi: ExtensionAPI) {
       });
 
       try {
+        // Forward only explicitly set values: the backend derives the result
+        // count from 'depth' when 'num_results' is absent, and an explicit
+        // num_results overrides the depth preset there.
         const { content, details } = await callTool("web_search", {
           queries: queryList,
-          num_results: params.num_results ?? 10,
+          num_results: params.num_results,
           include_content: params.include_content ?? false,
-          depth: params.depth ?? "standard",
+          depth: params.depth,
           recency_filter: params.recency_filter,
           domain_filter: params.domain_filter,
           summarize: params.summarize ?? false,
           answer_mode: params.answer_mode ?? false,
+          raw: params.raw ?? false,
           provider: params.provider,
         }, signal);
 
@@ -412,6 +422,7 @@ export default function (pi: ExtensionAPI) {
         domain_filter?: string[];
         summarize?: boolean;
         answer_mode?: boolean;
+        raw?: boolean;
         provider?: string;
         include_content?: boolean;
       };
@@ -430,6 +441,7 @@ export default function (pi: ExtensionAPI) {
       if (input.recency_filter) badges.push(input.recency_filter);
       if (input.summarize) badges.push("summarize");
       if (input.answer_mode) badges.push("answer");
+      if (input.raw) badges.push("raw");
       if (input.include_content) badges.push("full");
       if (input.provider) badges.push(input.provider);
       if (input.domain_filter && input.domain_filter.length > 0) {
@@ -555,9 +567,6 @@ export default function (pi: ExtensionAPI) {
         minimum: 1000,
         description: "Per-page character cap (default: 32000, minimum: 1000).",
       })),
-      force_clone: Type.Optional(Type.Boolean({
-        description: "Reserved for future use.",
-      })),
       save_full: Type.Optional(Type.Boolean({
         description: "Save full fetched markdown to %TEMP% if truncated.",
       })),
@@ -582,22 +591,13 @@ export default function (pi: ExtensionAPI) {
         const { content, details } = await callTool("fetch_content", {
           urls: urlList,
           max_chars: maxChars,
-          force_clone: params.force_clone ?? false,
           save_full: params.save_full ?? false,
         }, signal);
 
-        let finalContent = content;
-        if (details.save_full && Array.isArray(details.full_content_paths) && details.full_content_paths.length > 0) {
-          const paths = details.full_content_paths.filter((p): p is string => typeof p === "string" && p.length > 0);
-          if (paths.length > 0) {
-            const pathLines = paths.map((p) => `- ${p}`).join("\n");
-            const curlLines = paths.map((p) => `curl -s file://${p} | head -c ${maxChars}`).join("\n");
-            finalContent += `\n\n---\nFull content saved to:\n${pathLines}\n\n${curlLines}`;
-          }
-        }
-
+        // When a page was truncated and saved, the backend already appends
+        // the file path and a correct file:/// curl command to the content.
         return {
-          content: [{ type: "text" as const, text: finalContent }],
+          content: [{ type: "text" as const, text: content }],
           details,
         };
       } catch (err) {
@@ -700,9 +700,10 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Use for code: API methods, error messages, library usage, examples, or repository locations.",
       "Backend targets GitHub and documentation domains; do not add 'site:' unless you need a specific domain.",
+      "Use 'focus' to steer targeting: 'docs' = official documentation, 'repos' = GitHub/GitLab projects, 'code' = mixed. Default 'auto' infers it from the query.",
       "If no provider is specified, the backend prefers exa for code search, then brave, ollama_cloud, and ddg.",
       "Use 'max_tokens' to control output length (default: 5000). Higher values preserve more docs and snippets.",
-      "Check 'details.providers_tried' and 'details.provider_used' to see which provider actually served the request.",
+      "The footer line shows which provider served the request and whether fallback was used; retry with 'provider' if results are poor.",
       "If results are poor, fall back to web_search with a broader query.",
     ],
     parameters: Type.Object({
@@ -716,6 +717,12 @@ export default function (pi: ExtensionAPI) {
         minimum: 1000,
         maximum: 50000,
         description: "Approximate output budget in tokens (default: 5000).",
+      })),
+      focus: Type.Optional(StringEnum(["auto", "code", "docs", "repos"], {
+        description: "Domain targeting: 'docs' = official documentation, 'repos' = GitHub/GitLab projects, 'code' = mixed, 'auto' = infer from the query (default).",
+      })),
+      raw: Type.Optional(Type.Boolean({
+        description: "Skip the backend LLM summary/answer entirely — faster, cheaper, raw sources only.",
       })),
       provider: Type.Optional(StringEnum(PROVIDER_NAMES, {
         description: PROVIDER_DESCRIPTION,
@@ -741,6 +748,8 @@ export default function (pi: ExtensionAPI) {
           num_results: params.num_results ?? 10,
           max_tokens: params.max_tokens ?? 5000,
           provider: params.provider,
+          focus: params.focus,
+          raw: params.raw ?? false,
         }, signal);
 
         return {
@@ -753,11 +762,13 @@ export default function (pi: ExtensionAPI) {
     },
 
     renderCall(args, theme) {
-      const input = args as { query?: string; num_results?: number; max_tokens?: number; provider?: string };
+      const input = args as { query?: string; num_results?: number; max_tokens?: number; focus?: string; raw?: boolean; provider?: string };
       const display = !input.query ? "(no query)" : `"${formatQuery(input.query, 300)}"`;
       const badges: string[] = [];
       if (input.num_results != null && input.num_results !== 10) badges.push(`${input.num_results}`);
       if (input.max_tokens != null && input.max_tokens !== 5000) badges.push(`${input.max_tokens} tokens`);
+      if (input.focus && input.focus !== "auto") badges.push(input.focus);
+      if (input.raw) badges.push("raw");
       if (input.provider) badges.push(input.provider);
 
       let label = theme.fg("toolTitle", theme.bold("code_search ")) + theme.fg("accent", display);
