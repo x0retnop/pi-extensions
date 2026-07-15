@@ -1,56 +1,80 @@
-# AGENTS.md
+<!-- LLM-only. Stable facts, under ~80 lines. Fix what becomes wrong; never expand for completeness. -->
 
-You are working in the **dev workspace** for Pi Coding Agent extensions.
+# Pi Extensions — Agent Guide
 
-## Critical rules
+Dev workspace for Pi Coding Agent extensions. Code is edited here; the user copies it to the runtime (`~/.pi/agent/extensions/`) and restarts Pi — fresh code cannot be tested via bash.
 
-- Edit in `C:/10x001/pi extensions/`. Runtime is `~/.pi/agent/extensions/`.
-- After code changes, the user copies the extension and **restarts Pi**. Do not test fresh code via bash.
-- Do not edit `~/.pi/agent/extensions/` or `~/.pi/agent/settings.json` unless explicitly asked.
-- Run `npm run typecheck` from the repo root before committing code or package changes.
-- `@earendil-works/*` and `typebox` are `peerDependencies`. Normal npm deps are installed in `~/.pi/agent/`.
-- **Do not enable, disable, copy, archive, delete, or create extensions.** That is the user's job.
-- Agents manage git locally: small prefixed commits, no push, no rebase. See `docs/git-policy.md`.
+## Start here
 
-## When unsure, follow this order
+1. `docs/pi-workflow.md` — dev/runtime model, dependency rules, sync checklist.
+2. `npm run typecheck` from the repo root verifies the environment works.
+3. Read docs only when the task touches their area (table below).
 
-1. Check the table below or `docs/agent-nav.md`.
-2. Read `docs/extensions/<name>.md` for the relevant extension.
-3. Read the extension source `index.ts`.
-4. Only then search the web.
+This file is a shortcut, not a mirror — if it does not answer a question, explore the repo; the code is the source of truth.
 
-## Where to look
+## Map
 
-| Need | Look at |
-|------|---------|
-| Dev vs runtime / sync / deps | `docs/pi-workflow.md` |
-| Pi CLI upgrade compatibility | Run `python scripts/check-pi-sync.py`, then `docs/pi-version-sync.md` |
-| API types, events, tool/command shapes | `docs/pi-quickref.md`, `docs/pi-local-map.md` |
-| Tool missing or behaving oddly | `docs/pi-tool-internals.md`, `docs/extensions/context-guard.md`, `docs/extensions/simple-gate.md` |
-| Per-extension behavior | `docs/extensions/<name>.md` |
-| Cross-extension wiring | `docs/interactions.md` |
-| Git rules | `docs/git-policy.md` |
-| Session log forensics | `scripts/pi_session_inspect.py` |
+| Area | Path | Notes |
+|---|---|---|
+| Extensions | `<name>/` | one folder = one extension, flat; entry `<name>/index.ts` |
+| Shared TS helpers | `common/` | imported by extensions; not an extension itself |
+| Skills, themes | `skills/`, `themes/` | dev copies, synced manually to `~/.pi/agent/` |
+| Unit tests | `tests/unit/` | run via `python scripts/run-tests.py` |
+| Scripts | `scripts/` | test runner, Pi version check, session forensics |
+| Archived extensions | `Inactive/` | zips only, not loadable; their docs carry an "archived" banner |
+
+Do not scan: `node_modules/`, `.tests-out/`, `Inactive/`, `mcps/` — open a file there only if the user names it.
+
+## Commands
+
+```bash
+# run from repo root
+npm run typecheck                # before committing code/package changes
+python scripts/run-tests.py      # unit tests (tests/unit/)
+python scripts/check-pi-sync.py  # after a Pi CLI update, before version refactors
+python scripts/pi_session_inspect.py --summary --since 7   # session-log forensics
+```
+
+## Rules
+
+- Edit only inside this repo. Never edit `~/.pi/agent/` (extensions, settings) unless explicitly asked.
+- Never enable, disable, copy, archive, or delete extensions — deploy and lifecycle are the user's job.
+- `@earendil-works/*` and `typebox` stay `peerDependencies` with `"*"`; regular npm deps install in `~/.pi/agent/`, never in extension folders.
+- Do not mass-format or rename without request.
+
+## Docs
+
+| Doc | Read when |
+|---|---|
+| `docs/pi-workflow.md` | dev vs runtime, deps, sync checklist |
+| `docs/pi-version-sync.md` | Pi CLI upgrade compatibility (run `check-pi-sync.py` first) |
+| `docs/pi-quickref.md` | ExtensionAPI events/tools/commands reference |
+| `docs/pi-local-map.md` | where Pi's installed source, types, and shipped docs live |
+| `docs/pi-tool-internals.md` | tool visibility, what reaches the LLM, `setActiveTools()` timing |
+| `docs/pi-internals.md` | system-prompt construction, message flow, retry, pitfalls |
+| `docs/tool-rendering.md` | renderCall/renderResult pitfalls; battle-tested lessons |
+| `docs/interactions.md` | cross-extension wiring, tool overrides, load order, troubleshooting |
+| `docs/creating-extensions.md`, `docs/patterns.md` | new-extension scaffold, copy-paste snippets |
+| `docs/pi-network-runtime.md` | proxy/VPN/timeout diagnosis |
+| `docs/pi-providers-models.md`, `docs/pi-kimi-coding.md` | models.json, custom providers, Kimi setup |
+| `docs/0x010-control.md` | start/stop the local 0x010 backend (web-search, *-memory) |
+| `docs/pi-skill-craft.md` | writing skills for context-guard `/use-skill` |
+| `docs/scripts/pi_session_inspect.md` | forensics script options |
+| `docs/extensions/<name>.md` | per-extension behavior (archived ones say so) |
+| `docs/model-context/kimi-k2/` | why pi-multi-edit is shaped this way (K2 training-gap research) |
+
+Doc rules: English, LLM-only, lead with the non-obvious fact. If a doc contradicts the code, the code wins — fix or delete the doc right then. No STATUS/TODO/handoff files; work state lives in commit messages.
 
 ## Quick context
 
-- `AGENTS.md` / `CLAUDE.md` files in `cwd` and all ancestors are auto-injected. `context-guard` can strip ancestor files.
+- Pi auto-injects `AGENTS.md`/`CLAUDE.md` from cwd and all ancestors; `context-guard` can strip ancestor files.
 - `SYSTEM.md` is empty; persona comes from `role-sw` (`~/.pi/agent/roles/`).
-- Several extensions override built-in tools: `read-mode` (read), `pi-multi-edit` (edit), `grep-tool` (grep).
-- `context-guard` can strip system-prompt parts and toggle tools. `simple-gate` can block/ask `read/write/edit/bash`.
-- Three extensions share the 0x010 backend: `pi-web-search`, `pi-project-memory`, `pi-session-memory`.
-- `pi-project-memory` requires `.project-id` in `cwd`.
+- Tool overrides: `read-mode` → `read`, `pi-multi-edit` → `edit` (+ `multi_edit`, `insert`), `grep-tool` → `grep`. `simple-gate` can block/ask `read/write/edit/bash`.
+- `pi-web-search`, `pi-project-memory`, `pi-session-memory` share the 0x010 backend (`127.0.0.1:8000`); `pi-project-memory` requires `.project-id` in cwd.
 
-## Scripts (what we keep in this repo)
+## Git
 
-| Script | Purpose | When to run |
-|--------|---------|-------------|
-| `scripts/run-tests.py` | Compile and run the unit-test suite (`tests/unit/`). | After code changes, before commits that touch logic. |
-| `scripts/check-pi-sync.py` | Compare installed Pi CLI version with upstream CHANGELOG and scan local code for obsolete API patterns. | After `pi` CLI updates or before risky refactors. |
-| `scripts/pi_session_inspect.py` | Forensics on `~/.pi/agent/sessions/*.jsonl`: tool-call counts, errors, edit failures. | Debugging why a tool failed or auditing recent sessions. |
-| `scripts/pi-session-compressor-tune.py` | Analyze Pi sessions and suggest tuned compression settings. | When tuning context compression thresholds. |
+Agent-owned local memory: commit after a verified chunk; never push, no remotes, no rebase/amend/reset.
 
-## Style
-
-- One extension = one folder. Minimal, no frameworks.
-- Keep changes reviewable; do not mass-format or rename without request.
+- Message prefix = area: `[root]`, `[docs]`, `[scripts]`, `[<ext>]`. Details: `docs/git-policy.md`.
+- Never commit `node_modules/`, zips, logs, or temp files — keep `.gitignore` current.

@@ -28,6 +28,7 @@ read-mode         — mode-aware read tool (overview/section/grep/headtail/raw)
 role-sw           — role injection and persistence
 simple-gate       — path/command permission gate
 sub-agents        — child pi agents (/handoff, /sub-agents)
+tool-timestamps   — TUI-only tool execution timestamps (inline entry renderers)
 ```
 
 Each active extension is documented in `docs/extensions/<name>.md`.
@@ -38,6 +39,7 @@ The following extensions were moved to `Inactive/` by the user and are no longer
 
 - `agent-browser` — gated browser automation wrapper.
 - `context-compressor` — lightweight same-model context compression with KEY FACTS.
+- `strip-cache-retention` — single-file experiment altering `cache_control` retention.
 
 Do not treat their `docs/extensions/<name>.md` pages as current source of truth unless they are explicitly re-activated.
 
@@ -70,8 +72,7 @@ Utility scripts live in `scripts/`:
 - `scripts/run-tests.py` — compile and run unit tests.
 - `scripts/check-pi-sync.py` — Pi CLI upgrade compatibility check.
 - `scripts/pi_session_inspect.py` — session log forensics.
-- `scripts/pi-session-compressor-tune.py` — analyze recent Pi sessions and suggest tuned compression settings (historically used with `context-compressor`).
-  Use `--recent N`, `--cwd-contains "..."`, or `--json` to narrow the analysis.
+- `scripts/pi-session-compressor-tune.py` — tuning helper for the archived `context-compressor` extension (kept for reference).
 
 ## Skills
 
@@ -80,15 +81,12 @@ They are edited here and copied to `~/.pi/agent/skills/` manually, just like ext
 
 ## Documentation
 
-- `AGENTS.md` — quick rules and navigation (auto-loaded by Pi).
-- `docs/agent-nav.md` — "where do I look?" index.
+`AGENTS.md` is the single index (auto-loaded by Pi): rules, map, commands, and the full docs table with "read when" triggers.
+
+Entry points:
+
+- `AGENTS.md` — quick rules and navigation.
 - `docs/pi-workflow.md` — dev vs runtime, sync, dependencies.
-- `docs/pi-version-sync.md` — Pi CLI upgrade workflow.
-- `docs/pi-local-map.md` — where Pi types live locally.
-- `docs/pi-quickref.md` — ExtensionAPI events/tools/commands.
-- `docs/pi-tool-internals.md` — tool visibility, substitution, rendering.
-- `docs/tool-rendering.md` — renderCall/renderResult pitfalls.
-- `docs/0x010-control.md` — start/stop/restart the 0x010 backend runtime.
 - `docs/interactions.md` — cross-extension and runtime wiring map.
 - `docs/extensions/<name>.md` — per-extension agent guide.
 - `docs/git-policy.md` — how agents commit in this shared repo.
@@ -97,7 +95,4 @@ They are edited here and copied to `~/.pi/agent/skills/` manually, just like ext
 
 Agents manage git locally: small prefixed commits, no push. See `docs/git-policy.md`.
 
-## Notes
-
-- The previous install-centric README is obsolete; these extensions are developed locally and deployed manually.
-- Extension lifecycle (enable, disable, copy to runtime, archive) is managed by the user, not by agents.
+Extension lifecycle (enable, disable, copy to runtime, archive) is managed by the user, not by agents.
