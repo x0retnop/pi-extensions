@@ -1,47 +1,47 @@
-# Pi CLI — Провайдеры и модели
+# Pi CLI — Providers and Models
 
-Конспект для агентов по работе с LLM-провайдерами в Pi CLI. Основан на исходниках Pi v0.78 и опыте настройки.
+Agent guide to LLM providers in Pi CLI. Based on Pi source (originally v0.78, spot-checked through 0.80.7) and hands-on setup experience.
 
-## Кратко
+## In short
 
-- Список моделей в `/model` **статический** — Pi **не запрашивает** `/v1/models` у провайдеров при старте.
-- Модели берутся из двух источников: `models.generated.js` (встроенные, зашиты в бинарь) + `models.json` (кастомные/оверрайды).
-- Фильтрация "доступных" (`getAvailable()`) — только по наличию ключа в `auth.json` / env.
+- The `/model` list is **static** — Pi does **not** query `/v1/models` from providers at startup.
+- Models come from two sources: `models.generated.js` (built-in, compiled into the package) + `models.json` (custom/overrides).
+- "Available" filtering (`getAvailable()`) is only by key presence in `auth.json` / env.
 
-## Ключевые файлы
+## Key files
 
-| Файл | Назначение |
+| File | Purpose |
 |---|---|
-| `~/.pi/agent/models.json` | Кастомные провайдеры, модели, оверрайды |
-| `~/.pi/agent/auth.json` | API ключи и OAuth токены |
-| `~/.pi/agent/settings.json` | Глобальные настройки (defaultProvider, defaultModel и т.д.) |
-| `models.generated.js` внутри `@earendil-works/pi-ai` | Встроенный статический список моделей и провайдеров |
+| `~/.pi/agent/models.json` | Custom providers, models, overrides |
+| `~/.pi/agent/auth.json` | API keys and OAuth tokens |
+| `~/.pi/agent/settings.json` | Global settings (defaultProvider, defaultModel, etc.) |
+| `models.generated.js` inside `@earendil-works/pi-ai` | Built-in static provider/model list |
 
-Шипнутые доки Pi: `providers.md`, `models.md` внутри `pi-coding-agent/docs/`.
+Shipped Pi docs: `providers.md`, `models.md` inside `pi-coding-agent/docs/` (see `docs/pi-local-map.md`).
 
-## Как модели попадают в `/model`
+## How models get into `/model`
 
 ```
 loadModels()
-  ├── loadCustomModels(models.json)     // кастомные + оверрайды
-  ├── loadBuiltInModels()               // статика из models.generated.js
+  ├── loadCustomModels(models.json)     // custom + overrides
+  ├── loadBuiltInModels()               // static from models.generated.js
   ├── mergeCustomModels()               // custom > built-in (upsert by provider+id)
-  └── getAvailable()                    // фильтр: есть ли ключ?
+  └── getAvailable()                    // filter: is there a key?
 ```
 
-- **Встроенные модели** обновляются только с релизом Pi CLI. Новая модель у Zen/Go не появится в `/model`, пока не выйдет новая версия Pi.
-- **Кастомные модели** из `models.json` сразу видны после сохранения файла (reload при открытии `/model`).
+- **Built-in models** update only with a Pi CLI release. A new model on the provider side does not appear in `/model` until Pi ships it — add it manually via `models.json` meanwhile.
+- **Custom models** from `models.json` are visible immediately after saving (reload when `/model` opens).
 
-## Как прописать ключ (auth)
+## How to configure a key (auth)
 
-Варианты по приоритету (выше — важнее):
+Options by priority (highest first):
 
-1. CLI флаг `--api-key`
+1. CLI flag `--api-key`
 2. `~/.pi/agent/auth.json`
-3. Environment variable (`OPENCODE_API_KEY`, `OPENROUTER_API_KEY` и т.д.)
-4. `apiKey` прямо в `models.json` (не рекомендуется — ключ в файле)
+3. Environment variable (`OPENCODE_API_KEY`, `OPENROUTER_API_KEY`, ...)
+4. `apiKey` directly in `models.json` (not recommended — key on disk)
 
-Пример `auth.json`:
+Example `auth.json`:
 ```json
 {
   "opencode": { "type": "api_key", "key": "sk-..." },
@@ -50,32 +50,24 @@ loadModels()
 }
 ```
 
-Поддерживаются команды (`!...`), env-интерполяция (`$VAR`), литералы. См. `providers.md` раздел "Key Resolution".
+Commands (`!...`), env interpolation (`$VAR`), and literals are supported. See shipped `providers.md`, section "Key Resolution".
 
-## Встроенные провайдеры OpenCode / MiniMax
+## Built-in OpenCode / MiniMax / OpenRouter providers
 
-| Провайдер | Что это | Ключ в `auth.json` | Env |
+| Provider | What it is | `auth.json` key | Env |
 |---|---|---|---|
 | `opencode` | **Zen free tier** | `opencode` | `OPENCODE_API_KEY` |
 | `opencode-go` | **Go paid tier** | `opencode-go` | `OPENCODE_API_KEY` |
-| `openrouter` | Агрегатор моделей | `openrouter` | `OPENROUTER_API_KEY` |
-| `minimax` | Прямой API MiniMax | `minimax` | `MINIMAX_API_KEY` |
+| `openrouter` | Model aggregator | `openrouter` | `OPENROUTER_API_KEY` |
+| `minimax` | Direct MiniMax API | `minimax` | `MINIMAX_API_KEY` |
 
-**Важно:** ключи `opencode` и `opencode-go` могут быть одинаковыми (подписка Go даёт доступ и к free endpoint). Проверяйте `curl`.
+**Note:** `opencode` and `opencode-go` keys can be identical (a Go subscription also grants access to the free endpoint). Verify with `curl`.
 
-Free-модели Zen (уже встроены в Pi v0.78):
-- `deepseek-v4-flash-free`
-- `mimo-v2.5-free`
-- `qwen3.6-plus-free`
-- `big-pickle`
-- `glm-4.7-free`
-- `nemotron-3-super-free`
+To see which models are currently built in (including free-tier ones), grep `models.generated.js` — the list changes with every Pi release, so it is not mirrored here.
 
-`minimax-m3-free` — пока **не встроена**, добавляйте вручную через `models.json`.
+## Adding a model to a built-in provider
 
-## Добавление модели во встроенный провайдер
-
-Если модели нет в `models.generated.js`, допишите её в `models.json` под именем существующего провайдера. Pi смержит массив `models` со встроенным списком.
+If a model is missing from `models.generated.js`, add it in `models.json` under the existing provider name. Pi merges the `models` array with the built-in list.
 
 ```json
 {
@@ -96,11 +88,11 @@ Free-модели Zen (уже встроены в Pi v0.78):
 }
 ```
 
-Модель появится в `/model` сразу, если есть ключ `opencode` в `auth.json`.
+The model appears in `/model` immediately if an `opencode` key exists in `auth.json`.
 
-## Кастомный провайдер (полностью новый)
+## Fully custom provider
 
-Для провайдера, которого нет в Pi:
+For a provider Pi does not know:
 
 ```json
 {
@@ -117,50 +109,46 @@ Free-модели Zen (уже встроены в Pi v0.78):
 }
 ```
 
-Обязательно для нового провайдера: `baseUrl`, `apiKey` (или `authHeader: true` + ключ в `auth.json`), `api`, `models`.
+Required for a new provider: `baseUrl`, `apiKey` (or `authHeader: true` + key in `auth.json`), `api`, `models`.
 
-## Ловушка: thinkingFormat
+## Trap: thinkingFormat
 
-Поле `compat.thinkingFormat` влияет **только на то, как Pi шлёт thinking-контрол в запрос** и парсит ответ. Не все провайдеры понимают все форматы.
+The `compat.thinkingFormat` field affects **only how Pi sends the thinking control in the request** and parses the response. Not all providers understand all formats.
 
-| Формат | Что шлёт Pi в запрос | Опасности |
+| Format | What Pi sends | Dangers |
 |---|---|---|
-| `deepseek` | `thinking: { type: "enabled" }` + `reasoning_effort` | MiniMax M3 отвергает `enabled`, ожидает `adaptive`/`disabled`. |
-| `openrouter` | `reasoning: { effort }` | Работает только для OpenRouter. |
+| `deepseek` | `thinking: { type: "enabled" }` + `reasoning_effort` | MiniMax M3 rejects `enabled`, expects `adaptive`/`disabled`. |
+| `openrouter` | `reasoning: { effort }` | Only works for OpenRouter. |
 | `together` | `reasoning: { enabled }` | Together AI. |
 | `qwen` / `qwen-chat-template` | `enable_thinking` | Qwen. |
 
-**Практика:** если модель сама решает, когда reasoning'овать (как M3), оставьте `reasoning: true`, но **не указывайте `thinkingFormat`**. Pi не будет слать thinking-контрол, но `<think>`…`</think>` в ответе распарсит как thinking blocks.
+**Practice:** if the model decides on its own when to reason (like M3), keep `reasoning: true` but **do not set `thinkingFormat`**. Pi will not send a thinking control, but `<think>...</think>` in the response is still parsed as thinking blocks.
 
-## Отладка: curl перед правкой `models.json`
+## Debugging: curl before editing `models.json`
 
-Всегда проверяйте endpoint руками перед добавлением модели в Pi:
+Always check the endpoint manually before adding a model to Pi:
 
 ```bash
-# Список моделей
- curl -s -H "Authorization: Bearer $KEY" https://opencode.ai/zen/v1/models
+# Model list
+curl -s -H "Authorization: Bearer $KEY" https://opencode.ai/zen/v1/models
 
-# Тестовый запрос
- curl -s https://opencode.ai/zen/v1/chat/completions \
-   -H "Authorization: Bearer $KEY" \
-   -H "Content-Type: application/json" \
-   -d '{"model":"minimax-m3-free","messages":[{"role":"user","content":"hi"}],"max_tokens":50}'
+# Test request
+curl -s https://opencode.ai/zen/v1/chat/completions \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"minimax-m3-free","messages":[{"role":"user","content":"hi"}],"max_tokens":50}'
 ```
 
-Это сэкономит время на перезапуски Pi.
+This saves time on Pi restarts.
 
-## OpenRouter free модели
+## OpenRouter free models
 
-На OpenRouter добавьте суффикс `:free` к ID модели:
-- `minimax/minimax-m2.5:free`
-- `meta-llama/llama-3.2-3b-instruct:free`
+On OpenRouter, add the `:free` suffix to the model ID, e.g. `minimax/minimax-m2.5:free`. OpenRouter is a built-in Pi provider — an `OPENROUTER_API_KEY` is enough.
 
-OpenRouter — встроенный провайдер Pi. Достаточно ключа `OPENROUTER_API_KEY`.
+## Useful links
 
-## Полезные ссылки
-
-- Официальные доки Pi (шипнутые в `pi-coding-agent/docs/`):
-  - `providers.md` — все встроенные провайдеры, env-переменные, auth file.
-  - `models.md` — формат `models.json`, merge semantics, compat-поля.
-- `models.generated.js` — смотрите grep'ом, какие модели уже встроены.
-- `pi-local-map.md` — где на диске лежат типы и исходники Pi.
+- Shipped Pi docs (inside `pi-coding-agent/docs/`):
+  - `providers.md` — all built-in providers, env variables, auth file.
+  - `models.md` — `models.json` format, merge semantics, compat fields.
+- `models.generated.js` — grep it to see what is built in.
+- `docs/pi-local-map.md` — where Pi's types and sources live on disk.

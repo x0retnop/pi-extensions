@@ -1,19 +1,6 @@
----
+# Pi CLI Internals — Agent Reference
 
-## 12. Agent loop context snapshot is immutable during a turn
-
-The core agent loop (`@earendil-works/pi-agent-core`) snapshots `systemPrompt`, `messages`, and `tools` at the start of each user turn. Changes to `agent.state.tools` (e.g. via `pi.setActiveTools()`) do not affect the current turn's snapshot. This is why toggling tools from within a tool call only becomes visible on the next user turn. See `docs/pi-tool-internals.md` §9 for details and workarounds.
-
----
-
-## 13. `prepareNextTurn` is not wired up by Pi
-
-`AgentLoopConfig` exposes `prepareNextTurn` and it could theoretically refresh the context between turns, but `AgentSession` does not assign it when creating the `Agent` in `dist/core/sdk.js`. Therefore extensions cannot use it to update the active tool set mid-stream. The only reliable ways to change active tools are:
-- `pi.setActiveTools()` from a **user turn** (slash command, user bash, or between agent responses).
-- `session_start` / `session_tree` handlers.
-- Another extension's event handler that runs before the agent's next turn.# Pi CLI Internals — Agent Reference
-
-> Installed version: `0.79.0` (2026-06-08).  
+> Written against `0.79.0`; spot-checked through `0.80.7`.  
 > Install root: `%APPDATA%/npm/node_modules/@earendil-works/pi-coding-agent/`
 
 ---
@@ -97,11 +84,12 @@ Extensions are loaded in order (CLI → global → project). Hooks of the same t
 
 For `before_agent_start`, each handler receives `event.systemPrompt` **already modified by previous handlers**.
 
-Typical chain in this workspace:
-1. `role-sw` — appends `## Role Override (kimi)\n\n<role file content>`
-2. `pi-skill-guard` — removes `<available_skills>` block or injects full skill bodies
-3. `a-rewind` — no text changes (timer only)
-4. `pi-xai-oauth` — no text changes (status only)
+Typical chain in this workspace (load order):
+1. `a-rewind` — no text changes (timer only).
+2. `context-guard` — strips prompt parts, injects skills (`## Skill: <name>`).
+3. `role-sw` — appends `## Role Override (<name>)\n\n<role file content>`.
+
+See `docs/interactions.md` for the full per-event order.
 
 If you write a cleanup extension, register it **after** the ones you want to clean up after, or overwrite `systemPrompt` completely.
 
@@ -220,6 +208,23 @@ Key types live in `dist/core/extensions/index.d.ts` (and re-exported from packag
 - **AGENTS.md is wrapped unconditionally.** If you want raw AGENTS.md text without `<project_context>` tags, load the file yourself in an extension and inject via `before_agent_start`.
 - **`before_agent_start` runs on EVERY turn**, including continuations after compaction or steering. Keep it fast.
 - **Extension `messages` from `before_agent_start` go into the LLM context** as `role: "custom"`, which `convertToLlm` transforms to `role: "user"`.
+
+---
+
+## 12. Agent loop context snapshot is immutable during a turn
+
+The core agent loop (`@earendil-works/pi-agent-core`) snapshots `systemPrompt`, `messages`, and `tools` at the start of each user turn. Changes to `agent.state.tools` (e.g. via `pi.setActiveTools()`) do not affect the current turn's snapshot. This is why toggling tools from within a tool call only becomes visible on the next user turn. See `docs/pi-tool-internals.md` §9 for details and workarounds.
+
+---
+
+---
+
+## 13. `prepareNextTurn` is not wired up by Pi
+
+`AgentLoopConfig` exposes `prepareNextTurn` and it could theoretically refresh the context between turns, but `AgentSession` does not assign it when creating the `Agent` in `dist/core/sdk.js`. Therefore extensions cannot use it to update the active tool set mid-stream. The only reliable ways to change active tools are:
+- `pi.setActiveTools()` from a **user turn** (slash command, user bash, or between agent responses).
+- `session_start` / `session_tree` handlers.
+- Another extension's event handler that runs before the agent's next turn.
 
 ---
 

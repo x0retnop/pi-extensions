@@ -1,241 +1,241 @@
-# Pi Skill Craft: Как писать и использовать Skills в Pi + pi-skill-guard
+# Pi Skill Craft: Writing and Using Skills in Pi + context-guard
 
-> **Назначение:** Учебник для агента (меня). Как работать со skills в связке Pi CLI + `pi-skill-guard`.
-> **Модель использования:** Только ручная активация через `/use-skill`. Авто-инжекция отключена. Скиллы живут в одном месте.
+> **Purpose:** agent-facing guide to skills in the Pi CLI + `context-guard` setup.
+> **Usage model:** manual activation only via `/use-skill`. Auto-injection is off. Skills live in one place.
 
 ---
 
-## 1. Как это работает (механика)
+## 1. How it works (mechanics)
 
-### 1.1 Где лежат скиллы
+### 1.1 Where skills live
 
 ```
 C:\Users\user\.pi\agent\skills\
-├── some-skill.md           # Простой скилл
-├── another-skill/          # Или папка
+├── some-skill.md           # simple skill
+├── another-skill/          # or a folder
 │   └── SKILL.md
 └── ...
 ```
 
-`pi-skill-guard` ищет **только здесь** (и в аналогичных `.agents/skills/`, но в этом CLI — только `~/.pi/agent/skills/`).
+`context-guard` looks **only here**. Dev copies of skills are edited in this repo under `skills/` and copied over manually.
 
-### 1.2 Как пользователь активирует скилл
+### 1.2 How the user activates a skill
 
 ```
 /use-skill <name> [comment]
 ```
 
-Примеры:
-- `/use-skill refactor-code перепиши этот метод на async/await`
-- `/use-skill py-review` (без комментария — будет placeholder)
+Examples:
+- `/use-skill refactor-code rewrite this method to async/await`
+- `/use-skill py-review` (no comment — a placeholder is used)
 
-### 1.3 Что происходит под капотом
+### 1.3 What happens under the hood
 
-1. `pi-skill-guard` находит файл скилла по имени.
-2. **Frontmatter удаляется.** В system prompt добавляется только тело (всё после второго `---`).
-3. Тело оборачивается в `\n\n## Skill: <name>\n\n<body>` и **дописывается в конец system prompt** через `before_agent_start`.
-4. Если был `comment` — он идёт как **user message**. Если нет — placeholder `Applying skill: <name>`.
+1. `context-guard` finds the skill file by name.
+2. **Frontmatter is stripped.** Only the body (everything after the second `---`) goes into the system prompt.
+3. The body is wrapped as `\n\n## Skill: <name>\n\n<body>` and **appended to the system prompt** via `before_agent_start`.
+4. The `comment`, if given, becomes a **user message**. Otherwise a placeholder `Applying skill: <name>` is used.
 
-### 1.4 Что это значит для меня (агента)
+### 1.4 What this means for the agent
 
-- Я **не ищу** подходящий скилл сам. Пользователь **явно выбрал** его через `/use-skill`.
-- Скилл уже **внутри system prompt** к моменту моего ответа. Я должен следовать его инструкциям.
-- **Comment** от пользователя — это конкретная задача. Скилл — это процедура. Я комбинирую: процедура из скилла + конкретный запрос из комментария.
-- Скилл может содержать `MUST`, `NEVER`, `ALWAYS` — это жёсткие ограничения для текущего хода.
+- The agent does **not** pick a skill itself. The user **explicitly chose** it via `/use-skill`.
+- The skill is already **inside the system prompt** by the time the agent answers. Follow its instructions.
+- The user's **comment** is the concrete task. The skill is the procedure. Combine: procedure from the skill + specific request from the comment.
+- A skill may contain `MUST`, `NEVER`, `ALWAYS` — hard constraints for the current turn.
 
 ---
 
-## 2. Формат SKILL.md
+## 2. SKILL.md format
 
-### 2.1 Структура
+### 2.1 Structure
 
 ```markdown
 ---
 name: skill-name
 description: >
-  Краткое описание для каталога /skills. Не используется для авто-матчинга,
-  но отображается при /skills. Макс 1024 симв.
+  Short description for the /skills catalog. Not used for auto-matching.
+  Max 1024 chars.
 ---
 
-# Название Skill'а
+# Skill Name
 
 ## When to use
-Когда именно этот скилл применим. 1-2 предложения.
+When exactly this skill applies. 1–2 sentences.
 
 ## Workflow
-1. Шаг один.
-2. Шаг два.
-3. Шаг три.
+1. Step one.
+2. Step two.
+3. Step three.
 
 ## Conventions
-- MUST: жёсткое правило.
-- NEVER: запрет.
-- Prefer: рекомендация.
+- MUST: hard rule.
+- NEVER: prohibition.
+- Prefer: recommendation.
 
 ## Example
-Конкретный пример: вход → ожидаемое поведение.
+Concrete example: input → expected behavior.
 
 ## References
-| Тема | Когда нужно | Файл |
+| Topic | When needed | File |
 |------|------------|------|
 | ...  | ...        | `./references/...` |
 ```
 
-### 2.2 Правила frontmatter
+### 2.2 Frontmatter rules
 
-| Поле | Правило |
-|------|---------|
-| `name` | Совпадает с именем файла/папки. lowercase-with-hyphens. Без пробелов. |
-| `description` | Для каталога `/skills`. Не для авто-матчинга. Кратко: что делает. |
+| Field | Rule |
+|---|---|
+| `name` | Matches the file/folder name. lowercase-with-hyphens. No spaces. |
+| `description` | For the `/skills` catalog. Not for auto-matching. Brief: what it does. |
 
-**Остальные поля (`type: flow`, `allowed-tools`, etc.) — игнорировать.** Они для других агентов.
+**Ignore other fields (`type: flow`, `allowed-tools`, etc.)** — they target other agents.
 
-### 2.3 Директория скилла
+### 2.3 Skill directory
 
-Если скилл сложный:
+For complex skills:
 
 ```
 skill-name/
-├── SKILL.md              # Обязательно
-├── references/           # Большие справочники
-└── scripts/              # Bash-скрипты для детерминированных шагов
+├── SKILL.md              # required
+├── references/           # large references
+└── scripts/              # bash scripts for deterministic steps
 ```
 
-> **Лимит:** SKILL.md должен быть **< 500 строк**. Всё объёмное — в `references/`. Чем компактнее и конкретнее инструкция, тем точнее следование. Лишний шум в скилле = риск игнорирования ключевых правил.
+> **Limit:** SKILL.md must be **< 500 lines**. Everything bulky goes to `references/`. The tighter and more concrete the instruction, the more precisely it is followed. Noise in a skill = risk of key rules being ignored.
 
 ---
 
-## 3. Как я должен работать со скиллом (инструкция для агента)
+## 3. How the agent should work with a skill
 
-### 3.1 Когда скилл активен
+### 3.1 When a skill is active
 
-Пользователь написал `/use-skill <name> [comment]`. Я вижу:
-1. В system prompt: `## Skill: <name>` + тело скилла.
-2. В user message: либо `comment`, либо `Applying skill: <name>`.
+The user typed `/use-skill <name> [comment]`. The agent sees:
+1. In the system prompt: `## Skill: <name>` + skill body.
+2. In a user message: either the `comment` or `Applying skill: <name>`.
 
-### 3.2 Мой алгоритм
+### 3.2 Agent algorithm
 
-1. **Прочитать** `## Skill: <name>` из system prompt.
-2. **Прочитать** user message (это конкретный запрос или placeholder).
-3. **Следовать Workflow** скилла пошагово.
-4. **Применять Conventions** как жёсткие ограничения.
-5. Если в комментарии есть уточнение, которое **конфликтует** со скиллом — **скилл имеет приоритет**. Если конфликт критичный — уточни у пользователя.
-6. Если в скилле сказано `Run ./scripts/...` — выполни через bash tool.
-7. Если скилл ссылается на `./references/...` — прочитай через read tool.
+1. **Read** `## Skill: <name>` from the system prompt.
+2. **Read** the user message (concrete request or placeholder).
+3. **Follow the skill's Workflow** step by step.
+4. **Apply Conventions** as hard constraints.
+5. If the comment conflicts with the skill — **the skill wins**. If the conflict is critical — ask the user.
+6. If the skill says `Run ./scripts/...` — run it via the bash tool.
+7. If the skill references `./references/...` — read it via the read tool.
 
-### 3.3 Важные нюансы
+### 3.3 Important nuances
 
-- **Не импровизируй вместо скрипта.** Если скилл говорит "Run `./scripts/validate.sh`" — запускай скрипт, не описывай его содержимое словами.
-- **Не дублируй то, что уже в system prompt.** Если скилл уже загружен, не цитируй его полностью в ответе — просто следуй.
-- **Comment — это контекст.** Если пользователь написал `/use-skill refactor-code убери дублирование в UserService`, я применяю workflow скилла `refactor-code` к конкретному файлу `UserService`.
-- **Placeholder:** Если комментария нет (`Applying skill: <name>`), возможно, пользователь просто хочет, чтобы я следовал workflow без дополнительного контекста. Выполняй как есть.
+- **Do not improvise instead of running a script.** If the skill says "Run `./scripts/validate.sh`" — run the script, don't paraphrase its contents.
+- **Do not echo what is already in the system prompt.** If the skill is loaded, don't quote it in full in the reply — just follow it.
+- **The comment is context.** `/use-skill refactor-code remove duplication in UserService` means: apply the `refactor-code` workflow to the specific file `UserService`.
+- **Placeholder:** if there is no comment (`Applying skill: <name>`), the user likely just wants the workflow followed as-is.
 
 ---
 
-## 4. Best Practices для Pi
+## 4. Best practices for Pi
 
-### 4.1 Размер — лаконичность важнее объёма
+### 4.1 Size — brevity beats volume
 
-System prompt в Pi минимален по сравнению с тяжёлыми нативными агентами (Claude Code, Codex CLI и др.). Это преимущество: скилл не конкурирует с килобайтами persona и tool schemas. Но правило остаётся:
+Pi's system prompt is minimal compared to heavy native agents (Claude Code, Codex CLI, etc.). That is an advantage: a skill does not compete with kilobytes of persona and tool schemas. But the rule stands:
 
-- SKILL.md: **< 500 строк**.
-- Большие справочники: в `references/`, читай по ссылке только когда нужно.
-- Детерминированные команды: в `scripts/`, не в тексте.
+- SKILL.md: **< 500 lines**.
+- Large references: in `references/`, read by link only when needed.
+- Deterministic commands: in `scripts/`, not inline in the text.
 
-**Почему это важно:** чем плотнее и конкретнее инструкция, тем выше вероятность, что я (агент) выполню её буквально, а не проигнорирую часть среди воды.
+**Why it matters:** the denser and more concrete the instruction, the higher the chance the agent follows it literally instead of ignoring parts buried in filler.
 
-### 4.2 Один скилл — один глагол
+### 4.2 One skill — one verb
 
-Не смешивай "review code" и "write docs". Разделяй.
+Don't mix "review code" and "write docs". Split them.
 
-**Плохо:** скилл "делай всё с React"
-**Хорошо:** `react-component-create`, `react-review`, `react-test-write`
+**Bad:** skill "do everything with React"
+**Good:** `react-component-create`, `react-review`, `react-test-write`
 
-### 4.3 Description для каталога
+### 4.3 Description for the catalog
 
-Поскольку авто-матчинг выключен, `description` — это не триггер, а **справка для пользователя** при `/skills`. Пиши понятно, но не трать на него 50% времени.
+Since auto-matching is off, `description` is not a trigger but **help text for the user** in `/skills`. Write clearly, but don't spend half your time on it.
 
-### 4.4 Пути
+### 4.4 Paths
 
-Все пути в скилле относительные от папки скилла:
+All paths in a skill are relative to the skill folder:
 - `./scripts/validate.sh`
 - `./references/api-guide.md`
 
-При чтении я использую абсолютный путь, зная расположение `SKILL.md`.
+When reading, the agent uses the absolute path, knowing where `SKILL.md` lives.
 
-### 4.5 Безопасность
+### 4.5 Safety
 
-Если скилл содержит shell-команды:
-- Проверяй деструктивность перед выполнением (`rm`, `git reset`, etc.).
-- Если скилл говорит "run X", а X потенциально деструктивно — подтверди у пользователя, **даже если скилл не требует подтверждения**. Скилл — процедура, но system safety rule выше.
+If a skill contains shell commands:
+- Check for destructiveness before running (`rm`, `git reset`, etc.).
+- If the skill says "run X" and X is potentially destructive — confirm with the user, **even if the skill doesn't ask for confirmation**. A skill is a procedure, but the system safety rule ranks higher.
 
 ---
 
-## 5. Шаблон: готовый SKILL.md
+## 5. Template: ready-made SKILL.md
 
-Скопируй и адаптируй:
+Copy and adapt:
 
 ```markdown
 ---
 name: my-skill
 description: >
-  Что делает этот скилл. Для каталога /skills. 1-2 предложения.
+  What this skill does. For the /skills catalog. 1–2 sentences.
 ---
 
 # My Skill
 
 ## When to use
-Конкретные сценарии применения.
+Concrete application scenarios.
 
 ## Workflow
-1. Прочитать файл X.
-2. Проанализировать Y.
-3. Выполнить Z.
-4. Если нужна валидация — запустить `./scripts/validate.sh`.
+1. Read file X.
+2. Analyze Y.
+3. Do Z.
+4. If validation is needed — run `./scripts/validate.sh`.
 
 ## Conventions
-- MUST: соблюдать стиль кода проекта.
-- NEVER: не менять файлы без явного указания.
-- Prefer: использовать существующие утилиты проекта.
+- MUST: follow the project's code style.
+- NEVER: change files without explicit instruction.
+- Prefer: use existing project utilities.
 
 ## Example
-**User request:** "пример комментария"
+**User request:** "example comment"
 
-**Ожидаемое поведение:**
-1. Шаг 1...
-2. Шаг 2...
-3. Результат: ...
+**Expected behavior:**
+1. Step 1...
+2. Step 2...
+3. Result: ...
 
 ## References
-| Тема | Когда нужно | Файл |
+| Topic | When needed | File |
 |------|------------|------|
-| Стандарты API | При работе с endpoints | `./references/api-standards.md` |
+| API standards | When working with endpoints | `./references/api-standards.md` |
 ```
 
 ---
 
-## 6. Чек-лист: готов ли скилл к использованию
+## 6. Checklist: is the skill ready
 
-- [ ] `name` совпадает с именем файла/папки
-- [ ] `description` есть (для каталога `/skills`)
-- [ ] Есть `Workflow` с нумерованными шагами
-- [ ] Есть `Conventions` с `MUST`/`NEVER`/`ALWAYS`
-- [ ] Есть минимум один `Example`
-- [ ] SKILL.md < 500 строк
-- [ ] Объёмные справки вынесены в `./references/`
-- [ ] Детерминированные команды в `./scripts/`
-- [ ] Скрипты безопасны (нет `rm -rf /`, `curl | bash`)
-- [ ] Все пути относительные (`./scripts/`, `./references/`)
+- [ ] `name` matches the file/folder name
+- [ ] `description` present (for the `/skills` catalog)
+- [ ] `Workflow` with numbered steps
+- [ ] `Conventions` with `MUST`/`NEVER`/`ALWAYS`
+- [ ] At least one `Example`
+- [ ] SKILL.md < 500 lines
+- [ ] Bulky references moved to `./references/`
+- [ ] Deterministic commands in `./scripts/`
+- [ ] Scripts are safe (no `rm -rf /`, `curl | bash`)
+- [ ] All paths relative (`./scripts/`, `./references/`)
 
 ---
 
-## 7. Для агента: краткая памятка
+## 7. Agent cheat sheet
 
-> **Правило:** Если в system prompt есть `## Skill: <name>` — я работаю **под управлением этого скилла**.
+> **Rule:** if the system prompt contains `## Skill: <name>` — the agent works **under that skill's control**.
 >
-> 1. Workflow скилла = мой план действий.
-> 2. Conventions скилла = мои ограничения.
-> 3. User comment = конкретный контекст/задача.
-> 4. Если скилл говорит "run script" — запускаю через `bash`.
-> 5. Если скилл ссылается на `./references/` — читаю через `read`.
-> 6. Не цитирую скилл целиком в ответе — просто следую ему.
+> 1. Skill Workflow = my action plan.
+> 2. Skill Conventions = my constraints.
+> 3. User comment = concrete context/task.
+> 4. If the skill says "run script" — run it via `bash`.
+> 5. If the skill points to `./references/` — read it via `read`.
+> 6. Don't quote the skill in full in the reply — just follow it.

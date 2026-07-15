@@ -1,72 +1,45 @@
-# Kimi For Coding в Pi CLI
+# Kimi For Coding in Pi CLI
 
-Конспект для агентов, основанный на инспекции Pi CLI v0.79.0.
+Agent guide, based on Pi CLI source inspection (originally v0.79.0, model list verified against 0.80.7).
 
-## Встроенный провайдер `kimi-coding`
+## Built-in `kimi-coding` provider
 
-- Внутренний ID: `kimi-coding`
-- Отображаемое имя: `Kimi For Coding`
+- Internal ID: `kimi-coding`
+- Display name: `Kimi For Coding`
 - `auth.json` key: `kimi-coding`
 - Env key: `KIMI_API_KEY`
-- Путь в пакете Pi: `node_modules/@earendil-works/pi-ai/dist/models.generated.js`
+- Location in the Pi package: `pi-ai/dist/providers/kimi-coding.models.js`
 
-### Модели
+### Models (0.80.7)
 
-```json
-{
-  "kimi-for-coding": {
-    "id": "kimi-for-coding",
-    "name": "Kimi For Coding",
-    "api": "anthropic-messages",
-    "provider": "kimi-coding",
-    "baseUrl": "https://api.kimi.com/coding",
-    "headers": { "User-Agent": "KimiCLI/1.5" },
-    "reasoning": true,
-    "input": ["text", "image"],
-    "contextWindow": 262144,
-    "maxTokens": 32768
-  },
-  "kimi-k2-thinking": {
-    "id": "kimi-k2-thinking",
-    "name": "Kimi K2 Thinking",
-    "api": "anthropic-messages",
-    "provider": "kimi-coding",
-    "baseUrl": "https://api.kimi.com/coding",
-    "headers": { "User-Agent": "KimiCLI/1.5" },
-    "reasoning": true,
-    "input": ["text"],
-    "contextWindow": 262144,
-    "maxTokens": 32768
-  }
-}
-```
+| ID | Input | Notes |
+|---|---|---|
+| `k2p7` | text + image | Newest; added after 0.79.x |
+| `kimi-for-coding` | text + image | |
+| `kimi-k2-thinking` | text only | |
 
-Различия между моделями:
-- `kimi-for-coding` поддерживает текст + изображения (`["text", "image"]`)
-- `kimi-k2-thinking` — только текст (`["text"]`)
-- Остальные параметры идентичны
+All three: `api: anthropic-messages`, `baseUrl: https://api.kimi.com/coding` (no `/v1`), `reasoning: true`, `contextWindow: 262144`, `maxTokens: 32768`, header `User-Agent: KimiCLI/1.5`.
 
-### API-формат
+### API format
 
 - API: `anthropic-messages`
-- Endpoint: `https://api.kimi.com/coding` (без `/v1`)
-- Используется официальный Anthropic SDK (`pi-ai/dist/providers/anthropic.js`)
-- Запрос строится как стандартный Anthropic Messages API: `model`, `messages`, `max_tokens`, `stream`, `system`, `tools`, `thinking`
-- Авторизация: `x-api-key` от Anthropic SDK
+- Uses the official Anthropic SDK (`pi-ai/dist/providers/anthropic.js`)
+- Request is standard Anthropic Messages API: `model`, `messages`, `max_tokens`, `stream`, `system`, `tools`, `thinking`
+- Auth: `x-api-key` via the Anthropic SDK
 
-### Аутентификация
+### Authentication
 
-Приоритет получения ключа (`dist/core/auth-storage.js`):
+Key resolution priority (`dist/core/auth-storage.js`):
 1. CLI `--api-key`
 2. `auth.json` → `"kimi-coding": { "type": "api_key", "key": "..." }`
 3. Env `KIMI_API_KEY`
-4. Fallback из `models.json`
+4. Fallback from `models.json`
 
-`/login` → «Use an API key» → `Kimi For Coding` → сохраняет ключ в `auth.json`.
+`/login` → "Use an API key" → `Kimi For Coding` saves the key to `auth.json`.
 
-### Отличие от кастомного `kimi` в `models.json`
+### Difference from the custom `kimi` in `models.json`
 
-В текущем `~/.pi/agent/models.json` уже есть отдельный провайдер `kimi`, настроенный как OpenAI Completions API:
+The current `~/.pi/agent/models.json` also has a separate `kimi` provider configured as OpenAI Completions API:
 
 - `baseUrl`: `https://api.kimi.com/coding/v1`
 - `api`: `openai-completions`
@@ -74,9 +47,9 @@
 - `thinkingFormat`: `"zai"`
 - `compat.maxTokensField`: `"max_tokens"`
 
-Это альтернативный способ работы с Kimi, не связанный со встроенным `kimi-coding`. Оба варианта могут сосуществовать.
+This is an alternative way to talk to Kimi, unrelated to the built-in `kimi-coding`. Both variants can coexist.
 
-## Пример кастомного провайдера в `models.json`
+## Example custom provider in `models.json`
 
 ```json
 {
@@ -103,13 +76,13 @@
 }
 ```
 
-## Полезные ключи поиска в Pi
+## Useful search keys in Pi
 
-- Встроенные модели: `node_modules/@earendil-works/pi-ai/dist/models.generated.js`
-- Провайдер Anthropic: `node_modules/@earendil-works/pi-ai/dist/providers/anthropic.js`
-- Регистрация API-провайдеров: `node_modules/@earendil-works/pi-ai/dist/providers/register-builtins.js`
-- Env-переменные: `node_modules/@earendil-works/pi-ai/dist/env-api-keys.js`
-- Хранение ключей: `dist/core/auth-storage.js`
+- Built-in models: `pi-ai/dist/models.generated.js` (+ `pi-ai/dist/providers/kimi-coding.models.js`)
+- Anthropic provider: `pi-ai/dist/providers/anthropic.js`
+- API provider registration: `pi-ai/dist/providers/register-builtins.js`
+- Env variables: `pi-ai/dist/env-api-keys.js`
+- Key storage: `dist/core/auth-storage.js`
 - `/login` TUI: `dist/modes/interactive/interactive-mode.js`
-- Имена провайдеров: `dist/core/provider-display-names.js`
-- Резолвинг моделей: `dist/core/model-resolver.js`
+- Provider display names: `dist/core/provider-display-names.js`
+- Model resolution: `dist/core/model-resolver.js`

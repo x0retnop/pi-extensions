@@ -91,7 +91,7 @@ These always mean an extension needs fixing:
 
 | Upgrade | Notes |
 |---|---|
-| 0.79.10 → 0.80.7 | Clean. `getProviders` import moved to `/compat` (model-manager). See `PI-0.79.10-to-0.80.7.md` in repo root for the full feature digest. |
+| 0.79.10 → 0.80.7 | Clean. `getProviders` import moved to `/compat` (model-manager). New APIs worth knowing: entry renderers (`pi.appendEntry` + `pi.registerEntryRenderer`, display-only, used by `tool-timestamps`), `agent_settled` event, `before_provider_headers` hook, cache-friendly dynamic tool loading, `showCacheMissNotices` setting. `Current date:` removed from the default system prompt. |
 
 ## Decision matrix
 
