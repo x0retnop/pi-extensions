@@ -3,6 +3,7 @@
 > Last researched: 2026-06-27  
 > Model used in Pi: `kimi-code-2.7` (K2.7 Code), a coding-focused fine-tune of Kimi K2.6.  
 > Goal: adapt Pi's editing tools to match the patterns this model was actually trained on.
+> Generalized (model-facing, non-Pi) version of this research: `C:/10x001/prompts_dev/docs/kimi-k2.7-code/TOOL_DESIGN.md`.
 
 ---
 
