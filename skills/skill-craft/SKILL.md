@@ -27,7 +27,7 @@ Call this skill when you need to:
 1. Identify the **verb**: what should the agent DO (review, generate, deploy, refactor)?
 2. Identify the **domain**: what context must the agent know (React, API design, security audit)?
 3. Determine the **delivery**: output format (file edits, report, code, shell commands).
-4. Confirm **target environment**: Pi CLI with `pi-skill-guard`, manual `/use-skill` activation only.
+4. Confirm **target environment**: Pi CLI with `context-guard`, manual `/use-skill` activation only.
 
 ### Phase 2: Design Structure
 1. Choose a `name`: lowercase-with-hyphens, max 64 chars, matches folder name.
@@ -100,5 +100,5 @@ If the user provides additional context when calling this skill:
 
 | Topic | When to use | File |
 |-------|------------|------|
-| Pi skill mechanics | How Pi loads skills via `pi-skill-guard` | `./references/pi-skill-craft.md` |
+| Pi skill mechanics | How Pi loads skills via `context-guard` | `./references/pi-skill-craft.md` |
 | Skill checklist | Final validation before saving a skill | `./references/skill-checklist.md` |
