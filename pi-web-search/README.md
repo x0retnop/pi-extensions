@@ -22,9 +22,11 @@ Copy the extension folder to `~/.pi/agent/extensions/` and restart Pi.
 
 | Tool | When to use |
 |------|-------------|
-| `web_search` | Current information, docs, discussions, URLs. |
-| `fetch_content` | Read a specific URL or list of URLs in markdown. |
-| `code_search` | Programming questions, API usage, code examples. |
+| `web_search` | Current information, docs, discussions, URLs. Multi-query via `queries` runs in parallel with URL dedup; `raw` skips the backend LLM summary; `num_results` overrides `depth` presets. |
+| `fetch_content` | Read a specific URL or list of URLs in markdown. `save_full` persists truncated pages to %TEMP% with a ready `file:///` curl command. |
+| `code_search` | Programming questions, API usage, code examples. `focus` steers targeting (`auto`/`code`/`docs`/`repos`); `raw` skips synthesis. |
+
+Result markdown is agent-sufficient: optional LLM summary on top, snippets capped at 1500 chars, provenance footer (`_via exa · 10 results · 2.3s_`), and inline provider errors when a search fails.
 
 By default, web tools are disabled: the agent has no web tools at all. Run `/web` (or `/web on`) to enable `web_search`, `fetch_content`, and `code_search`; they become available on the next turn. `/web off` removes them again.
 
