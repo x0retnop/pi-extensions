@@ -1,7 +1,7 @@
 ---
 name: handoff-instr
 description: Summarize full session history into a structured, continuation-ready handoff markdown file. Optimized for Qwen3.5-9B long-context structured extraction and classification. The input is a pre-processed outline containing user/assistant dialogue, compressed tool actions, and first-line tool outcomes (no raw code). Use via /handoff [short-title].
-model: infer/Qwen3.5-9B-Q8_0
+model: infer/Qwen3.5-Qwopus-9B-Q8_0
 includeExtensions: false
 timeoutMs: 600000
 maxTurns: 100
@@ -48,13 +48,13 @@ How params reach the model (verified):
   ~/.pi/agent/models.json (provider `infer`, baseUrl http://127.0.0.1:8090/v1,
   headers {"X-Infer-Preset": "sub-agents-handoff"}). Gateway log confirms
   `preset=sub-agents-handoff` on pi-originated requests. This provider entry
-  is REQUIRED for `model: infer/Qwen3.5-9B-Q8_0` to resolve.
+  is REQUIRED for `model: infer/Qwen3.5-Qwopus-9B-Q8_0` to resolve.
 - Preset definition (registered 2026-07-14 via PUT /v1/presets, persisted in
   infer-gateway/config/presets.local.yaml):
   {"temperature":0.6,"top_p":0.95,"presence_penalty":1.5,"max_tokens":24576,
    "chat_template_kwargs":{"enable_thinking":true}}
   If the preset is missing, re-register:
-  curl -s -X PUT http://127.0.0.1:8090/v1/presets/Qwen3.5-9B-Q8_0/sub-agents-handoff \
+  curl -s -X PUT http://127.0.0.1:8090/v1/presets/Qwen3.5-Qwopus-9B-Q8_0/sub-agents-handoff \
     -H 'Content-Type: application/json' \
     -d '{"preset":{"temperature":0.6,"top_p":0.95,"presence_penalty":1.5,"max_tokens":24576,"chat_template_kwargs":{"enable_thinking":true}},"note":"sub-agents /handoff prompt (handoff-qwen3.5-9B.md), tuned 2026-07-14"}'
 - Fallback path: provider local-llama (:1234, raw llama-server) — no param
