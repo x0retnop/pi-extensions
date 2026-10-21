@@ -1,0 +1,14 @@
+{
+  "id": "stock-plus-rate",
+  "name": "Stock + rate",
+  "description": "Built-in footer, keep tok/s status bar only. No custom frame/banner.",
+  "piTheme": "",
+  "chrome": {
+    "footer": false,
+    "frame": false,
+    "rate": true,
+    "maxTps": 170,
+    "banner": false,
+    "working": false
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "id": "minimal",
+  "name": "Minimal",
+  "description": "Built-in Pi footer, no frame/rate/banner chrome. Leaves Pi theme unchanged.",
+  "piTheme": "",
+  "chrome": {
+    "footer": false,
+    "frame": false,
+    "rate": false,
+    "banner": false,
+    "bannerPrefer": "",
+    "working": false
+  }
+}

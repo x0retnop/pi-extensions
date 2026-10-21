@@ -1,0 +1,15 @@
+# Normalize text files to LF in the repository
+* text=auto eol=lf
+
+# Windows-specific scripts keep CRLF
+*.{cmd,bat} text eol=crlf
+
+# PowerShell scripts use LF (PowerShell understands LF)
+*.ps1 text eol=lf
+
+# Binary files
+*.{png,jpg,jpeg,gif,ico,svg,webp,woff,woff2,ttf,otf,eot} binary
+*.{exe,dll,so,dylib,pyd,lib,a,obj} binary
+*.{zip,7z,gz,bz2,xz,rar,tar,tgz} binary
+*.{db,sqlite,sqlite3} binary
+*.{pdf,doc,docx,xls,xlsx,ppt,pptx} binary

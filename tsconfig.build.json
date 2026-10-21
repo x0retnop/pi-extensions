@@ -1,0 +1,29 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "rootDir": ".",
+    "outDir": "_build/extensions",
+    "sourceMap": false,
+    "declaration": false,
+    "allowJs": false,
+    "incremental": true,
+    "tsBuildInfoFile": "_build/.tsbuildinfo"
+  },
+  "include": [
+    "./**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "_build",
+    "_scratch",
+    "_archive",
+    "Inactive",
+    "scripts",
+    "tests",
+    "docs",
+    "mcps"
+  ]
+}

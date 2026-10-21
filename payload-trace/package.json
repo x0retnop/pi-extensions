@@ -1,0 +1,14 @@
+{
+  "name": "pi-extension-payload-trace",
+  "version": "0.1.0",
+  "description": "Manual full payload capture: dumps full provider request/response on /payload-trace start|stop. Off by default.",
+  "type": "module",
+  "keywords": ["pi-package", "pi", "extension", "cache", "diagnostics", "system-prompt"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

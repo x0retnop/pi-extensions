@@ -1,0 +1,22 @@
+{
+  "id": "phosphor",
+  "name": "Phosphor",
+  "description": "Green CRT phosphor: mint→teal frame, tok/s, splash. Pi theme: phosphor-night.",
+  "piTheme": "phosphor-night",
+  "chrome": {
+    "footer": true,
+    "frame": true,
+    "frameStyle": "sharp",
+    "frameFill": "split",
+    "frameTitle": "",
+    "frameBlu": "#50f090",
+    "framePur": "#20c8b0",
+    "barStyle": "block",
+    "rate": true,
+    "maxTps": 100,
+    "banner": true,
+    "bannerPrefer": "phosphor",
+    "working": false,
+    "layout": {}
+  }
+}

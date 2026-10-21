@@ -1,0 +1,22 @@
+{
+  "id": "carrier",
+  "name": "Carrier",
+  "description": "Double NFO frame, magenta→cyan fade, ICE title, density bars. Pi theme: carrier-night.",
+  "piTheme": "carrier-night",
+  "chrome": {
+    "footer": true,
+    "frame": true,
+    "frameStyle": "double",
+    "frameFill": "fade",
+    "frameTitle": "ICE",
+    "frameBlu": "#ff2ea8",
+    "framePur": "#18f0ff",
+    "barStyle": "density",
+    "rate": true,
+    "maxTps": 140,
+    "banner": true,
+    "bannerPrefer": "carrier",
+    "working": false,
+    "layout": {}
+  }
+}

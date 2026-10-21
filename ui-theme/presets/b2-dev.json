@@ -1,0 +1,22 @@
+{
+  "id": "b2-dev",
+  "name": "B2 Dev",
+  "description": "Custom footer + B2 blue→purple frame, tok/s, splash banner. Pi theme: dark-clean-code.",
+  "piTheme": "dark-clean-code",
+  "chrome": {
+    "footer": true,
+    "frame": true,
+    "frameStyle": "sharp",
+    "frameFill": "split",
+    "frameTitle": "",
+    "frameBlu": "#6496ff",
+    "framePur": "#b464ff",
+    "barStyle": "block",
+    "rate": true,
+    "maxTps": 170,
+    "banner": true,
+    "bannerPrefer": "",
+    "working": false,
+    "layout": {}
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "pi-extension-infer-local",
+  "version": "0.1.0",
+  "description": "Mirror the running local infer-gateway (aliases + presets) into Pi as live models",
+  "type": "module",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

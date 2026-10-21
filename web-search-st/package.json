@@ -1,0 +1,25 @@
+{
+  "name": "pi-extension-web-search-st",
+  "version": "0.1.0",
+  "description": "Keyless web search and URL fetch: Exa MCP free tier + Bing HTML + optional Tavily/Brave keys, no backend",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "extension",
+    "web-search",
+    "standalone"
+  ],
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  }
+}

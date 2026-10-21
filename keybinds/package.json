@@ -1,0 +1,18 @@
+{
+  "name": "pi-extension-keybinds",
+  "version": "0.1.0",
+  "description": "TUI editor for Pi keybindings.json — /keys to view, rebind, disable",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true }
+  }
+}

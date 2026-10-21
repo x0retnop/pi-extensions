@@ -1,0 +1,22 @@
+{
+  "id": "ember",
+  "name": "Ember",
+  "description": "Warm carbon + amber→rust frame, tok/s, splash. Pi theme: ember-night.",
+  "piTheme": "ember-night",
+  "chrome": {
+    "footer": true,
+    "frame": true,
+    "frameStyle": "sharp",
+    "frameFill": "split",
+    "frameTitle": "",
+    "frameBlu": "#e09040",
+    "framePur": "#c05040",
+    "barStyle": "block",
+    "rate": true,
+    "maxTps": 100,
+    "banner": true,
+    "bannerPrefer": "sots",
+    "working": false,
+    "layout": {}
+  }
+}

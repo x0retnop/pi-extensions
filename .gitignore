@@ -1,0 +1,46 @@
+desktop.ini
+_archive/
+*.zip
+mcps/
+nul
+*.ps1
+!sync-extensions.ps1
+*.txt
+!ui-theme/arts/**
+_*.py
+.env
+auth.json
+models.json
+node_modules/
+tests/*
+!tests/unit/
+!tests/unit/**
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.tests-out/
+
+_scratch/
+
+# Role prompts live and change at runtime (~/.pi/agent/extensions/role-sw/roles).
+role-sw/roles/
+
+# Compiled extension tree (python scripts/build-extensions.py)
+_build/
+
+# Pi shipped docs snapshot (large, version-update fodder)
+docs/off-doc-llm/CHANGELOG-full.md
+
+# Generated usage reports (python scripts/session_usage_stats.py)
+reports/
+
+# Public-publish pipeline config (names private paths; excluded from the snapshot)
+!publish-ignore.txt
+!publish-scan.txt
+!publish-scrub.txt
+
+# Private host data for scripts/ (who this machine talks to, which projects exist)
+scripts/session-usage.config.json
+scripts/pi-runtime-decat.keep.json

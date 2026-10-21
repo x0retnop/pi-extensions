@@ -1,0 +1,49 @@
+{
+  "id": "3v",
+  "name": "3V",
+  "description": "Rounded rails HUD: total·last / tools / turn / rate / context. Fixed cell widths. Pi theme unchanged.",
+  "piTheme": "",
+  "chrome": {
+    "footer": true,
+    "frame": true,
+    "frameStyle": "rounded",
+    "frameFill": "split",
+    "frameTitle": "",
+    "barStyle": "rise",
+    "statusSep": " ░ ",
+    "rate": true,
+    "turnLive": true,
+    "working": false,
+    "boot": {
+      "frame": "rounded"
+    },
+    "layout": {
+      "embed": true,
+      "pad": 3,
+      "sep": " ░ ",
+      "cells": {
+        "total": { "w": 5, "align": "right" },
+        "last": { "w": 5, "align": "right" },
+        "tools": { "w": 6, "align": "right" },
+        "turn": 8,
+        "rate-bar": 11,
+        "rate-num": 4,
+        "context": 20,
+        "role": 18,
+        "sub-agents": 6,
+        "web-access": 6
+      },
+      "rows": [
+        {
+          "left": ["total", " · ", "last", "tools", "turn", "rate-bar", "rate-num", "   ", "context"],
+          "right": ["model"]
+        },
+        "usage",
+        {
+          "left": ["cwd"],
+          "right": ["role", "sub-agents", "web-access", "░"]
+        }
+      ]
+    }
+  }
+}

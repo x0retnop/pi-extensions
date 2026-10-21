@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+    "common/**/*.ts",
+    "a-rewind/**/*.ts",
+    "agent-browser/**/*.ts",
+    "context-compressor/**/*.ts",
+    "context-guard/**/*.ts",
+    "context-trim/**/*.ts",
+    "grep-tool/**/*.ts",
+    "infer-local/**/*.ts",
+    "keybinds/**/*.ts",
+    "model-manager/**/*.ts",
+    "pi-multi-edit/**/*.ts",
+    "pi-session-memory/**/*.ts",
+    "web-search-st/**/*.ts",
+    "payload-trace/**/*.ts",
+    "pi-agent-run/**/*.ts",
+    "read-mode/**/*.ts",
+    "role-sw/**/*.ts",
+    "simple-gate/**/*.ts",
+    "sub-agents/**/*.ts",
+    "stream-tool-log/**/*.ts",
+    "ui-theme/**/*.ts",
+    "tests/**/*.ts"
+  ]
+}

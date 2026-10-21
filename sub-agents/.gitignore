@@ -1,0 +1,8 @@
+# Generated /handoff outputs: handoff-MM-DD-HH-MM[-title].md
+handoff-[0-9]*.md
+session-*.md
+*.log
+.pm-transcript-diag.json
+node_modules
+.DS_Store
+Thumbs.db
