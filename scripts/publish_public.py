@@ -264,10 +264,11 @@ def main() -> None:
     if stale and not args.allow_stale:
         sys.exit(f"{len(stale)} stale scrub rule(s) — fix the rule or pass --allow-stale")
 
-    push_args = ["push", f"{commit}:refs/heads/{REMOTE_BRANCH}", REMOTE] if not args.fresh else \
-                ["push", "--force", f"{commit}:refs/heads/{REMOTE_BRANCH}", REMOTE]
-    previous_tip = git(["rev-parse", "--verify", "-q", f"refs/remotes/{REMOTE}/{REMOTE_BRANCH}"],
-                       check=False).stdout.decode().strip()
+    push_args = ["push"] + (["--force"] if args.fresh else []) + [REMOTE, f"{commit}:refs/heads/{REMOTE_BRANCH}"]
+    previous_tip = ""
+    ls_remote = git(["ls-remote", "--heads", REMOTE, f"refs/heads/{REMOTE_BRANCH}"], check=False)
+    if ls_remote.returncode == 0 and ls_remote.stdout.strip():
+        previous_tip = ls_remote.stdout.decode().split()[0]
     print(f"pushing {commit[:8]} -> {REMOTE}/{REMOTE_BRANCH}" + (" (forced)" if args.fresh else ""))
     git(push_args)
     git(["update-ref", PUBLIC_REF, commit])
